@@ -1,7 +1,7 @@
 /**
  * The phone log and the meeting notes, derived.
  *
- * Two sources that are not WhatsApp, measured the same way the messages are:
+ * Two sources that are not the chat thread, measured the same way messages are:
  * nothing here is authored, every figure comes from counting real records, and
  * a claim that cannot be traced is not made.
  *

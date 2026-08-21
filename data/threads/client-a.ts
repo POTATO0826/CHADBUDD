@@ -312,7 +312,7 @@ export const clientA: SeedThread = {
       externalId: "A-047",
       from: "advisor",
       at: "2026-07-04T17:20:00+08:00",
-      text: "Heads up, I'm on leave 6–13 July. Sarah in the office covers anything urgent, and I'll still see WhatsApp in the evenings.",
+      text: "Heads up, I'm on leave 6–13 July. Sarah in the office covers anything urgent, and I'll still see Telegram in the evenings.",
     },
     {
       externalId: "A-048",

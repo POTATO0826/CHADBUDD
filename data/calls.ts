@@ -1,7 +1,7 @@
 /**
  * The phone log.
  *
- * WhatsApp is only half of how an advisor and a client actually talk. The other
+ * The chat thread is only half of how an advisor and a client actually talk. The other
  * half is the phone, and it carries a signal the messages cannot: a missed call
  * that was returned in twenty minutes and a missed call that was never returned
  * look identical in a chat export, and mean opposite things.

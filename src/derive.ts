@@ -500,7 +500,7 @@ function build(thread: SeedThread): ClientView {
     facts: [
       { glyph: "◷", k: "First message", v: dateLong.format(tsOf(first)) },
       { glyph: "☏", k: "Phone", v: thread.handle },
-      { glyph: "✉", k: "Channel", v: "WhatsApp · phone · meetings" },
+      { glyph: "✉", k: "Channel", v: "Telegram · phone · meetings" },
       { glyph: "✦", k: "Messages", v: `${thread.messages.length} · ${clientCount} theirs` },
       { glyph: "◔", k: "Last contact", v: stamp.format(tsOf(last)) },
       { glyph: "☎", k: "Calls", v: callLine(thread.key) },

@@ -163,7 +163,7 @@ function idleLayer(): string {
 /* ── notifications ───────────────────────────────────────────────
    Two kinds of automatic enlargement, both fed by real data:
 
-   · message — a client's latest WhatsApp message replays as an incoming
+   · message — a client's latest Telegram message replays as an incoming
      alert: the pill grows to 360px with the butter sweep and a NEW tag,
      dwells 7 seconds, and returns to idle.
    · reminder — the agent surfaces a pending item from the approval queue
@@ -1067,7 +1067,7 @@ function clientTile(c: ClientView): string {
         <span class="n"><span class="v" style="color:${owed ? inkOf(c.ledgerTone) : "var(--t1)"}">${owed}</span><span class="lbl">open items</span></span>
       </span>
 
-      <span class="go">☏ WhatsApp · ${c.clientMessageCount} theirs <b>Open →</b></span>
+      <span class="go">☏ Telegram · ${c.clientMessageCount} theirs <b>Open →</b></span>
     </button>`;
 }
 
@@ -1185,7 +1185,7 @@ function answer(c: ClientView, intent: AskIntent): AskTurn {
     case "history":
       return {
         from: "agent",
-        text: `<b>${c.messageCount}</b> messages since ${e(dateShort.format(c.firstContact))}, ${c.clientMessageCount} of them theirs. Last contact ${e(dateShort.format(c.lastContact))} — ${days} days ago. WhatsApp only; nothing else was read.<br>${e(c.headline)}`,
+        text: `<b>${c.messageCount}</b> messages since ${e(dateShort.format(c.firstContact))}, ${c.clientMessageCount} of them theirs. Last contact ${e(dateShort.format(c.lastContact))} — ${days} days ago. Telegram, the phone log and meeting notes — nothing else was read.<br>${e(c.headline)}`,
       };
 
     default:
