@@ -44,7 +44,16 @@ export interface Idea {
 }
 
 /** Ranked recommendations per client. Rank 1 is what to do today. */
-export const ideas: Record<ClientKey, Idea[]> = {
+/**
+ * `let` so live mode can replace these with agent output.
+ *
+ * Hand-written for the four seed clients, and there is no authored copy for a
+ * real client the advisor picked this morning. Rather than render a blank
+ * panel, live mode swaps the whole map for what the agent produced — see
+ * setIdeas below and src/live.ts. Importers read this by name, and ES module
+ * bindings are live views, so nothing else changes.
+ */
+export let ideas: Record<ClientKey, Idea[]> = {
   C: [
     {
       rank: "1",
@@ -367,3 +376,13 @@ export const rules: Rule[] = [
   { label: "Silence can be the recommendation", detailTitle: "Priya Ramasamy · hold", detailMeta: "inbound working · 3 of 5 threads hers" },
   { label: "A client's instruction outranks a trigger", detailTitle: "Faizal Rahman · B-051", detailMeta: "“Park it for now.” · call reminder marked stale" },
 ];
+
+/**
+ * Replace the authored recommendations with the agent's.
+ *
+ * A module cannot assign to a binding imported from elsewhere, so live.ts
+ * calls this instead of writing to `ideas` directly.
+ */
+export function setIdeas(next: Record<ClientKey, Idea[]>): void {
+  ideas = next;
+}

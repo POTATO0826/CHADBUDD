@@ -27,6 +27,7 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
+import { initLive } from "./live.ts";
 import { initScramble } from "./scramble.ts";
 import { initDrag } from "./drag.ts";
 import { focusWindow, isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
@@ -1923,3 +1924,12 @@ if (wanted === "alert" || wanted === "call") {
    nothing ever barges in over the dashboard or a hover. */
 window.setTimeout(nextNotif, 6_000);
 window.setInterval(nextNotif, 22_000);
+
+/* Live mode, off unless `?live` is in the URL.
+   `clients`, `totals` and `ideas` are imported bindings, and ES modules make
+   imports live views — so live.ts reassigns them at their source and a plain
+   render() picks everything up. Nothing above this line had to change. */
+initLive(() => {
+  state.sel = clients[0]?.key ?? state.sel;
+  render();
+});

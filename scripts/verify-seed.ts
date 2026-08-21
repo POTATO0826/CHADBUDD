@@ -54,7 +54,7 @@ for (const t of threads) {
 
   console.log(`\n${"─".repeat(78)}`);
   console.log(
-    `Client ${t.key} · ${t.clientName} · ${t.handle}   [seeded as: ${fx.label}]\n` +
+    `Client ${t.key} · ${t.clientName} · ${t.handle}   [seeded as: ${fx?.label ?? "unknown"}]\n` +
       `${t.messages.length} messages · ${first.at.slice(0, 10)} → ${last.at.slice(0, 10)} · ` +
       `${t.messages.filter((m) => m.from === "client").length} from client`,
   );
@@ -109,7 +109,7 @@ for (const t of threads) {
     );
   }
 
-  for (const want of fx.expectOpenLedger) {
+  for (const want of fx?.expectOpenLedger ?? []) {
     const hit = open.find((e) => e.sourceMessageId === want.sourceMessageId && e.owedBy === want.owedBy);
     console.log(`    ${hit ? "✓" : "✗"} expected open: ${want.sourceMessageId} (${want.owedBy}) — ${want.gist}`);
     if (!hit) process.exitCode = 1;

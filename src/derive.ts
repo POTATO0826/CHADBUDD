@@ -463,27 +463,55 @@ function build(thread: SeedThread): ClientView {
 
 /* ── the set ─────────────────────────────────────────────────────── */
 
-export const clients: ClientView[] = threads
-  .map(build)
-  // Silent churn first: it's the case a human would never surface unaided.
-  .sort((a, b) => Number(b.score.silent) - Number(a.score.silent) || b.score.composite - a.score.composite);
+/**
+ * `let`, not `const`, so live data can replace the seed without this file
+ * knowing where threads come from.
+ *
+ * Both were computed once at module load, which was correct while the only
+ * source was a static import. Convex data arrives after import and again on
+ * every update, so they became rebuildable — and because ES module imports are
+ * live views of the binding, reassigning them here updates every consumer
+ * without a single call site changing. That is the whole reason main.ts needs
+ * no rewrite to render live threads.
+ */
+export let clients: ClientView[] = [];
+export let totals = emptyTotals();
+
+function emptyTotals() {
+  return {
+    clients: 0, messages: 0, ledgerEntries: 0, discarded: 0, openItems: 0,
+    owedByAdvisor: 0, owedByClient: 0, needAttention: 0, decaying: 0, silent: 0,
+  };
+}
+
+/** Recompute the view model from a set of threads. Seed or live, same path. */
+export function rebuild(source: SeedThread[]): void {
+  clients = source
+    .map(build)
+    // Silent churn first: it's the case a human would never surface unaided.
+    .sort((a, b) => Number(b.score.silent) - Number(a.score.silent) || b.score.composite - a.score.composite);
+
+  totals = {
+    clients: clients.length,
+    messages: clients.reduce((n, c) => n + c.messageCount, 0),
+    ledgerEntries: clients.reduce((n, c) => n + ledgerFor(c.key).entries.length, 0),
+    discarded: clients.reduce((n, c) => n + ledgerFor(c.key).rejected.length, 0),
+    openItems: clients.reduce((n, c) => n + c.open.length, 0),
+    owedByAdvisor: clients.reduce((n, c) => n + c.open.filter((e) => e.owedBy === "advisor").length, 0),
+    owedByClient: clients.reduce((n, c) => n + c.open.filter((e) => e.owedBy === "client").length, 0),
+    needAttention: clients.filter((c) => c.score.status !== "healthy").length,
+    decaying: clients.filter((c) => !c.score.silent && c.score.status === "decaying").length,
+    silent: clients.filter((c) => c.score.silent).length,
+  };
+}
+
+// The seed remains the default. Live mode overwrites this after boot; without
+// it, the page behaves exactly as it did before any of this existed.
+rebuild(threads);
 
 export function clientById(id: string): ClientView {
   return clients.find((c) => c.id === id) ?? clients[0]!;
 }
-
-export const totals = {
-  clients: clients.length,
-  messages: clients.reduce((n, c) => n + c.messageCount, 0),
-  ledgerEntries: clients.reduce((n, c) => n + ledgerFor(c.key).entries.length, 0),
-  discarded: clients.reduce((n, c) => n + ledgerFor(c.key).rejected.length, 0),
-  openItems: clients.reduce((n, c) => n + c.open.length, 0),
-  owedByAdvisor: clients.reduce((n, c) => n + c.open.filter((e) => e.owedBy === "advisor").length, 0),
-  owedByClient: clients.reduce((n, c) => n + c.open.filter((e) => e.owedBy === "client").length, 0),
-  needAttention: clients.filter((c) => c.score.status !== "healthy").length,
-  decaying: clients.filter((c) => !c.score.silent && c.score.status === "decaying").length,
-  silent: clients.filter((c) => c.score.silent).length,
-};
 
 /**
  * Client messages per day over the last seven days, for the engagement tile.

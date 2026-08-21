@@ -43,8 +43,20 @@ const API_KEY = process.env["AGENT_API_KEY"] ?? process.env["OPENAI_API_KEY"] ??
 /** Don't re-analyse a client more often than this. */
 const DEBOUNCE_MS = 10 * 60_000;
 
-/** Below this a thread has nothing to say about a relationship. */
-const MIN_MESSAGES = 8;
+/**
+ * Below this there is nothing to reason about at all.
+ *
+ * Was 8, which was a number picked without much thought and turned out to
+ * conflate two different jobs. Scoring *decay* needs volume — you cannot
+ * measure a change in reply rate from three messages. But the agent's other
+ * job is "this client asked something and you have not answered", and that
+ * needs two messages, not eight. A fresh enquiry is exactly the case worth
+ * surfacing, and the old floor threw it away.
+ *
+ * The decay side is protected elsewhere: chats.recent refuses to call a thread
+ * scorable without 120 days of span and 20 messages in the window.
+ */
+const MIN_MESSAGES = 3;
 
 const IDEA_SCHEMA = {
   type: "object",

@@ -40,9 +40,23 @@ const convex = new ConvexHttpClient(convexUrl);
 /** Same ceiling as the live path — mutations get one second of user code. */
 const BATCH = 200;
 
+/**
+ * Optional key filter: `bun run seed:load B` loads only Faizal.
+ *
+ * Four fictional clients beside one real one reads as a dashboard of made-up
+ * people with a stranger in it. One is enough to show the shape.
+ */
+const only = new Set(process.argv.slice(2).map((a) => a.toUpperCase()));
+const wanted = only.size === 0 ? threads : threads.filter((t) => only.has(t.key));
+
+if (wanted.length === 0) {
+  console.error(`No seed thread matches ${[...only].join(", ")}. Available: ${threads.map((t) => t.key).join(", ")}`);
+  process.exit(1);
+}
+
 let total = 0;
 
-for (const t of threads) {
+for (const t of wanted) {
   let inserted = 0;
 
   for (let i = 0; i < t.messages.length; i += BATCH) {
@@ -61,5 +75,5 @@ for (const t of threads) {
   );
 }
 
-console.log(`\n${total} messages loaded across ${threads.length} threads.`);
+console.log(`\n${total} messages loaded across ${wanted.length} thread(s).`);
 console.log("Citation ids are preserved, so copy.ts references still resolve.");

@@ -19,7 +19,14 @@
 
 export type Sender = "advisor" | "client";
 
-export type ClientKey = "A" | "B" | "C" | "D";
+/**
+ * Was the union "A"|"B"|"C"|"D" while the seed was the only source of clients.
+ *
+ * Live clients are assigned keys in the order the advisor picks them and run
+ * past D, so the union became a lie the moment real chats could be tracked.
+ * The `<KEY>-<NNN>` citation format is unchanged — only the alphabet grew.
+ */
+export type ClientKey = string;
 
 export interface SeedMessage {
   /** Stable citation key, e.g. "D-012". Unique across the whole seed set. */

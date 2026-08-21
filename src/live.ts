@@ -1,0 +1,149 @@
+/**
+ * Live mode: the dashboard, fed by Convex instead of the seed.
+ *
+ * On in the desktop app, off in the browser. The Tauri window is the product,
+ * so it shows real conversations and real agent output; a browser tab stays on
+ * the seed, which keeps the reproducible demo and the frontend work in progress
+ * unaffected by whether Convex happens to be running. `?live` and `?seed`
+ * override either way.
+ *
+ * How it avoids rewriting the render model: everything downstream reads
+ * `clients`, `totals` and `ideas` as imported bindings, and ES module imports
+ * are live views of those bindings. Reassigning them at their source updates
+ * every consumer at once. So this file moves the clock, rebuilds the view
+ * model, swaps in the agent's recommendations, and asks for a render — and
+ * main.ts needs to know almost nothing about it.
+ *
+ * Written in the defensive style of shell.ts: if Convex is unreachable, every
+ * path degrades to the seed and the island keeps working. A backend that is
+ * down must not take the UI with it.
+ */
+
+import { ConvexClient } from "convex/browser";
+import { anyApi } from "convex/server";
+import type { FunctionReference } from "convex/server";
+
+import { setNow } from "../data/clock.ts";
+import type { ClientKey, SeedThread } from "../data/types.ts";
+import { rebuild } from "./derive.ts";
+import { setIdeas } from "./copy.ts";
+import { isTauri } from "./shell.ts";
+import type { Idea } from "./copy.ts";
+
+/**
+ * The deployment URL.
+ *
+ * Defaulted rather than injected at build time, because bundling it would mean
+ * editing server.ts and build.ts — shared files — for a value that is the same
+ * on every developer's machine. `?convex=` overrides it.
+ */
+const DEFAULT_URL = "http://127.0.0.1:3210";
+
+const params = new URLSearchParams(window.location.search);
+
+/**
+ * Live in the desktop app, seed in the browser, either overridable.
+ *
+ * The Tauri window is the product — an advisor running it wants their real
+ * conversations, and it loads a bare URL with no query string to put `?live`
+ * into. The browser stays on the seed so the reproducible demo, the screenshots
+ * and the frontend work in progress are all unaffected by whether Convex
+ * happens to be running.
+ *
+ *   ?live   force live anywhere
+ *   ?seed   force seed anywhere, including in Tauri
+ */
+export const isLive = params.has("live") || (isTauri && !params.has("seed"));
+
+const lookup = anyApi as unknown as Record<string, Record<string, unknown>>;
+const q = (m: string, n: string): FunctionReference<"query"> =>
+  lookup[m]?.[n] as FunctionReference<"query">;
+
+interface IdeaRow extends Idea {
+  generatedTs: number;
+  model: string;
+}
+
+/**
+ * Connect and keep the view model in step with the database.
+ *
+ * `onRender` is called after each update rather than this module importing
+ * main.ts, which would be a cycle. Returns false if live mode wasn't asked for
+ * or the client could not be constructed, so the caller can carry on with the
+ * seed.
+ */
+export function initLive(onRender: () => void): boolean {
+  if (!isLive) return false;
+
+  const url = params.get("convex") ?? DEFAULT_URL;
+
+  let client: ConvexClient;
+  try {
+    client = new ConvexClient(url);
+  } catch (err) {
+    console.error("[chadbuddy] live mode requested but Convex client failed to start", err);
+    return false;
+  }
+
+  let threads: SeedThread[] = [];
+  let ready = false;
+  let clockMoved = false;
+
+  const apply = (): void => {
+    // Wait for the first threads payload. Rendering an empty book would flash
+    // "all steady" before the data lands, which reads as a real answer.
+    if (!ready) return;
+
+    /**
+     * The clock moves only once real data has arrived — not at connect time.
+     *
+     * Moving it up front looked equivalent and was not: if Convex is
+     * unreachable the subscription never fires, the seed stays on screen, and
+     * an unfrozen clock would date those fixed threads to whenever you happened
+     * to open the app. Every window in derive/signals/score measures from NOW,
+     * so a healthy seed client would render as months silent. Failing back to
+     * the seed has to fail back completely.
+     */
+    if (!clockMoved) {
+      setNow(Date.now());
+      clockMoved = true;
+    }
+
+    rebuild(threads);
+    onRender();
+  };
+
+  client.onUpdate(q("threads", "list"), {}, (value) => {
+    threads = value as SeedThread[];
+    ready = true;
+    apply();
+  });
+
+  client.onUpdate(q("threads", "ideas"), {}, (value) => {
+    const rows = value as Array<{ key: string; ideas: IdeaRow[] }>;
+    const next: Record<ClientKey, Idea[]> = {};
+    for (const row of rows) {
+      // Rank is what orders the panel, and the agent emits it as a string.
+      next[row.key] = row.ideas
+        .slice()
+        .sort((a, b) => a.rank.localeCompare(b.rank, undefined, { numeric: true }))
+        .map((i) => ({
+          rank: i.rank,
+          title: i.title,
+          why: i.why,
+          draftLabel: i.draftLabel,
+          draft: i.draft,
+          btn: i.btn,
+          meta: i.meta,
+          intent: i.intent,
+          cites: i.cites,
+          ...(i.rank === "1" ? { primary: true } : {}),
+        }));
+    }
+    setIdeas(next);
+    apply();
+  });
+
+  console.info(`[chadbuddy] live mode on — subscribed to ${url}`);
+  return true;
+}
