@@ -17,7 +17,26 @@ it isn't shown.** That isn't a guideline here, it's a function
 ```bash
 bun install
 
+bun run dev:all      # everything at once — convex watch, the bridge, the window
+```
+
+Three processes have to be running together and there is no reason for three
+terminals. `dev:all` starts `convex dev`, the Telegram bridge and the Tauri
+shell, prefixes their output so you can tell who said what, and stops all of
+them on one Ctrl+C. The web server is not in that list — `tauri dev` starts it
+itself via `beforeDevCommand`, and a second one would fight it for port 4321.
+
+```bash
+bun run dev:all --web          # a browser tab instead of the Tauri window
+bun run dev:all --no-bridge    # any part can be dropped
+```
+
+Or run the pieces yourself:
+
+```bash
 bun run dev          # http://localhost:4321   (add ?open to land on the dashboard)
+bun run bridge       # Telegram in, Convex out
+bun run convex:dev   # push convex/ on save
 bun run verify:seed  # Stage 1 proof — the four signals, month by month
 bun run check        # tsc --noEmit
 

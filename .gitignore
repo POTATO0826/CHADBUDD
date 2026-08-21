@@ -39,3 +39,6 @@ scripts-local/
 .claude/
 skills-lock.json
 convex/_generated/ai/
+
+# local database exports — real client conversations, never commit
+backups/
