@@ -12,6 +12,7 @@ import type * as agent from "../agent.js";
 import type * as agentData from "../agentData.js";
 import type * as chats from "../chats.js";
 import type * as ingest from "../ingest.js";
+import type * as outbox from "../outbox.js";
 import type * as seed from "../seed.js";
 import type * as threads from "../threads.js";
 import type * as verbatim from "../verbatim.js";
@@ -27,6 +28,7 @@ declare const fullApi: ApiFromModules<{
   agentData: typeof agentData;
   chats: typeof chats;
   ingest: typeof ingest;
+  outbox: typeof outbox;
   seed: typeof seed;
   threads: typeof threads;
   verbatim: typeof verbatim;

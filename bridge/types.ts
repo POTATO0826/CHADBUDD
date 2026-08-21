@@ -100,6 +100,16 @@ export interface Source {
   /** Live arrivals. Called once; the adapter owns the subscription. */
   onMessage(cb: (chatId: string, message: BridgeMessage) => void): void;
 
+  /**
+   * Send a message as the account holder.
+   *
+   * The only write in this interface, and the only thing here with
+   * consequences outside the machine. Everything else can be re-run; this
+   * cannot be un-sent. The bridge is the sole holder of the socket, so this is
+   * the one path from an approved draft to a real conversation.
+   */
+  sendMessage(chatId: string, text: string): Promise<void>;
+
   close(): Promise<void>;
 }
 

@@ -27,7 +27,7 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
-import { initLive } from "./live.ts";
+import { initLive, queueSend } from "./live.ts";
 import { initScramble } from "./scramble.ts";
 import { initDrag } from "./drag.ts";
 import { focusWindow, isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
@@ -1128,7 +1128,11 @@ function askTurn(t: AskTurn, c: ClientView): string {
             <span class="tx">${e(i.draft)}</span>
           </div>
           <div class="acts">
-            <button class="btn${i.primary ? " acc" : ""}">${e(i.btn)}</button>
+            <button class="btn${i.primary ? " acc" : ""}" data-act="send-idea"
+              data-key="${e(c.key)}" data-rank="${e(i.rank)}"
+              ${i.intent === "send" ? "" : "disabled"}
+              title="${i.intent === "send" ? "Send this draft to the client as you" : "Not a send — this recommendation is to " + e(i.intent)}"
+            >${e(i.btn)}</button>
             <button class="btn ghost">Edit</button>
             ${i.cites.length ? citeChips(i.cites, c.key) : ""}
           </div>
@@ -1767,6 +1771,41 @@ island.addEventListener("click", (ev) => {
       setState("open");
       return;
     }
+    /* Sending is the only irreversible thing the dashboard can do, so it
+       confirms, names the recipient, and reports what actually happened.
+       The agent cannot reach this path: it queues nothing and clicks nothing. */
+    case "send-idea": {
+      const btn = hit as HTMLButtonElement;
+      const sendKey = hit.dataset.key;
+      const rank = hit.dataset.rank;
+      if (!sendKey || !rank) break;
+      const idea = (ideas[sendKey] ?? []).find((x) => x.rank === rank);
+      const who = clients.find((c) => c.key === sendKey);
+      if (!idea || !who) break;
+
+      const ok = window.confirm(
+        `Send this to ${who.name} as you?
+
+${idea.draft}
+
+This cannot be undone.`,
+      );
+      if (!ok) break;
+
+      btn.disabled = true;
+      btn.textContent = "Sending…";
+      queueSend(sendKey, idea.draft, rank)
+        .then((to) => {
+          btn.textContent = `Sent to ${to}`;
+        })
+        .catch((err: unknown) => {
+          btn.disabled = false;
+          btn.textContent = idea.btn;
+          window.alert(`Could not send: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      break;
+    }
+
     case "cite": {
       const id = hit.dataset.id;
       if (!id || !key) return;

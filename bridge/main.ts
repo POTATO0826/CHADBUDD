@@ -13,7 +13,7 @@
  * of the generated types and stays typecheckable without a running backend.
  */
 
-import { ConvexHttpClient } from "convex/browser";
+import { ConvexClient, ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
 import type { FunctionReference } from "convex/server";
 
@@ -82,6 +82,9 @@ const m = (module: string, name: string): FunctionReference<"mutation"> =>
   lookup[module]?.[name] as FunctionReference<"mutation">;
 
 const API = {
+  pendingSends: q("outbox", "pending"),
+  markSent: m("outbox", "markSent"),
+  markFailed: m("outbox", "markFailed"),
   setPairing: m("ingest", "setPairing"),
   upsertChats: m("ingest", "upsertChats"),
   ingestBatch: m("ingest", "ingestBatch"),
@@ -212,10 +215,50 @@ async function main(): Promise<void> {
   });
   console.log("[bridge] listening for new messages. Ctrl+C to stop.");
 
+  /**
+   * The outbox: approved drafts leaving as real messages.
+   *
+   * A reactive subscription rather than a poll, so a click in the dashboard
+   * lands in Telegram in about a second. Its own ConvexClient because the HTTP
+   * client cannot subscribe.
+   *
+   * Every row here was put there by a human pressing a button — convex/outbox.ts
+   * is the only writer, and the agent has no path to it. Sending is the one
+   * thing this process does that cannot be undone, so it is also the one thing
+   * it refuses to do on its own initiative.
+   */
+  const live = new ConvexClient(convexUrl);
+  const sending = new Set<string>();
+
+  live.onUpdate(API.pendingSends, {}, (value) => {
+    const rows = value as Array<{ _id: string; sourceId: string; text: string }>;
+    for (const row of rows) {
+      // onUpdate can fire again before a send resolves; without this the same
+      // row goes out twice and the client gets the message twice.
+      if (sending.has(row._id)) continue;
+      sending.add(row._id);
+
+      void (async () => {
+        try {
+          await source.sendMessage(row.sourceId, row.text);
+          await convex.mutation(API.markSent, { id: row._id });
+          console.log(`[sent] ${row.sourceId}: ${row.text.slice(0, 60)}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await convex.mutation(API.markFailed, { id: row._id, error: msg });
+          console.error(`[send failed] ${row.sourceId}: ${msg}`);
+        } finally {
+          sending.delete(row._id);
+        }
+      })();
+    }
+  });
+
   const refresh = setInterval(() => void publishChats(), CHAT_REFRESH_MS);
 
   const shutdown = async (): Promise<void> => {
     clearInterval(refresh);
+    await live.close().catch(() => {});
     console.log("\n[bridge] shutting down");
     await say("closed").catch(() => {});
     await source.close();

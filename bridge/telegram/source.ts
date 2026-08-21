@@ -167,6 +167,12 @@ export class TelegramSource implements Source {
     }, new NewMessage({}));
   }
 
+  async sendMessage(chatId: string, text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (trimmed === "") throw new Error("Refusing to send an empty message.");
+    await this.#need().sendMessage(chatId, { message: trimmed });
+  }
+
   async close(): Promise<void> {
     if (this.#client) {
       await this.#client.disconnect();

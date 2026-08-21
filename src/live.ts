@@ -58,6 +58,32 @@ export const isLive = params.has("live") || (isTauri && !params.has("seed"));
 const lookup = anyApi as unknown as Record<string, Record<string, unknown>>;
 const q = (m: string, n: string): FunctionReference<"query"> =>
   lookup[m]?.[n] as FunctionReference<"query">;
+const mut = (m: string, n: string): FunctionReference<"mutation"> =>
+  lookup[m]?.[n] as FunctionReference<"mutation">;
+
+/**
+ * Held so a mutation can be issued outside the subscription callbacks.
+ * Undefined until initLive runs, which is also why queueSend refuses politely
+ * rather than throwing something opaque when live mode is off.
+ */
+let convex: ConvexClient | undefined;
+
+/**
+ * Queue an approved draft for delivery.
+ *
+ * Deliberately not "send": the page cannot reach Telegram. It writes a row the
+ * bridge picks up, which keeps the one irreversible step in the one process
+ * that holds the socket — and leaves a record of what was approved.
+ */
+export async function queueSend(key: ClientKey, text: string, ideaRank?: string): Promise<string> {
+  if (!convex) throw new Error("Not connected to the backend — sending needs live mode.");
+  const res = (await convex.mutation(mut("outbox", "queueSend"), {
+    key,
+    text,
+    ...(ideaRank === undefined ? {} : { ideaRank }),
+  })) as { to: string };
+  return res.to;
+}
 
 interface IdeaRow extends Idea {
   generatedTs: number;
@@ -92,6 +118,7 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
   let client: ConvexClient;
   try {
     client = new ConvexClient(url);
+    convex = client;
   } catch (err) {
     console.error("[chadbuddy] live mode requested but Convex client failed to start", err);
     return false;

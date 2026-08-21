@@ -122,6 +122,32 @@ export default defineSchema({
   }).index("by_client", ["clientId"]),
 
   /**
+   * Messages the advisor has approved for sending.
+   *
+   * A queue rather than a direct call, for two reasons. The page cannot reach
+   * Telegram — only the bridge holds that socket — so something has to carry
+   * the intent across. And a queue leaves a record: every message the agent
+   * drafted and a human approved is a row here, with what happened to it.
+   *
+   * `state` never starts as anything but "queued". Nothing in this schema lets
+   * the agent write here directly; the mutation that does is called by a click.
+   */
+  outbox: defineTable({
+    clientId: v.id("clients"),
+    /** The chat to deliver to — platform-native id, same as clients.sourceId. */
+    sourceId: v.string(),
+    text: v.string(),
+    /** Which recommendation this came from, for auditing what was acted on. */
+    ideaRank: v.optional(v.string()),
+    state: v.union(v.literal("queued"), v.literal("sent"), v.literal("failed")),
+    queuedTs: v.number(),
+    sentTs: v.optional(v.number()),
+    error: v.optional(v.string()),
+  })
+    .index("by_state", ["state"])
+    .index("by_client", ["clientId"]),
+
+  /**
    * Connection state, single row. The bridge writes it; the island subscribes.
    *
    * `qr` exists because GramJS can pair by QR as well as by phone code, and the
