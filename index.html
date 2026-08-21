@@ -1016,19 +1016,7 @@ html[data-shell="tauri"] #desk{ display: none; }
 .ask{
   border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge);
   display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; overflow: hidden;
-  position: relative;
 }
-/* When the GPU surface is up it *is* the panel fill, so CSS stops painting one
-   — two stacked surfaces would double the tint and flatten the refraction. The
-   inset ring stays: the glass replaces the fill, not the edge.
-
-   `overflow: hidden` above is what makes this safe. The renderer's canvas is
-   locked to `alphaMode: "opaque"` and paints black wherever it draws nothing,
-   so the panel clipping it to this radius is the entire reason no black corners
-   show. Set by src/glass.ts, which never adds the attribute when WebGPU is
-   missing — so the CSS above is the design, and this is only the enhancement. */
-.ask[data-glass="on"]{ background: transparent; }
-.ask[data-glass="on"] > :not(canvas){ position: relative; z-index: 1; }
 .ask .hd{ padding: 9px 12px 8px; display: flex; align-items: center; gap: 8px; flex: none; border-bottom: 1px solid var(--hair); }
 .ask .hd .t{ font-family: var(--display); font-size: 12.5px; font-weight: 500; letter-spacing: -.014em; }
 .ask .hd .tag{ margin-left: auto; font-family: var(--mono); font-size: 8px; letter-spacing: .09em;

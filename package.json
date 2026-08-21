@@ -1,7 +1,11 @@
 {
   "name": "chadbuddy",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/bun": "latest",
+    "typescript": "^5"
+  },
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "bun run server.ts",
     "build": "bun run build.ts",
@@ -13,13 +17,5 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "@types/bun": "latest",
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "@liquid-dom/core": "^0.1.1",
-    "@liquid-dom/react": "^0.1.1"
-  }
+  "type": "module"
 }

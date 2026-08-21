@@ -19,7 +19,6 @@ import {
   ADVISOR, INK, MARK, clientById, clients, dateShort, humanGap, replyClock,
   totals, weekBars,
 } from "./derive.ts";
-import { initPanelGlass } from "./glass.ts";
 import { openDays } from "./ledger.ts";
 import type { LedgerEntry } from "./ledger.ts";
 import { initScramble } from "./scramble.ts";
@@ -1191,19 +1190,6 @@ function focusCite(id: string): void {
 /* Bound once to the island rather than to the names themselves, because
    render() replaces those on every state change. */
 initScramble(island);
-
-/* The ask panel's surface, on the GPU — the one place the effect refracts a
-   real surface rather than a plate invented to give it something to bend.
-   A plain frame loop while the look is being judged; it only touches the GPU
-   when the dashboard is open and the panel is actually on screen. */
-const panelGlass = initPanelGlass(island);
-if (panelGlass) {
-  const frame = (): void => {
-    if (state.st === "open") panelGlass.sync();
-    requestAnimationFrame(frame);
-  };
-  requestAnimationFrame(frame);
-}
 
 /* Hover-with-intent. A deliberate hover expands to the summary card; a
    cursor merely passing through does not — the 160ms delay filters the
