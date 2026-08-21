@@ -782,7 +782,10 @@ html[data-shell="tauri"] #desk{ display: none; }
    A calendar shaded by committed time. The ramp is one hue deepening, never
    green-to-red: the busiest day of somebody's week is not an error state, and
    colouring it like one is how a planning tool starts reading as a scolding. */
-.calcols{ display: grid; grid-template-columns: minmax(360px, 1fr) 1fr; gap: 12px; flex: 1; min-height: 0; }
+/* The month takes the room, because it is the thing being read. The day
+   panel beside it is a detail view and behaves like one. */
+.calcols{ display: grid; grid-template-columns: minmax(520px, 1.75fr) minmax(280px, 1fr);
+  gap: 12px; flex: 1; min-height: 0; }
 
 .month{ display: flex; flex-direction: column; gap: 10px; padding: 14px;
   border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); min-height: 0; }
@@ -794,17 +797,19 @@ html[data-shell="tauri"] #desk{ display: none; }
 .mnav .btn{ margin-left: auto; }
 
 .dow{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.dow span{ font-family: var(--mono); font-size: 9px; color: var(--t4); text-align: center;
-  letter-spacing: .06em; text-transform: lowercase; }
+.dow span{ font-size: 10px; color: var(--t3); letter-spacing: .04em; }
 
-.grid{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.grid .cell{ position: relative; aspect-ratio: 1 / .82; border-radius: var(--r-sm);
-  display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between;
-  padding: 5px 6px; background: var(--fill);
+.grid{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+  flex: 1; min-height: 0; grid-auto-rows: minmax(0, 1fr); }
+/* Tall enough to carry what is on the day. A month grid that shows only a
+   count answers "how busy" and leaves "busy with what" to a second click —
+   which on a page for deciding where to put a meeting is the actual question. */
+.grid .cell{ position: relative; overflow: hidden; border-radius: var(--r-sm);
+  display: flex; flex-direction: column; gap: 3px; min-height: 74px;
+  padding: 5px 5px 4px; text-align: left; background: var(--fill);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent);
-  transition: box-shadow .14s var(--ease), transform .14s var(--ease); }
-.grid .cell:hover{ transform: translateY(-1px);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 20%, transparent); }
+  transition: box-shadow .14s var(--ease); }
+.grid .cell:hover{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 22%, transparent); }
 
 /* Days from the neighbouring months. Drawn as holes rather than as faint dates:
    their events were never fetched, so any number on them would be a zero that
@@ -823,12 +828,30 @@ html[data-shell="tauri"] #desk{ display: none; }
 /* Text wears text tokens, never the ramp colour — the fill behind it already
    carries the reading, and a number tinted to match would lose contrast at
    exactly the steps where the day matters most. */
+.grid .top{ display: flex; align-items: center; justify-content: space-between; gap: 4px; }
 .grid .dn{ font-family: var(--mono); font-size: 11px; color: var(--t2); font-variant-numeric: tabular-nums; }
-.grid .cell.today .dn{ color: var(--gold); font-weight: 600; }
-.grid .cn{ font-family: var(--mono); font-size: 9px; color: var(--t3); align-self: flex-end; }
-.grid .tq{ position: absolute; top: 4px; right: 5px; color: var(--iris); font-size: 13px; line-height: 1; }
+/* Today is marked on the number, not by flooding the cell. A whole-cell
+   highlight competes with the density fill and you can read neither. */
+.grid .cell.today .dn{ color: var(--background); background: var(--gold); font-weight: 600;
+  min-width: 17px; height: 17px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
+.grid .cn{ font-family: var(--mono); font-size: 9px; color: var(--t4); }
 
-.ramp{ display: flex; align-items: center; gap: 4px; margin-top: auto; padding-top: 8px; flex-wrap: wrap; }
+.grid .chips{ display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow: hidden; }
+.grid .chip{ display: flex; align-items: baseline; gap: 4px; font-size: 9.5px; line-height: 1.35;
+  color: var(--t3); padding: 1px 4px; border-radius: 3px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.grid .chip i{ font-family: var(--mono); font-size: 8.5px; font-style: normal; color: var(--t4);
+  font-variant-numeric: tabular-nums; flex: none; }
+/* Time with a person in it is the commitment; own time stays recessive. */
+.grid .chip.hv{ color: var(--t1); background: color-mix(in oklab, var(--foam) 17%, transparent); }
+.grid .chip.hv i{ color: var(--foam); }
+.grid .chip.tent{ background: transparent; box-shadow: inset 0 0 0 1px var(--iris-b); color: var(--iris); }
+.grid .chip.tent i{ color: var(--iris); }
+.grid .more{ font-family: var(--mono); font-size: 8.5px; color: var(--t4); padding-left: 4px; }
+
+.ramp{ display: flex; align-items: center; gap: 4px; padding-top: 4px; flex-wrap: wrap; }
 .ramp .lbl{ margin-right: 4px; }
 .ramp .sw{ width: 16px; height: 10px; border-radius: 3px; background: var(--fill);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent); }
