@@ -453,8 +453,10 @@ function build(thread: SeedThread): ClientView {
     bigA: latency.recent,
     bigB: questions.recent === "0.0/mo" ? "0 questions" : `${questions.recent} questions`,
     bigBTone: questions.severity > 0.6 ? "critical" : questions.severity > 0.3 ? "serious" : "good",
-    heroA: tone === "good" ? "#1f3325" : tone === "butter" ? "#3a3320" : tone === "warn" ? "#332a1f" : "#3a1f1f",
-    heroB: "#14161b",
+    // Rosé Pine Moon: each hero washes the client's own status hue into the
+    // base, so the plate reads as a tint of the palette rather than a new colour.
+    heroA: tone === "good" ? "#2b3d4a" : tone === "butter" ? "#4a3f30" : tone === "warn" ? "#463a2c" : "#452a38",
+    heroB: "#232136",
   };
 }
 

@@ -311,7 +311,7 @@ function header(): string {
   }).join("");
 
   return `
-    <div class="top">
+    <div class="hdr">
       <span class="brand">chadbuddy</span>
       <nav class="nav" aria-label="Sections">${nav}</nav>
       <div class="orbs">
@@ -359,7 +359,7 @@ function overviewPage(): string {
       (d) => `
       <div class="col" title="${e(d.label)}: ${d.count} client message${d.count === 1 ? "" : "s"}">
         ${d.isPeak ? `<span class="tip">${d.count} on ${e(d.label)}</span>` : ""}
-        <i style="height:${Math.max(2, d.height)}%;background:${d.isPeak ? "var(--butter)" : "rgba(255,255,255,.24)"}"></i>
+        <i style="height:${Math.max(2, d.height)}%;background:${d.isPeak ? "var(--butter)" : "rgba(224,222,244,.24)"}"></i>
         <span class="day">${e(d.day)}</span>
       </div>`,
     )
@@ -373,7 +373,7 @@ function overviewPage(): string {
   const kinds = [
     { label: "send", n: pending.filter((a) => a.glyph === "→").length, fill: "var(--butter)" },
     { label: "unblock", n: pending.filter((a) => a.glyph === "!" || a.glyph === "◇").length, fill: "var(--chip-dark)" },
-    { label: "dismiss", n: pending.filter((a) => a.glyph === "☏").length, fill: "rgba(255,255,255,.14)" },
+    { label: "dismiss", n: pending.filter((a) => a.glyph === "☏").length, fill: "rgba(224,222,244,.14)" },
   ].filter((k) => k.n > 0);
   const kindTotal = kinds.reduce((n, k) => n + k.n, 0) || 1;
   const split = kinds
@@ -381,7 +381,7 @@ function overviewPage(): string {
       (k) => `
       <div class="seg" style="flex:${k.n}">
         <span class="pc">${Math.round((k.n / kindTotal) * 100)}%</span>
-        <i style="background:${k.fill}${k.fill === "var(--chip-dark)" ? ";box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)" : ""}"></i>
+        <i style="background:${k.fill}${k.fill === "var(--chip-dark)" ? ";box-shadow:inset 0 0 0 1px rgba(224,222,244,.1)" : ""}"></i>
       </div>`,
     )
     .join("");
@@ -395,7 +395,7 @@ function overviewPage(): string {
           <span class="ttl">${e(a.title)}</span>
           <span class="mt">${e(a.meta)}</span>
         </span>
-        <span class="tick" style="background:${a.done ? "var(--butter)" : "transparent"};box-shadow:inset 0 0 0 1px ${a.done ? "var(--butter)" : "rgba(255,255,255,.2)"}">${a.done ? "✓" : ""}</span>
+        <span class="tick" style="background:${a.done ? "var(--butter)" : "transparent"};box-shadow:inset 0 0 0 1px ${a.done ? "var(--butter)" : "rgba(224,222,244,.2)"}">${a.done ? "✓" : ""}</span>
       </button>`,
     )
     .join("");
@@ -448,7 +448,7 @@ function overviewPage(): string {
             </div>
             <div class="pillcol">
               <span class="lbl">blocked</span>
-              <span class="pill" style="box-shadow:inset 0 0 0 1px rgba(208,59,59,.4);background:transparent;color:var(--i-crit)">${blocked}</span>
+              <span class="pill" style="box-shadow:inset 0 0 0 1px rgba(235,111,146,.4);background:transparent;color:var(--i-crit)">${blocked}</span>
             </div>
             <div class="pillcol" style="flex:1;min-width:0">
               <span class="lbl">quiet by design</span>
@@ -500,7 +500,7 @@ function overviewPage(): string {
           </div>
           <div class="clock">
             <div class="dial" role="img" aria-label="Worst median reply latency ${e(replyClock.value)}">
-              <div class="ring" style="background:conic-gradient(var(--butter) 0deg ${replyClock.degrees}deg, rgba(255,255,255,.08) ${replyClock.degrees}deg 360deg)">
+              <div class="ring" style="background:conic-gradient(var(--butter) 0deg ${replyClock.degrees}deg, rgba(224,222,244,.08) ${replyClock.degrees}deg 360deg)">
                 <div class="hole">
                   <span class="v">${e(replyClock.value)}</span>
                   <span class="lbl" style="font-size:8.5px">worst median</span>
@@ -546,8 +546,8 @@ function overviewPage(): string {
                 <span class="s">D-012 · ${oldest ? openDays(oldest) : 0} days</span>
               </span>
               <span class="faces" aria-hidden="true">
-                <i style="background:rgba(208,59,59,.3);color:var(--i-crit)">AL</i>
-                <i style="background:rgba(255,215,106,.24);color:var(--butter)">WH</i>
+                <i style="background:rgba(235,111,146,.3);color:var(--i-crit)">AL</i>
+                <i style="background:rgba(246,193,119,.24);color:var(--butter)">WH</i>
               </span>
             </div>
             <div class="tl-ev" style="left:55%;bottom:18px">
@@ -577,8 +577,8 @@ function clientCard(c: ClientView): string {
       </span>
       <span class="twotone" aria-hidden="true">
         <i style="width:${c.w1}%;background:var(--butter)"></i>
-        <i style="width:${c.w2}%;background:var(--chip-dark);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)"></i>
-        <i style="flex:1;background:rgba(255,255,255,.08)"></i>
+        <i style="width:${c.w2}%;background:var(--chip-dark);box-shadow:inset 0 0 0 1px rgba(224,222,244,.14)"></i>
+        <i style="flex:1;background:rgba(224,222,244,.08)"></i>
       </span>
       <span class="rec">☏ chat record · ${c.messageCount} msgs →</span>
     </button>`;
@@ -589,19 +589,19 @@ function cellStyle(cell: Cell): string {
     case "cited":
       return "background:var(--butter);color:var(--butter-d)";
     case "you":
-      return "background:rgba(255,215,106,.13);box-shadow:inset 0 0 0 1px rgba(255,215,106,.28)";
+      return "background:rgba(246,193,119,.13);box-shadow:inset 0 0 0 1px rgba(246,193,119,.28)";
     case "them":
-      return "background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)";
+      return "background:rgba(224,222,244,.07);box-shadow:inset 0 0 0 1px rgba(224,222,244,.08)";
     case "outside":
-      return "background:transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);background-image:var(--hatch)";
+      return "background:transparent;box-shadow:inset 0 0 0 1px rgba(224,222,244,.05);background-image:var(--hatch)";
     default:
-      return `background:transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.055)${cell.weekend ? ";background-image:var(--hatch)" : ""}`;
+      return `background:transparent;box-shadow:inset 0 0 0 1px rgba(224,222,244,.055)${cell.weekend ? ";background-image:var(--hatch)" : ""}`;
   }
 }
 
 function cellInk(cell: Cell): string {
-  if (cell.kind === "cited") return "rgba(11,13,16,.78)";
-  if (cell.kind === "outside") return "rgba(242,245,249,.22)";
+  if (cell.kind === "cited") return "rgba(35,33,54,.78)";
+  if (cell.kind === "outside") return "rgba(224,222,244,.22)";
   if (cell.kind === "you") return "var(--butter)";
   if (cell.kind === "them") return "var(--t3)";
   return "var(--t4)";
@@ -615,8 +615,8 @@ function weekGrid(weeks: Week[]): string {
           (cell) => `
         <div class="cell" style="${cellStyle(cell)}" title="${e(cell.a11y)}">
           <span class="top">
-            <span class="n" style="color:${cell.kind === "cited" ? "var(--butter-d)" : cell.kind === "outside" ? "rgba(242,245,249,.22)" : "var(--t1)"}">${e(cell.num)}</span>
-            ${cell.kind === "cited" ? `<span class="lk" style="color:rgba(11,13,16,.6)">◆</span>` : ""}
+            <span class="n" style="color:${cell.kind === "cited" ? "var(--butter-d)" : cell.kind === "outside" ? "rgba(224,222,244,.22)" : "var(--t1)"}">${e(cell.num)}</span>
+            ${cell.kind === "cited" ? `<span class="lk" style="color:rgba(35,33,54,.6)">◆</span>` : ""}
           </span>
           ${cell.label ? `<span class="lb" style="color:${cellInk(cell)}">${e(cell.label)}</span>` : ""}
         </div>`,
@@ -696,7 +696,7 @@ function profilePage(c: ClientView): string {
         <div class="rpanel">
           <div class="hero" style="background:linear-gradient(150deg,${c.heroA},${c.heroB})">
             <span class="grain" aria-hidden="true"></span>
-            <span class="plate" style="box-shadow:0 0 0 4px rgba(11,14,18,.95), inset 0 0 0 1px ${markOf(c.tone)}59;color:${inkOf(c.tone)}">${e(c.initials)}</span>
+            <span class="plate" style="box-shadow:0 0 0 4px rgba(35,33,54,.95), inset 0 0 0 1px ${markOf(c.tone)}59;color:${inkOf(c.tone)}">${e(c.initials)}</span>
           </div>
           <div class="in">
             <div class="who">
@@ -717,7 +717,7 @@ function profilePage(c: ClientView): string {
               <span class="h">Evidence</span>
               <div class="evid">
                 <button class="wa" data-act="open-record" data-client="${c.key}">
-                  <span class="k" style="background:rgba(255,215,106,.22);color:var(--butter)">WA</span>
+                  <span class="k" style="background:rgba(246,193,119,.22);color:var(--butter)">WA</span>
                   <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
                     <span class="t">Thread</span><span class="s">${c.messageCount} msgs</span>
                   </span>
@@ -889,11 +889,11 @@ function openLedgerTile(c: ClientView): string {
   const row = (x: LedgerEntry) => `
     <div style="display:flex;flex-direction:column;gap:6px;padding:9px 0;border-bottom:1px solid var(--hair)">
       <div style="display:flex;align-items:baseline;gap:8px">
-        <span class="ec" style="color:var(--butter);border:1px dashed rgba(255,215,106,.5)">${e(x.kind)}</span>
+        <span class="ec" style="color:var(--butter);border:1px dashed rgba(246,193,119,.5)">${e(x.kind)}</span>
         <span style="font-size:12px">${e(x.text)}</span>
       </div>
       <span class="m" style="font-size:9.5px;color:var(--t4)">owed by ${e(x.owedBy)} · open ${openDays(x)} days · since ${e(dateShort.format(x.openedAt))}</span>
-      <blockquote style="margin:0;padding:6px 9px;border-left:2px solid rgba(255,255,255,.18);background:rgba(255,255,255,.035);font-size:11.5px;font-style:italic;color:var(--t3)">“${e(x.quote)}”</blockquote>
+      <blockquote style="margin:0;padding:6px 9px;border-left:2px solid rgba(224,222,244,.18);background:rgba(224,222,244,.035);font-size:11.5px;font-style:italic;color:var(--t3)">“${e(x.quote)}”</blockquote>
       <span>${citeChips([x.sourceMessageId], c.key)}</span>
     </div>`;
 
