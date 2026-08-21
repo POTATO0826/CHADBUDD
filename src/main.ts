@@ -814,7 +814,7 @@ function loadStep(minutes: number): number {
  * genuinely darker fill on #232136 disappears into the background, so a packed
  * day would recede exactly where it should stand out. Density does the work.
  */
-const LOAD_FILL = ["transparent", "12%", "24%", "38%", "54%"];
+const LOAD_FILL = ["transparent", "7%", "13%", "20%", "29%"];
 
 const loadTint = (step: number): string =>
   step === 0 ? "transparent" : `color-mix(in oklab, var(--foam) ${LOAD_FILL[step]}, transparent)`;
@@ -823,6 +823,9 @@ const monthFmt = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeri
 
 /** Monday-first, which is how a working week is read here. */
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** How many entries fit in a cell before the rest become a count. */
+const CHIPS_PER_CELL = 3;
 
 const startOfDay = (ms: number): number => {
   const d = new Date(ms);
@@ -868,11 +871,25 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
     const isPicked = at === picked;
     const weekend = [5, 6].includes((new Date(at).getDay() + 6) % 7);
 
-    /* The count is the honest label. Dots read nicely at four events and turn
-       into a smear at nine, and the number is what someone is actually asking
-       for when they look at a shaded square. */
     const n = list.length;
-    const tentative = list.some((x) => x.booking === "tentative");
+
+    /* What is actually on the day, not just how much of it. A number alone
+       answers "how busy" and leaves "busy with what" to a second click — and
+       on a page whose job is deciding where to put a meeting, that second
+       click is the whole question. Three fit; the rest become a count, because
+       a cell that grows with its contents breaks the grid it belongs to. */
+    const chips = list
+      .slice(0, CHIPS_PER_CELL)
+      .map((x) => {
+        const start = Date.parse(x.at);
+        const heavy = x.kind === "meeting" || x.kind === "call";
+        const who = x.withClient ? clientById(x.withClient.toLowerCase()).name.split(" ")[0] : "";
+        return `<span class="chip${heavy ? " hv" : ""}${x.booking === "tentative" ? " tent" : ""}">
+          <i>${e(hhmmOf(start))}</i>${e(who || x.title)}</span>`;
+      })
+      .join("");
+
+    const over = n - CHIPS_PER_CELL;
 
     cells.push(`
       <button class="cell${isToday ? " today" : ""}${isPicked ? " on" : ""}${weekend ? " wk" : ""}"
@@ -880,9 +897,11 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
         style="--fill:${loadTint(step)}"
         aria-current="${isToday ? "date" : "false"}"
         aria-label="${e(new Date(at).toDateString())}, ${n} ${n === 1 ? "entry" : "entries"}">
-        <span class="dn">${d}</span>
-        ${n ? `<span class="cn">${n}</span>` : ""}
-        ${tentative ? `<span class="tq" title="Something pencilled in">·</span>` : ""}
+        <span class="top">
+          <span class="dn">${d}</span>
+          ${n ? `<span class="cn">${n}</span>` : ""}
+        </span>
+        <span class="chips">${chips}${over > 0 ? `<span class="more">+${over} more</span>` : ""}</span>
       </button>`);
   }
 
