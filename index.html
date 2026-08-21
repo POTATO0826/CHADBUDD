@@ -782,8 +782,137 @@ html[data-shell="tauri"] #desk{ display: none; }
    A calendar shaded by committed time. The ramp is one hue deepening, never
    green-to-red: the busiest day of somebody's week is not an error state, and
    colouring it like one is how a planning tool starts reading as a scolding. */
-/* The month takes the room, because it is the thing being read. The day
-   panel beside it is a detail view and behaves like one. */
+/* ── the calendar page: one main view, a rail, an overlay ─────────────────
+   Week or month owns the page; the confirm rail appears on the right only
+   while something needs deciding; the other view slides over on demand. */
+.calwrap{ display: flex; gap: 12px; flex: 1; min-height: 0; position: relative; }
+.calmain{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px; border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); }
+.calwrap.withrail .calmain{ flex: 1 1 auto; }
+
+/* ── the week: Mon–Sun in a line, hours down the side ── */
+.wgrid{ display: grid; grid-template-columns: 30px repeat(7, 1fr); gap: 3px;
+  flex: 1; min-height: 0; }
+.wrail{ position: relative; }
+.whr{ position: absolute; right: 4px; transform: translateY(-50%);
+  font-family: var(--mono); font-size: 9px; color: var(--t4);
+  font-variant-numeric: tabular-nums; }
+/* The header is offset height; tracks start below it, so the hour rail needs
+   the same offset to line up with the tracks beside it. */
+.wrail{ margin-top: 34px; }
+
+.wcol{ display: flex; flex-direction: column; min-height: 0; }
+.whead{ display: flex; align-items: baseline; justify-content: center; gap: 5px;
+  height: 28px; margin-bottom: 6px; border-radius: var(--r-sm);
+  transition: background .16s var(--ease); }
+.whead:hover{ background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.whead .wd{ font-family: var(--mono); font-size: 9px; color: var(--t4); letter-spacing: .05em; }
+.whead .wn{ font-size: 13px; color: var(--t2); font-variant-numeric: tabular-nums; }
+.wcol.today .whead .wn{ color: var(--background); background: var(--gold); font-weight: 600;
+  min-width: 18px; height: 18px; border-radius: 50%; display: inline-flex;
+  align-items: center; justify-content: center; padding: 0 4px; }
+.wtrack{ position: relative; flex: 1; min-height: 300px; border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent); }
+.wcol.today .wtrack{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--gold) 20%, transparent); }
+
+/* Blocks wear their importance. One calm hue deepening — key is not an alarm.
+   Own time (travel, focus, admin, breaks) stays recessive: importance is a
+   meeting concept, and grey is the honest colour for your own hours. */
+.wblk{ position: absolute; overflow: hidden; cursor: pointer;
+  display: flex; flex-direction: column; gap: 0; padding: 3px 5px 3px 6px;
+  border-radius: 4px; font-size: 0; }
+.wblk.own{ background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.wblk.imp-r{ background: color-mix(in oklab, var(--foam) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foam) 16%, transparent); }
+.wblk.imp-i{ background: color-mix(in oklab, var(--foam) 19%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foam) 32%, transparent); }
+.wblk.imp-k{ background: color-mix(in oklab, var(--foam) 32%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--foam); }
+/* Unrated is a visible state, never silently routine — a pale day with a huge
+   unrated client would be the map lying exactly where it matters. */
+.wblk.imp-u{ background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 18%, transparent);
+  outline: 1px dashed color-mix(in oklab, var(--foreground) 25%, transparent); outline-offset: -3px; }
+.wblk.tent{ background: transparent; box-shadow: none;
+  border: 1px dashed var(--iris-b); }
+.wblk .bt{ font-family: var(--mono); font-size: 8px; color: var(--t4);
+  font-variant-numeric: tabular-nums; }
+.wblk .bn{ font-size: 10px; line-height: 1.25; color: var(--t1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wblk.own .bn{ color: var(--t3); }
+
+/* The weekly adjust control: tap the dot, the rating cycles in place. */
+.impdot{ position: absolute; top: 1px; right: 1px; width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 8px; color: var(--foam); border-radius: 50%; }
+.impdot:hover{ background: color-mix(in oklab, var(--foreground) 14%, transparent); }
+.wblk.imp-u .impdot{ color: var(--t3); font-size: 10px; }
+
+/* ── the three-way importance control ── */
+.impseg{ display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 5%, transparent); align-self: flex-start; }
+.impseg .isb{ font-family: var(--mono); font-size: 9px; padding: 3px 9px; border-radius: 999px;
+  color: var(--t3); letter-spacing: .03em; transition: background .14s var(--ease), color .14s var(--ease); }
+.impseg .isb:hover{ color: var(--t1); }
+.impseg .isb.on{ background: color-mix(in oklab, var(--foam) 22%, transparent); color: var(--t1); }
+/* A suggestion is dashed, a decision is solid — the difference must survive
+   a glance, or the pre-fill quietly becomes the advisor's opinion. */
+.impseg .isb.sug{ box-shadow: inset 0 0 0 1px dashed; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foam) 45%, transparent); color: var(--t2); }
+.sughint{ font-family: var(--mono); font-size: 8.5px; color: var(--t4); }
+
+/* ── the confirm rail ── */
+.crail{ width: 292px; flex: none; display: flex; flex-direction: column; gap: 8px;
+  padding: 14px; border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge);
+  overflow-y: auto; min-height: 0; }
+.ccard{ display: flex; flex-direction: column; gap: 7px; padding: 11px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent); }
+.ccard.tent{ background: color-mix(in oklab, var(--iris) 4%, transparent);
+  box-shadow: none; border: 1px dashed var(--iris-b); }
+.ccard .ct{ font-size: 13px; color: var(--t1); }
+.ccard .cw{ font-family: var(--mono); font-size: 9.5px; color: var(--t3);
+  font-variant-numeric: tabular-nums; }
+.aiprep{ display: flex; flex-direction: column; gap: 3px; }
+.prepin{ font: inherit; font-size: 11.5px; line-height: 1.5; color: var(--t1);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--r-sm); padding: 6px 8px; resize: vertical; min-height: 34px; }
+.prepin:focus{ outline: none; border-color: color-mix(in oklab, var(--foam) 40%, transparent); }
+.prepin::placeholder{ color: var(--t4); }
+
+/* ── the overlay: the other view, summoned over the main one ── */
+.calover{ position: absolute; inset: 0; z-index: 30; display: flex;
+  align-items: stretch; justify-content: center; padding: 8px 0; }
+.covback{ position: absolute; inset: -14px -22px -20px;
+  background: color-mix(in oklab, var(--background) 55%, transparent);
+  backdrop-filter: blur(3px); }
+.covpanel{ position: relative; flex: 1; max-width: 980px; display: flex;
+  flex-direction: column; gap: 10px; padding: 14px; border-radius: var(--r-xl);
+  background: var(--card); box-shadow: var(--edge), 0 18px 50px rgb(0 0 0 / .35); }
+
+/* ── the single-day page ── */
+.daycols2{ display: grid; grid-template-columns: minmax(340px, 1.1fr) 1fr;
+  gap: 12px; flex: 1; min-height: 0; }
+.daycols2 .dayside{ padding: 16px 18px; }
+.dayslots{ display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0;
+  border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); padding: 14px; }
+.dslot{ display: flex; flex-direction: column; gap: 8px; padding: 11px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+.dslot.tent{ background: color-mix(in oklab, var(--iris) 4%, transparent);
+  border: 1px dashed var(--iris-b); }
+.dslot .dsl{ display: flex; flex-direction: column; gap: 2px; }
+.dslot .dst{ font-size: 14px; color: var(--t1); }
+.dslot .dsw{ font-family: var(--mono); font-size: 9.5px; color: var(--t3); }
+
+/* Unrated marker on a month cell — the honest "?" */
+.grid .unm{ font-family: var(--mono); font-size: 9px; color: var(--t3);
+  border: 1px dashed color-mix(in oklab, var(--foreground) 30%, transparent);
+  border-radius: 50%; width: 13px; height: 13px; display: inline-flex;
+  align-items: center; justify-content: center; }
+
+/* Kept for the old layout's leftovers elsewhere. */
 .calcols{ display: grid; grid-template-columns: minmax(520px, 1.75fr) minmax(280px, 1fr);
   gap: 12px; flex: 1; min-height: 0; }
 

@@ -19,6 +19,8 @@ let source: CalendarSource = seedCalendar();
 let today: CalendarEvent[] = [];
 let month: CalendarEvent[] = [];
 let monthAnchor = 0;
+let week: CalendarEvent[] = [];
+let weekAnchor = 0;
 
 /** The clock the day is measured against. Live once the clock is live. */
 export function nowMs(): number {
@@ -33,10 +35,46 @@ export function calendarDay(): CalendarEvent[] {
 /** Re-read the day. Called at boot and after anything that changes it. */
 export async function refreshCalendar(): Promise<void> {
   today = await source.day(nowMs());
-  // The month view reads the same cache, so a booking made anywhere has to
-  // reach it too — otherwise a new block appears on the day page and the month
-  // grid keeps showing the old count until something else happens to refetch.
+  // The month and week views read their own caches, so a booking made anywhere
+  // has to reach them too — otherwise a new block appears on the day page and
+  // the grids keep showing the old state until something else refetches.
   if (monthAnchor !== 0) await refreshMonth(monthAnchor);
+  if (weekAnchor !== 0) await refreshWeek(weekAnchor);
+}
+
+/** The Monday 00:00 of the week containing `ms`, in local time. */
+export function mondayOf(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d.getTime();
+}
+
+/** The week last fetched, Monday to Sunday, in start order. */
+export function calendarWeek(): CalendarEvent[] {
+  return week;
+}
+
+export function calendarWeekAnchor(): number {
+  return weekAnchor || mondayOf(nowMs());
+}
+
+/**
+ * Fetch one week. Same tail-of-upcoming trick as the month — see refreshMonth
+ * for why the apparent waste is bounded by the sync window.
+ */
+export async function refreshWeek(anchorMs: number): Promise<void> {
+  const start = mondayOf(anchorMs);
+  const end = start + 7 * 86_400_000;
+
+  weekAnchor = start;
+  const all = await source.upcoming(end);
+  week = all
+    .filter((e) => {
+      const t = Date.parse(e.at);
+      return t >= start && t < end;
+    })
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
 /** Everything in the month last fetched, in start order. */

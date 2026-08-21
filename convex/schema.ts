@@ -214,6 +214,12 @@ export default defineSchema({
     inferredCite: v.optional(v.string()),
     /** A conferencing link, which is also how an online meeting is detected. */
     conferenceUrl: v.optional(v.string()),
+    /** Advisor-set weight. Absent means unrated, which the UI shows as such. */
+    importance: v.optional(v.string()),
+    /** The advisor's own prep note, written at confirm time or after. */
+    prepUser: v.optional(v.string()),
+    /** Assistant-suggested prep, newline-joined. */
+    prepAi: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index("by_google", ["googleId"])

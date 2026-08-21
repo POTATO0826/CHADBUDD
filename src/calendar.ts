@@ -29,12 +29,31 @@ import { schedule } from "../data/schedule.ts";
 /** Whether a booking is real yet. Mirrors Google's own event status. */
 export type Booking = "confirmed" | "tentative" | "cancelled";
 
+/**
+ * How much a meeting matters, set by the advisor.
+ *
+ * Three levels because three is the most anyone honestly distinguishes, and
+ * *absent* is a first-class state rather than a default: a meeting nobody has
+ * rated must look unrated, not routine. Shading an unrated day pale would say
+ * "nothing big here" about a day that might hold the biggest client on the
+ * book — the heatmap would lie exactly when it matters most.
+ */
+export type Importance = "routine" | "important" | "key";
+
+export const IMPORTANCE: readonly Importance[] = ["routine", "important", "key"];
+
 export interface CalendarEvent extends ScheduleSlot {
   booking: Booking;
   /** Set when the assistant created this from a message rather than a person. */
   inferredFrom?: { source: "telegram" | "email"; cite: string };
   /** Whether this can be moved without asking anyone else. */
   movable: boolean;
+  /** Advisor-set weight. Absent means nobody has been asked yet. */
+  importance?: Importance;
+  /** The advisor's own prep note, written at confirm time or after. */
+  prepUser?: string;
+  /** What the assistant suggests preparing, read from the conversation. */
+  prepAi?: string[];
 }
 
 /**
@@ -55,6 +74,15 @@ export interface CalendarSource {
   move(id: string, startMs: number): Promise<CalendarEvent>;
   /** Promote a tentative booking, or drop it. */
   settle(id: string, booking: Booking): Promise<CalendarEvent>;
+  /**
+   * Attach the advisor's judgement: importance, their prep note, or both.
+   * Separate from `settle` because rating happens on confirmed events too —
+   * a meeting added on the phone arrives confirmed and unrated.
+   */
+  annotate(
+    id: string,
+    patch: { importance?: Importance; prepUser?: string },
+  ): Promise<CalendarEvent>;
 }
 
 const ts = (iso: string): number => Date.parse(iso);
@@ -121,6 +149,17 @@ export function seedCalendar(): CalendarSource {
       });
       if (!settled) throw new Error(`No event ${id}`);
       return settled;
+    },
+
+    async annotate(id, patch) {
+      let noted: CalendarEvent | undefined;
+      events = events.map((e) => {
+        if (e.id !== id) return e;
+        noted = { ...e, ...patch };
+        return noted;
+      });
+      if (!noted) throw new Error(`No event ${id}`);
+      return noted;
     },
   };
 }

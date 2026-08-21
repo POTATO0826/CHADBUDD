@@ -35,8 +35,11 @@ import type { TaskKind } from "./inbox.ts";
 import { TASK_GLYPH, TASK_LABEL, decisions, inboxTotals, tasksOfKind } from "./inbox.ts";
 import { GATE_REASON, TIER_ACTION } from "./gates.ts";
 import { NOTIFY_THRESHOLD_MIN, conflictsFrom, delayText, laterToday, markRunningOver, overrunFor } from "./presence.ts";
-import { calendarDay, calendarMonth, calendarSource, nowMs, refreshCalendar, refreshMonth } from "./daysource.ts";
-import type { CalendarEvent } from "./calendar.ts";
+import { calendarDay, calendarMonth, calendarSource, calendarWeek, mondayOf, nowMs, refreshCalendar, refreshMonth, refreshWeek } from "./daysource.ts";
+import type { CalendarEvent, Importance } from "./calendar.ts";
+import { IMPORTANCE } from "./calendar.ts";
+import { BIG } from "../data/schedule.ts";
+import { holdings } from "../data/holdings.ts";
 import type { MarketRow, MaturingRow, Report, StaleRow } from "./desk.ts";
 import { deskView, dismissBrief, snoozeBrief } from "./desk.ts";
 import { initDrag } from "./drag.ts";
@@ -73,6 +76,16 @@ const tint = (colour: string, pct: number): string =>
 
 /* ── state ───────────────────────────────────────────────────────── */
 
+/**
+ * Which calendar view greets the advisor.
+ *
+ * Decided by a five-advisor council review rather than by taste — the verdict
+ * and its reasoning are in the working record. The toggle persists per user,
+ * so this only shapes the first opening and anyone who disagrees overrules it
+ * once, permanently.
+ */
+const DEFAULT_CAL_VIEW: "week" | "month" = "week";
+
 type IslandState = "idle" | "alert" | "call" | "peek" | "open";
 type Page = "home" | "clients" | "agenda" | "calendar" | "assist" | QueueKind;
 type Mode = "profile" | "record";
@@ -105,8 +118,14 @@ interface State {
   slot: string | null;
   /** Calendar page: first-of-month being shown. Null follows the clock. */
   month: number | null;
-  /** Calendar page: the day whose blocks are open. Null follows the clock. */
-  pick: number | null;
+  /** Calendar page: which view is the main one. Persisted per user. */
+  calView: "week" | "month";
+  /** Calendar page: whether the other view is open as an overlay. */
+  calOverlay: boolean;
+  /** Calendar page: the single-day page, or null for the main view. */
+  calDay: number | null;
+  /** Week view: Monday of the week shown. Null follows the clock. */
+  wk: number | null;
   /** Desk: the expanded row, by brief id. Null is everything collapsed. */
   desk: string | null;
   /** Desk: which market hit's draft is open inside an expanded event. */
@@ -148,7 +167,18 @@ const state: State = {
   up: null,
   slot: null,
   month: null,
-  pick: null,
+  calView: ((): "week" | "month" => {
+    try {
+      const saved = localStorage.getItem("cb-calview");
+      if (saved === "week" || saved === "month") return saved;
+    } catch {
+      /* private mode: the default stands */
+    }
+    return DEFAULT_CAL_VIEW;
+  })(),
+  calOverlay: false,
+  calDay: null,
+  wk: null,
   desk: null,
   deskHit: null,
   q: "",
@@ -779,53 +809,10 @@ function agendaPage(): string {
    that comes before booking anything — "what does that week already look
    like". */
 
-/**
- * What counts as load.
- *
- * Time in front of people, and the driving between it. Focus and admin blocks
- * are work but they are the advisor's own to move, and breaks are the opposite
- * of load — shading a day darker because it has a protected lunch in it would
- * punish exactly the habit the assistant is trying to defend.
- */
-const LOAD_KINDS: ReadonlySet<string> = new Set(["meeting", "call", "travel"]);
-
-function loadMinutes(events: CalendarEvent[]): number {
-  return events.reduce((n, x) => (LOAD_KINDS.has(x.kind) ? n + x.minutes : n), 0);
-}
-
-/**
- * Hours of committed time at which a day moves up a step.
- *
- * Four steps, and it stops. A ten-hour day and a six-hour day are drawn
- * identically on purpose: past a point the difference is not something the
- * advisor can act on, and a scale that keeps deepening turns a working diary
- * into a chart of how bad things are. The ramp exists to help someone find a
- * gap, not to grade their week.
- */
-const LOAD_STEPS = [2, 4, 6];
-
-function loadStep(minutes: number): number {
-  if (minutes <= 0) return 0;
-  const hours = minutes / 60;
-  return 1 + LOAD_STEPS.filter((h) => hours >= h).length;
-}
-
-/**
- * The ramp: one hue, deepening.
- *
- * A single calm hue rather than green-to-red, and foam rather than love or
- * gold, because the busiest day of someone's week should not be coloured like
- * an error. Sequential data gets one hue by rule; which hue is the part that
- * decides whether the page reads as a plan or as an alarm.
- *
- * On a dark surface "darker" has to mean more ink, not lower lightness — a
- * genuinely darker fill on #232136 disappears into the background, so a packed
- * day would recede exactly where it should stand out. Density does the work.
- */
-const LOAD_FILL = ["transparent", "7%", "13%", "20%", "29%"];
-
-const loadTint = (step: number): string =>
-  step === 0 ? "transparent" : `color-mix(in oklab, var(--foam) ${LOAD_FILL[step]}, transparent)`;
+/* The density machinery that used to live here — load minutes, hour steps,
+   the four-step fill — is gone with the question it answered. The desk keeps
+   its own copy in src/desk.ts, where "how much committed time" is still the
+   right question to ask. */
 
 const monthFmt = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" });
 
@@ -841,11 +828,90 @@ const startOfDay = (ms: number): number => {
   return d.getTime();
 };
 
+/* ── importance, drawn ──────────────────────────────────────────────
+   The heatmap changed its question. Density asked "how packed"; importance
+   asks "how heavy" — and a day with one meeting with the biggest client on
+   the book outranks four routine check-ins. The shade of a day is the weight
+   of its heaviest meeting, never a sum, and *unrated* is shown as unrated:
+   silently treating it as routine would make the map lie exactly where it
+   matters most. */
+
+const IMP_RANK: Record<Importance, number> = { routine: 1, important: 2, key: 3 };
+
+/* One calm hue deepening. Key does not wear gold or red on purpose —
+   importance is not alarm, and a heavy week must not read as an incident. */
+const IMP_FILL: Record<Importance, string> = { routine: "8%", important: "19%", key: "32%" };
+
+const impTint = (imp: Importance | null): string =>
+  imp === null ? "transparent" : `color-mix(in oklab, var(--foam) ${IMP_FILL[imp]}, transparent)`;
+
+/** A day's weight: its heaviest rated meeting, and whether any await rating. */
+function dayImportance(list: CalendarEvent[]): { imp: Importance | null; unrated: boolean } {
+  let imp: Importance | null = null;
+  let unrated = false;
+  for (const ev of list) {
+    if (!BIG.has(ev.kind)) continue;
+    if (ev.importance === undefined) {
+      unrated = true;
+      continue;
+    }
+    if (imp === null || IMP_RANK[ev.importance] > IMP_RANK[imp]) imp = ev.importance;
+  }
+  return { imp, unrated };
+}
+
 /**
- * The grid, including the days either side that complete the first and last
- * weeks. Those are drawn faint and are not clickable: they belong to another
- * month, and the events for them were never fetched, so a count on them would
- * be a zero that means "not asked" rather than "nothing booked".
+ * What the book says this meeting is probably worth.
+ *
+ * The council review's decisive fix: an advisor with hundreds of clients will
+ * not hand-rate every meeting, and a heatmap built on sparse voluntary tags
+ * looks authoritative while lying. So the rating arrives pre-filled from data
+ * the app already holds — how much the client has with you, whether anything
+ * of theirs matures inside the window, how long their holdings have gone
+ * without an update — and confirming accepts it in one click. The advisor
+ * always outranks the suggestion; the suggestion only outranks silence.
+ */
+function suggestImportance(ev: CalendarEvent): Importance {
+  if (!ev.withClient) return "routine";
+  const theirs = holdings.filter((h) => h.client === ev.withClient);
+  if (theirs.length === 0) return "routine";
+
+  const total = theirs.reduce((n, h) => n + h.value, 0);
+  const maturingSoon = theirs.some((h) => h.maturesInDays !== undefined && h.maturesInDays <= 14);
+  const stale = theirs.some((h) => h.lastUpdateDaysAgo >= 90);
+
+  if (maturingSoon || total >= 150_000) return "key";
+  if (stale || total >= 50_000) return "important";
+  return "routine";
+}
+
+/**
+ * The three-way control. `cur` is what the advisor set; `suggested` is what
+ * the book proposes when they have not — drawn dashed, never solid, because a
+ * suggestion wearing the same ink as a decision would erase the difference.
+ */
+function impSeg(id: string, cur?: Importance, suggested?: Importance): string {
+  return `<span class="impseg" role="group" aria-label="Importance">${IMPORTANCE.map(
+    (v) =>
+      `<button class="isb${cur === v ? " on" : cur === undefined && suggested === v ? " sug" : ""}" data-act="cal-set" data-ev="${e(id)}" data-imp="${v}">${v}</button>`,
+  ).join("")}</span>`;
+}
+
+const IMP_LEGEND = `
+  <div class="ramp">
+    <span class="lbl">importance</span>
+    <span class="sw" style="--fill:${impTint("routine")}"></span>
+    <span class="sw" style="--fill:${impTint("important")}"></span>
+    <span class="sw" style="--fill:${impTint("key")}"></span>
+    <span class="rt">routine · important · key — shading is importance, not volume · ? = unrated</span>
+  </div>`;
+
+/**
+ * The month, shaded by weight.
+ *
+ * Grid mechanics unchanged from the density era: lead/tail days of the
+ * neighbouring months are holes, chips carry what is on the day, counts stay
+ * as text. Only the meaning of the fill changed.
  */
 function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
   const first = new Date(anchorMs);
@@ -857,7 +923,6 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
   const lead = (first.getDay() + 6) % 7;
 
   const today = startOfDay(nowMs());
-  const picked = state.pick === null ? today : startOfDay(state.pick);
 
   const byDay = new Map<number, CalendarEvent[]>();
   for (const ev of events) {
@@ -874,18 +939,12 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
   for (let d = 1; d <= daysInMonth; d++) {
     const at = new Date(first.getFullYear(), first.getMonth(), d).getTime();
     const list = byDay.get(at) ?? [];
-    const step = loadStep(loadMinutes(list));
+    const { imp, unrated } = dayImportance(list);
     const isToday = at === today;
-    const isPicked = at === picked;
     const weekend = [5, 6].includes((new Date(at).getDay() + 6) % 7);
 
     const n = list.length;
 
-    /* What is actually on the day, not just how much of it. A number alone
-       answers "how busy" and leaves "busy with what" to a second click — and
-       on a page whose job is deciding where to put a meeting, that second
-       click is the whole question. Three fit; the rest become a count, because
-       a cell that grows with its contents breaks the grid it belongs to. */
     const chips = list
       .slice(0, CHIPS_PER_CELL)
       .map((x) => {
@@ -900,13 +959,14 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
     const over = n - CHIPS_PER_CELL;
 
     cells.push(`
-      <button class="cell${isToday ? " today" : ""}${isPicked ? " on" : ""}${weekend ? " wk" : ""}"
-        data-act="pick-day" data-day="${at}" data-step="${step}"
-        style="--fill:${loadTint(step)}"
+      <button class="cell${isToday ? " today" : ""}${state.calDay === at ? " on" : ""}${weekend ? " wk" : ""}"
+        data-act="cal-day" data-day="${at}"
+        style="--fill:${impTint(imp)}"
         aria-current="${isToday ? "date" : "false"}"
         aria-label="${e(new Date(at).toDateString())}, ${n} ${n === 1 ? "entry" : "entries"}">
         <span class="top">
           <span class="dn">${d}</span>
+          ${unrated ? `<span class="unm" title="Has unrated meetings">?</span>` : ""}
           ${n ? `<span class="cn">${n}</span>` : ""}
         </span>
         <span class="chips">${chips}${over > 0 ? `<span class="more">+${over} more</span>` : ""}</span>
@@ -1001,64 +1061,344 @@ function dayBlocks(dayMs: number, events: CalendarEvent[]): string {
   return `<div class="track">${hours.join("")}<div class="blocks">${blocks}</div></div>`;
 }
 
-function calendarPage(): string {
+/* ── the calendar page: one main view, the other summoned ──────────
+   Week and month never share the row. Whichever the advisor made main takes
+   the page; the other slides over it on demand and gets out. Clicking any
+   day — a week column head or a month cell — becomes the single-day page.
+   To the right, the confirm rail: every meeting ChadBuddy created from a
+   thread, and every meeting that arrived from Google sync unrated, queues
+   there until a person has decided what it is. Nothing reaches the heatmap
+   unrated without having been asked about once. */
+
+const DAY_MS = 86_400_000;
+
+function findCalEvent(id: string): CalendarEvent | undefined {
+  return (
+    calendarWeek().find((x) => x.id === id) ??
+    calendarMonth().find((x) => x.id === id) ??
+    calendarDay().find((x) => x.id === id)
+  );
+}
+
+const dayTitleFmt = new Intl.DateTimeFormat("en-GB", {
+  weekday: "long", day: "numeric", month: "long", timeZone: "Asia/Kuala_Lumpur",
+});
+const shortDayFmt = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric", month: "short", timeZone: "Asia/Kuala_Lumpur",
+});
+const railWhenFmt = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+  hour12: false, timeZone: "Asia/Kuala_Lumpur",
+});
+
+function weekTitle(anchor: number): string {
+  return `${shortDayFmt.format(anchor)} – ${shortDayFmt.format(anchor + 6 * DAY_MS)}`;
+}
+
+/**
+ * The week: Mon–Sun in a line, hours down the side, blocks to real time.
+ *
+ * One shared hour window across all seven days, fitted to the events rather
+ * than assumed — a 07:00 flight and a 20:00 call must both be inside it, and
+ * a fixed 9-to-6 would clip them silently.
+ */
+function weekGrid(anchor: number): string {
+  const events = calendarWeek();
+  const today = startOfDay(nowMs());
+
+  let from = 8 * 60;
+  let to = 18 * 60;
+  for (const ev of events) {
+    const start = Date.parse(ev.at);
+    const m0 = Math.round((start - startOfDay(start)) / 60_000);
+    from = Math.min(from, Math.floor(m0 / 60) * 60);
+    to = Math.max(to, Math.ceil((m0 + ev.minutes) / 60) * 60);
+  }
+  const span = to - from;
+
+  const hours: string[] = [];
+  for (let h = from; h <= to; h += 60) {
+    hours.push(`<span class="whr" style="top:${(((h - from) / span) * 100).toFixed(2)}%">${String(Math.floor(h / 60)).padStart(2, "0")}</span>`);
+  }
+
+  const cols = Array.from({ length: 7 }, (_, i) => {
+    // Malaysia has no DST, so day arithmetic in plain milliseconds is exact.
+    const day = anchor + i * DAY_MS;
+    const list = events
+      .filter((x) => startOfDay(Date.parse(x.at)) === day)
+      .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+
+    /* Same greedy lanes as the day view: first lane whose last block ended. */
+    const starts = list.map((x) => Date.parse(x.at));
+    const ends = list.map((x, j) => starts[j]! + x.minutes * 60_000);
+    const laneEnds: number[] = [];
+    const lane = starts.map((start, j) => {
+      const free = laneEnds.findIndex((endsAt) => endsAt <= start);
+      const at = free === -1 ? laneEnds.length : free;
+      laneEnds[at] = ends[j]!;
+      return at;
+    });
+    const lanes = Math.max(1, laneEnds.length);
+
+    const blocks = list
+      .map((x, j) => {
+        const m0 = Math.round((starts[j]! - day) / 60_000);
+        const top = ((m0 - from) / span) * 100;
+        const height = Math.max((x.minutes / span) * 100, 3.4);
+        const width = 100 / lanes;
+        const big = BIG.has(x.kind);
+        const impClass = !big ? " own" : x.importance ? ` imp-${x.importance[0]}` : " imp-u";
+
+        /* The dot is the weekly adjust control: tap to cycle the rating in
+           place. Everything else on the block opens the day. */
+        const dot = big
+          ? `<button class="impdot" data-act="cal-rate" data-ev="${e(x.id)}"
+               title="${x.importance ?? "unrated"} — tap to change">${x.importance ? "●" : "?"}</button>`
+          : "";
+
+        return `
+          <div class="wblk${impClass}${x.booking === "tentative" ? " tent" : ""}"
+            data-act="cal-day" data-day="${day}"
+            style="top:${top.toFixed(2)}%;height:${height.toFixed(2)}%;left:${(lane[j]! * width).toFixed(2)}%;width:calc(${width.toFixed(2)}% - 2px)">
+            ${dot}
+            <span class="bt">${e(hhmmOf(starts[j]!))}</span>
+            <span class="bn">${e(x.title)}</span>
+          </div>`;
+      })
+      .join("");
+
+    return `
+      <div class="wcol${day === today ? " today" : ""}">
+        <button class="whead" data-act="cal-day" data-day="${day}">
+          <span class="wd">${DOW[i]}</span><span class="wn">${new Date(day).getDate()}</span>
+        </button>
+        <div class="wtrack">${blocks}</div>
+      </div>`;
+  }).join("");
+
+  return `
+    <div class="wgrid">
+      <div class="wrail">${hours.join("")}</div>
+      ${cols}
+    </div>`;
+}
+
+function weekMain(): string {
+  const anchor = state.wk ?? mondayOf(nowMs());
+  return `
+    <div class="mnav">
+      <span class="hero-h d" style="font-size:19px">${e(weekTitle(anchor))}</span>
+      <button class="ico" data-act="wk-step" data-by="-1" aria-label="Previous week">‹</button>
+      <button class="btn" data-act="wk-step" data-by="0">Today</button>
+      <button class="ico" data-act="wk-step" data-by="1" aria-label="Next week">›</button>
+      <button class="btn" data-act="cal-over" style="margin-left:auto">Month ⌗</button>
+    </div>
+    ${weekGrid(anchor)}
+    ${IMP_LEGEND}`;
+}
+
+function monthMain(): string {
   const anchor = state.month ?? nowMs();
   const events = calendarMonth();
-  const picked = state.pick ?? nowMs();
+  return `
+    <div class="mnav">
+      <span class="hero-h d" style="font-size:19px">${e(monthFmt.format(anchor))}</span>
+      <button class="ico" data-act="month-step" data-by="-1" aria-label="Previous month">‹</button>
+      <button class="btn" data-act="month-step" data-by="0">Today</button>
+      <button class="ico" data-act="month-step" data-by="1" aria-label="Next month">›</button>
+      <button class="btn" data-act="cal-over" style="margin-left:auto">Week ☰</button>
+    </div>
+    ${monthGrid(anchor, events)}
+    ${IMP_LEGEND}`;
+}
 
-  const busiest = (() => {
-    let worst = 0;
-    const byDay = new Map<number, CalendarEvent[]>();
-    for (const ev of events) {
-      const k = startOfDay(Date.parse(ev.at));
-      byDay.set(k, [...(byDay.get(k) ?? []), ev]);
-    }
-    for (const list of byDay.values()) worst = Math.max(worst, loadMinutes(list));
-    return worst;
+/**
+ * The other view, summoned over the main one.
+ *
+ * Escape stays sacred — one press still exits the dashboard, a rule fought
+ * for and kept. The overlay closes on the backdrop or the ✕ instead.
+ */
+function calOverlay(): string {
+  const other = state.calView === "month" ? "week" : "month";
+  const inner =
+    other === "month"
+      ? `<div class="mnav">
+          <span class="hero-h d" style="font-size:17px">${e(monthFmt.format(state.month ?? nowMs()))}</span>
+          <button class="ico" data-act="month-step" data-by="-1">‹</button>
+          <button class="btn" data-act="month-step" data-by="0">Today</button>
+          <button class="ico" data-act="month-step" data-by="1">›</button>
+          <button class="btn" data-act="cal-view" data-view="month">Make main</button>
+          <button class="ico" data-act="cal-over" style="margin-left:auto" aria-label="Close">✕</button>
+        </div>
+        ${monthGrid(state.month ?? nowMs(), calendarMonth())}`
+      : `<div class="mnav">
+          <span class="hero-h d" style="font-size:17px">${e(weekTitle(state.wk ?? mondayOf(nowMs())))}</span>
+          <button class="ico" data-act="wk-step" data-by="-1">‹</button>
+          <button class="btn" data-act="wk-step" data-by="0">Today</button>
+          <button class="ico" data-act="wk-step" data-by="1">›</button>
+          <button class="btn" data-act="cal-view" data-view="week">Make main</button>
+          <button class="ico" data-act="cal-over" style="margin-left:auto" aria-label="Close">✕</button>
+        </div>
+        ${weekGrid(state.wk ?? mondayOf(nowMs()))}`;
+
+  return `
+    <div class="calover">
+      <div class="covback" data-act="cal-over"></div>
+      <div class="covpanel">${inner}</div>
+    </div>`;
+}
+
+/* ── the confirm rail ─────────────────────────────────────────────── */
+
+/** What still needs a person: tentative bookings, and unrated meetings. */
+function pendingEvents(): CalendarEvent[] {
+  const seen = new Map<string, CalendarEvent>();
+  for (const ev of [...calendarWeek(), ...calendarMonth(), ...calendarDay()]) seen.set(ev.id, ev);
+  const now = nowMs();
+  return [...seen.values()]
+    .filter((ev) => BIG.has(ev.kind))
+    .filter(
+      (ev) =>
+        ev.booking === "tentative" ||
+        (ev.importance === undefined && Date.parse(ev.at) + ev.minutes * 60_000 > now),
+    )
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+const RAIL_CAP = 4;
+
+/**
+ * One card per decision. Two sources, one queue: a block ChadBuddy read out
+ * of a thread (tentative, cited), and a meeting that arrived from Google sync
+ * without a rating — booked on the phone, added by hand, either way nobody
+ * has said how much it matters yet.
+ *
+ * The prep field lives here because the confirm moment is when the advisor
+ * knows why the meeting exists. A note typed later is a chore; the same note
+ * typed now is just finishing the thought.
+ */
+function railCard(ev: CalendarEvent): string {
+  const tent = ev.booking === "tentative";
+  const who = ev.withClient ? clientById(ev.withClient.toLowerCase()).name : ev.withName;
+  const ai = ev.prepAi ?? [];
+
+  return `
+    <div class="ccard${tent ? " tent" : ""}">
+      <span class="lbl" style="color:${tent ? "var(--iris)" : "var(--t3)"}">${tent ? "pencilled in — confirm it" : "new — rate it"}</span>
+      <span class="ct">${e(ev.title)}</span>
+      <span class="cw">${e(railWhenFmt.format(Date.parse(ev.at)))} · ${ev.minutes} min${who ? ` · ${e(who)}` : ""}</span>
+      ${
+        tent && ev.inferredFrom && ev.withClient
+          ? `<div class="citerow">${citeChips([ev.inferredFrom.cite], ev.withClient)}</div>`
+          : ""
+      }
+      ${impSeg(ev.id, ev.importance, suggestImportance(ev))}
+      ${
+        ev.importance === undefined
+          ? `<span class="sughint">suggested from their book — tap to change</span>`
+          : ""
+      }
+      ${
+        ai.length
+          ? `<div class="aiprep"><span class="lbl" style="color:var(--iris)">chadbuddy suggests</span>
+              ${ai.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>`
+          : ""
+      }
+      <textarea class="prepin" id="prep-${e(ev.id)}" rows="2"
+        placeholder="Your prep note — what to have ready">${e(ev.prepUser ?? "")}</textarea>
+      <div class="ctxacts">
+        ${
+          tent
+            ? `<button class="btn acc" data-act="rail-confirm" data-ev="${e(ev.id)}">Confirm</button>
+               <button class="btn" data-act="rail-drop" data-ev="${e(ev.id)}">Remove</button>`
+            : `<button class="btn acc" data-act="rail-save" data-ev="${e(ev.id)}">Save</button>`
+        }
+      </div>
+    </div>`;
+}
+
+function calRail(): string {
+  const pending = pendingEvents();
+  if (pending.length === 0) return "";
+  const more = pending.length - RAIL_CAP;
+  return `
+    <div class="crail sc">
+      <span class="lbl">needs deciding · ${pending.length}</span>
+      ${pending.slice(0, RAIL_CAP).map(railCard).join("")}
+      ${more > 0 ? `<span class="dmore">+${more} more, oldest first</span>` : ""}
+    </div>`;
+}
+
+/* ── the single-day page ──────────────────────────────────────────── */
+
+function dayPage(dayMs: number): string {
+  const events = (() => {
+    const seen = new Map<string, CalendarEvent>();
+    for (const ev of [...calendarMonth(), ...calendarWeek(), ...calendarDay()]) seen.set(ev.id, ev);
+    return [...seen.values()];
   })();
+  const list = events
+    .filter((x) => startOfDay(Date.parse(x.at)) === startOfDay(dayMs))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
-  const committed = loadMinutes(events);
+  const slots = list
+    .filter((x) => BIG.has(x.kind))
+    .map((x) => {
+      const tent = x.booking === "tentative";
+      const ai = x.prepAi ?? [];
+      return `
+        <div class="dslot${tent ? " tent" : ""}">
+          <div class="dsl">
+            <span class="kind">${e(SLOT_GLYPH[x.kind] ?? "◍")} ${e(x.kind)}</span>
+            <span class="dst">${e(x.title)}</span>
+            <span class="dsw">${e(hhmmOf(Date.parse(x.at)))} · ${x.minutes} min${x.where ? ` · ${e(x.where)}` : ""}</span>
+          </div>
+          ${impSeg(x.id, x.importance)}
+          ${
+            ai.length
+              ? `<div class="aiprep"><span class="lbl" style="color:var(--iris)">chadbuddy suggests</span>
+                  ${ai.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>`
+              : ""
+          }
+          <textarea class="prepin" id="prep-${e(x.id)}" rows="2"
+            placeholder="Your prep note">${e(x.prepUser ?? "")}</textarea>
+          <div class="ctxacts">
+            ${
+              tent
+                ? `<button class="btn acc" data-act="rail-confirm" data-ev="${e(x.id)}">Confirm</button>
+                   <button class="btn" data-act="rail-drop" data-ev="${e(x.id)}">Remove</button>`
+                : `<button class="btn" data-act="rail-save" data-ev="${e(x.id)}">Save note</button>`
+            }
+            ${x.withClient ? `<button class="btn" data-act="open-client" data-client="${x.withClient}">Open ${e(clientById(x.withClient.toLowerCase()).name.split(" ")[0]!)}</button>` : ""}
+          </div>
+        </div>`;
+    })
+    .join("");
 
   return `
     <div class="page fixed">
-      <div class="qhead">
-        <span class="hero-h d">${e(monthFmt.format(anchor))}</span>
-        <span class="mt">${events.length} ${events.length === 1 ? "entry" : "entries"} ·
-          ${Math.round(committed / 60)}h committed · busiest day
-          ${busiest === 0 ? "—" : `${Math.round((busiest / 60) * 10) / 10}h`}. Shading is time in
-          front of people and the driving between it, not everything on the diary.</span>
+      <div class="qhead" style="flex-direction:row;align-items:baseline;gap:14px">
+        <button class="btn" data-act="cal-back">‹ ${state.calView === "month" ? "Month" : "Week"}</button>
+        <span class="hero-h d">${e(dayTitleFmt.format(dayMs))}</span>
       </div>
-
-      <div class="calcols">
-        <div class="month">
-          <div class="mnav">
-            <button class="ico" data-act="month-step" data-by="-1" aria-label="Previous month">‹</button>
-            <button class="btn" data-act="month-step" data-by="0">Today</button>
-            <button class="ico" data-act="month-step" data-by="1" aria-label="Next month">›</button>
-          </div>
-
-          ${monthGrid(anchor, events)}
-
-          <div class="ramp">
-            <span class="lbl">committed time</span>
-            <span class="sw" style="--fill:${loadTint(0)}"></span>
-            <span class="sw" style="--fill:${loadTint(1)}"></span>
-            <span class="sw" style="--fill:${loadTint(2)}"></span>
-            <span class="sw" style="--fill:${loadTint(3)}"></span>
-            <span class="sw" style="--fill:${loadTint(4)}"></span>
-            <span class="rt">clear · under 2h · 4h · 6h and beyond</span>
-          </div>
-        </div>
-
-        <div class="dayside sc">
-          <div class="dhead">
-            <span class="hero-h d" style="font-size:21px">${e(
-              new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(picked),
-            )}</span>
-          </div>
-          ${dayBlocks(picked, events)}
-        </div>
+      <div class="daycols2">
+        <div class="dayside sc">${dayBlocks(dayMs, events)}</div>
+        <div class="dayslots sc">${slots || `<div class="empty"><span class="hero-h d" style="font-size:19px">No meetings</span><span class="mt">Own time only. Worth protecting.</span></div>`}</div>
       </div>
+    </div>`;
+}
+
+function calendarPage(): string {
+  if (state.calDay !== null) return dayPage(state.calDay);
+
+  const rail = calRail();
+  return `
+    <div class="page fixed">
+      <div class="calwrap${rail ? " withrail" : ""}">
+        <div class="calmain">${state.calView === "month" ? monthMain() : weekMain()}</div>
+        ${rail}
+      </div>
+      ${state.calOverlay ? calOverlay() : ""}
     </div>`;
 }
 
@@ -2515,25 +2855,16 @@ island.addEventListener("click", (ev) => {
       }
       return;
     }
-    /* Stepping months. `0` is Today, which returns both the grid and the
-       open day to now rather than only one of them — landing on this month
-       with a day from three months ago still selected reads as a bug. */
     case "month-step": {
       const by = Number(hit.dataset.by ?? "0");
       const base = new Date(state.month ?? nowMs());
       base.setDate(1);
       base.setHours(0, 0, 0, 0);
 
-      if (by === 0) {
-        state.month = null;
-        state.pick = null;
-      } else {
+      if (by === 0) state.month = null;
+      else {
         base.setMonth(base.getMonth() + by);
         state.month = base.getTime();
-        /* The open day moves with the grid. Landing on November with a day in
-           August still selected leaves the right-hand panel showing a date
-           that is not on screen, which reads as the arrows being broken. */
-        state.pick = base.getTime();
       }
 
       void refreshMonth(state.month ?? nowMs()).then(render);
@@ -2541,14 +2872,119 @@ island.addEventListener("click", (ev) => {
       return;
     }
 
-    case "pick-day": {
-      const at = Number(hit.dataset.day ?? "");
-      if (Number.isFinite(at)) state.pick = at;
+    case "wk-step": {
+      const by = Number(hit.dataset.by ?? "0");
+      if (by === 0) state.wk = null;
+      else state.wk = mondayOf(state.wk ?? nowMs()) + by * 7 * 86_400_000;
+      void refreshWeek(state.wk ?? nowMs()).then(render);
       render();
       return;
     }
 
-    /* A block with nobody on the other side. The button still exists so the
+    /* A day, from either view. Closing the overlay here is what makes the
+       month usable as a jump: summon it, click the day, land on the day. */
+    case "cal-day": {
+      const at = Number(hit.dataset.day ?? "");
+      if (Number.isFinite(at)) {
+        state.calDay = at;
+        state.calOverlay = false;
+        void refreshMonth(at).then(render);
+      }
+      render();
+      return;
+    }
+
+    case "cal-back":
+      state.calDay = null;
+      render();
+      return;
+
+    case "cal-over":
+      state.calOverlay = !state.calOverlay;
+      render();
+      return;
+
+    case "cal-view": {
+      const v = hit.dataset.view === "month" ? "month" : "week";
+      state.calView = v;
+      state.calOverlay = false;
+      try {
+        localStorage.setItem("cb-calview", v);
+      } catch {
+        /* private mode: the choice lasts the session */
+      }
+      render();
+      return;
+    }
+
+    /* The weekly dot: cycle the rating in place. An unrated meeting jumps
+       straight to "important" — that is the likeliest intent of the tap. */
+    case "cal-rate": {
+      const id = hit.dataset.ev;
+      const ev = id ? findCalEvent(id) : undefined;
+      if (id && ev) {
+        const next: Importance =
+          ev.importance === undefined || ev.importance === "routine"
+            ? ev.importance === undefined
+              ? "important"
+              : "important"
+            : ev.importance === "important"
+              ? "key"
+              : "routine";
+        void calendarSource()
+          .annotate(id, { importance: next })
+          .then(refreshCalendar)
+          .then(render)
+          .catch((err) => console.error("[chadbuddy] could not rate", id, err));
+      }
+      return;
+    }
+
+    /* The explicit three-way control, on rail cards and the day page. */
+    case "cal-set": {
+      const id = hit.dataset.ev;
+      const imp = hit.dataset.imp as Importance | undefined;
+      if (id && imp) {
+        void calendarSource()
+          .annotate(id, { importance: imp })
+          .then(refreshCalendar)
+          .then(render)
+          .catch((err) => console.error("[chadbuddy] could not rate", id, err));
+      }
+      return;
+    }
+
+    /* Confirming from the rail writes everything at once: the rating chosen
+       (routine if none was), the prep note as typed, and the booking itself.
+       All three land on the real Google event, because the calendar on the
+       advisor's phone is the real one. */
+    case "rail-confirm":
+    case "rail-save":
+    case "rail-drop": {
+      const id = hit.dataset.ev;
+      if (!id) return;
+      const ev = findCalEvent(id);
+      const ta = document.getElementById(`prep-${id}`) as HTMLTextAreaElement | null;
+      const prepUser = ta?.value.trim() ?? "";
+
+      const run = async (): Promise<void> => {
+        if (act === "rail-drop") {
+          await calendarSource().settle(id, "cancelled");
+        } else {
+          await calendarSource().annotate(id, {
+            importance: ev?.importance ?? (ev ? suggestImportance(ev) : "routine"),
+            ...(prepUser !== "" || ev?.prepUser ? { prepUser } : {}),
+          });
+          if (act === "rail-confirm") await calendarSource().settle(id, "confirmed");
+        }
+        await refreshCalendar();
+        render();
+      };
+      void run().catch((err) => console.error("[chadbuddy] rail action failed", id, err));
+      return;
+    }
+
+    /* A block with nobody on the other side.    /* A block with nobody on the other side. The button still exists so the
        whole row is one hit target rather than a mix of live and dead pixels. */
     case "noop":
       return;
@@ -2825,6 +3261,7 @@ void refreshCalendar().then(render);
    visit, so stepping onto the tab shows a filled grid rather than an empty one
    that populates a frame later — an empty calendar reads as a free month. */
 void refreshMonth(nowMs()).then(render);
+void refreshWeek(nowMs()).then(render);
 
 render();
 watchHotRect(island);

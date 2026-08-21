@@ -152,6 +152,7 @@ export const consider = internalAction({
         // Nobody confirmed this to the advisor. The whole safety property.
         tentative: true,
         inferredCite: a.cite,
+        prepAi: `Re-read what was agreed: "${reading.phrase.slice(0, 140)}" (${a.cite})`,
       });
       return;
     }
