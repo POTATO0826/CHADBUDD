@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ChadBuddy · backend</title>
+<style>
+/* Rosé Pine Moon, the same palette index.html uses. Redeclared rather than
+   imported: this page must not depend on a stylesheet someone else is
+   actively editing. */
+:root {
+  --bg:#232136; --card:#2a273f; --overlay:#393552; --border:#44415a;
+  --t1:#e0def4; --t2:#c4b9e0; --t3:#908caa; --t4:#6e6a86;
+  --iris:#c4a7e7; --gold:#f6c177; --rose:#ea9a97; --love:#eb6f92;
+  --foam:#9ccfd8; --pine:#3e8fb0;
+  --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,monospace;
+  --sans:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+}
+* { box-sizing:border-box; }
+body {
+  margin:0; background:var(--bg); color:var(--t1);
+  font-family:var(--sans); font-size:14px; line-height:1.55;
+  display:grid; grid-template-columns:1fr 320px; grid-template-rows:auto 1fr;
+  min-height:100vh;
+}
+.top {
+  grid-column:1/-1; display:flex; align-items:center; justify-content:space-between;
+  gap:24px; padding:14px 22px; border-bottom:1px solid var(--border);
+  background:var(--card); position:sticky; top:0; z-index:2; flex-wrap:wrap;
+}
+.brand { font-weight:600; letter-spacing:-.01em; display:flex; align-items:center; gap:9px; }
+.brand .sub { color:var(--t4); font-weight:400; }
+.dot { width:8px; height:8px; border-radius:50%; background:var(--gold);
+  box-shadow:0 0 0 4px color-mix(in oklab, var(--gold) 18%, transparent); }
+.stats { display:flex; gap:18px; flex-wrap:wrap; color:var(--t3); font-size:12.5px; align-items:center; }
+.stats b { color:var(--t1); font-family:var(--mono); }
+.model { font-family:var(--mono); color:var(--iris); }
+.pair { font-family:var(--mono); padding:2px 8px; border-radius:99px;
+  border:1px solid var(--border); color:var(--t3); }
+.pair[data-state="open"] { color:var(--foam); border-color:color-mix(in oklab, var(--foam) 40%, transparent); }
+.pair[data-state="needs-login"], .pair[data-state="logged-out"] { color:var(--love); }
+
+main { padding:22px; display:flex; flex-direction:column; gap:22px; min-width:0; }
+aside { padding:22px 20px; border-left:1px solid var(--border); background:color-mix(in oklab, var(--card) 55%, var(--bg)); }
+
+.client { border:1px solid var(--border); border-radius:14px; background:var(--card); overflow:hidden; }
+.chead { display:flex; align-items:baseline; gap:11px; padding:13px 16px;
+  border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.chead h3 { margin:0; font-size:15px; font-weight:600; }
+.ckey { font-family:var(--mono); font-size:11px; color:var(--bg); background:var(--iris);
+  padding:2px 7px; border-radius:5px; font-weight:700; }
+.handle { color:var(--t4); font-size:12px; font-family:var(--mono); }
+.count { margin-left:auto; color:var(--t4); font-size:12px; font-family:var(--mono); }
+
+.idea { padding:15px 16px; border-top:1px solid color-mix(in oklab, var(--border) 55%, transparent); }
+.idea:first-of-type { border-top:none; }
+.idea header { display:flex; align-items:center; gap:10px; margin-bottom:7px; }
+.idea h4 { margin:0; font-size:14.5px; font-weight:600; flex:1; }
+.rank { font-family:var(--mono); font-size:11px; color:var(--t4); border:1px solid var(--border);
+  border-radius:5px; padding:1px 6px; }
+.intent { font-family:var(--mono); font-size:10.5px; text-transform:uppercase;
+  letter-spacing:.06em; padding:2px 8px; border-radius:99px; }
+[data-intent="send"] .intent { color:var(--foam); background:color-mix(in oklab, var(--foam) 15%, transparent); }
+[data-intent="hold"] .intent { color:var(--gold); background:color-mix(in oklab, var(--gold) 15%, transparent); }
+[data-intent="blocked"] .intent { color:var(--love); background:color-mix(in oklab, var(--love) 15%, transparent); }
+[data-intent="note"] .intent { color:var(--t3); background:color-mix(in oklab, var(--t3) 15%, transparent); }
+
+.why { margin:0 0 11px; color:var(--t2); }
+.draft { border-left:2px solid var(--iris); padding:8px 0 8px 12px; margin-bottom:11px; }
+.dlabel { font-family:var(--mono); font-size:11px; color:var(--t4); }
+.draft p { margin:4px 0 0; color:var(--t1); }
+
+/* The citations are the argument, not decoration — they get real weight. */
+.cites { display:flex; flex-direction:column; gap:5px; }
+.cite { display:flex; gap:9px; align-items:baseline; font-size:12.5px;
+  background:color-mix(in oklab, var(--overlay) 45%, transparent);
+  border-radius:7px; padding:6px 9px; }
+.cid { font-family:var(--mono); font-size:11px; color:var(--gold); flex-shrink:0; }
+.ctext { color:var(--t3); }
+.cite.bad { background:color-mix(in oklab, var(--love) 14%, transparent); }
+.cite.bad .cid, .cite.bad .ctext { color:var(--love); }
+
+.hatch { padding:15px 16px; color:var(--t4); font-size:13px;
+  background:repeating-linear-gradient(135deg, transparent 0 6px,
+    color-mix(in oklab, var(--border) 35%, transparent) 6px 7px); }
+
+aside h5 { margin:0 0 4px; font-size:11px; text-transform:uppercase;
+  letter-spacing:.08em; color:var(--t3); font-weight:600; }
+aside h5.mt { margin-top:22px; }
+.note { color:var(--t4); font-size:12px; margin:0 0 12px; }
+.note em { color:var(--t3); font-style:italic; }
+.chat { display:grid; grid-template-columns:1fr auto; gap:2px 8px; padding:7px 0;
+  border-bottom:1px solid color-mix(in oklab, var(--border) 50%, transparent); font-size:12.5px; }
+.cname { color:var(--t2); }
+.cmeta { font-family:var(--mono); font-size:11px; color:var(--t4); }
+.creason { grid-column:1/-1; font-size:11px; color:var(--t4); }
+.chat.ok .cname { color:var(--foam); }
+.chat.ok .creason { color:var(--foam); }
+.rej div { font-size:12.5px; color:var(--t3); font-family:var(--mono); }
+code { font-family:var(--mono); font-size:12px; color:var(--iris); }
+
+@media (max-width:940px) { body { grid-template-columns:1fr; } aside { border-left:none; border-top:1px solid var(--border); } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

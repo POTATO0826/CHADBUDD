@@ -1,0 +1,13 @@
+{
+  "//": "The demo is a browser bundle, so it needs DOM lib — the bridge tsconfig is Node-only. Separate config, same strictness.",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
+    "moduleDetection": "force", "types": ["bun-types"],
+    "allowImportingTsExtensions": true, "verbatimModuleSyntax": true, "noEmit": true,
+    "strict": true, "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true, "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true, "skipLibCheck": true
+  },
+  "include": ["."]
+}

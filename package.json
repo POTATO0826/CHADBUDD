@@ -28,7 +28,8 @@
     "tauri:build": "tauri build",
     "seed:load": "bun run bridge/seed-load.ts",
     "agent:run": "bunx convex run agent:analyzeAll",
-    "agent:verify": "bun run bridge/agent/verify-cites.ts"
+    "agent:verify": "bun run bridge/agent/verify-cites.ts",
+    "demo": "bun run demo/serve.ts"
   },
   "type": "module",
   "dependencies": {
