@@ -29,6 +29,33 @@ bun run bridge         # publishes chats, backfills history, listens
 
 `bun run tg:check` validates the Telegram credentials server-side without spending a login code.
 
+## Two backends, on purpose
+
+There is a Convex Cloud deployment as well as the docker one, and they hold different data. Cloud exists to be shared — a teammate cloning the repo has no docker backend and no Telegram session, so without it they see nothing but the frozen seed. Docker keeps the thing that must not be shared.
+
+| | holds | who can read it |
+|---|---|---|
+| **docker** `CONVEX_SELF_HOSTED_URL` | real Telegram threads | this machine only — ports bind to loopback |
+| **Cloud** `CONVEX_URL` | the four seed threads | anyone with the URL — these functions have no auth |
+
+Both halves resolve through `scripts/convex-url.ts`, which exports two functions that read the same variables in deliberately opposite order:
+
+- **`convexUrl()` — where processes WRITE. Self-hosted first.** `bridge/main.ts`, `seed-load.ts`, `demo-client.ts` and `verify-cites.ts` use it. The bridge is the one that matters: it holds the Telegram socket, so it is the only thing that can put a real client's words into a database. Self-hosted outranking Cloud is what stops `bun run bridge` from uploading real conversations to a deployment meant for sharing.
+- **`browserConvexUrl()` — where the page READS. `CONVEX_URL` first.** `server.ts` and `build.ts` bake it into the bundle as `__CONVEX_URL__` (`src/live.ts`), via `convexDefine()`.
+
+Point both variables at the same URL and the two collapse back into one backend.
+
+One resolver with one precedence order would be simpler and is the trap: every consumer imports the same module, so a single order either sends the page to a backend a teammate cannot reach, or sends the bridge to one that anyone can read.
+
+The Convex CLI refuses to guess: with `CONVEX_DEPLOYMENT` and the self-hosted pair both set it errors rather than picking one. So each target has its own script, and neither needs `.env.local` edited:
+
+```bash
+bun run convex:deploy   # push convex/ to Cloud
+bun run convex:dev      # push convex/ to docker, and watch
+```
+
+**`convex/` is typechecked now.** It never was: the root `tsconfig.json` covers only `data`, `src` and `scripts`, and `convex/tsconfig.json` didn't exist until the CLI generated it. Both deploy scripts typecheck before pushing, so errors in `convex/` now fail the deploy instead of reaching a backend.
+
 ## The contract
 
 Four reactive queries. Subscribe with the vanilla client — no React, which suits a renderer that swaps `innerHTML`:

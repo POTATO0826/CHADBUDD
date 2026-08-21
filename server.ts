@@ -7,7 +7,7 @@
 
 // Must match `build.devUrl` in src-tauri/tauri.conf.json — `tauri dev` runs this
 // server as its beforeDevCommand and then points the webview at that URL.
-import { convexDefine, convexUrl } from "./scripts/convex-url.ts";
+import { browserConvexUrl, convexDefine } from "./scripts/convex-url.ts";
 
 const PORT = Number(process.env.PORT ?? 4321);
 
@@ -56,3 +56,11 @@ Bun.serve({
 });
 
 console.log(`ChadBuddy dev → http://localhost:${PORT}   (add ?open to land on the dashboard)`);
+// Which backend the bundle points at, because "live mode shows nothing" is
+// almost always this line disagreeing with what the reader assumed.
+const baked = browserConvexUrl();
+console.log(
+  baked
+    ? `   live mode → ${baked}   (add ?live in a browser; Tauri is live by default)`
+    : `   no Convex configured — every path stays on the seed`,
+);

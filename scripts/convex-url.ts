@@ -30,33 +30,69 @@ function fromDeployment(value: string): string {
 }
 
 /**
- * The URL, or an empty string when nothing is configured.
+ * Resolve the first of `names` that is set, else derive from CONVEX_DEPLOYMENT.
  *
  * Empty rather than a thrown error or a guessed default: a checkout with no
  * backend has to keep building, because the seeded demo is the thing that must
  * never depend on Convex being reachable. src/live.ts falls back to loopback,
  * which is also what a self-hosted deployment answers on.
  */
-export function convexUrl(): string {
+function resolve(names: string[]): string {
   const env = process.env;
 
-  // Self-hosted wins when it is set, because someone who ran docker compose
-  // meant it — see docker-compose.yml for why that choice exists at all.
-  const explicit =
-    env["CONVEX_SELF_HOSTED_URL"] ||
-    env["CONVEX_URL"] ||
-    env["VITE_CONVEX_URL"] ||
-    env["NEXT_PUBLIC_CONVEX_URL"] ||
-    "";
-  if (explicit) return explicit.replace(/\/+$/, "");
+  for (const name of names) {
+    const value = env[name];
+    if (value) return value.replace(/\/+$/, "");
+  }
 
   const deployment = env["CONVEX_DEPLOYMENT"] ?? "";
   return deployment ? fromDeployment(deployment) : "";
 }
 
+/**
+ * Where processes on this machine WRITE. Self-hosted wins.
+ *
+ * The bridge, seed-load, demo-client and verify-cites all resolve through here,
+ * and the bridge is the one that matters: it holds the Telegram socket, so it
+ * is the only thing in the system that can put a real client's words into a
+ * database. Someone who ran `docker compose up -d` meant those words to stay on
+ * their machine — see the header of docker-compose.yml — so a self-hosted URL
+ * outranks a cloud one every time, and a cloud deployment configured for
+ * sharing cannot silently become the destination for real conversations.
+ */
+export function convexUrl(): string {
+  return resolve([
+    "CONVEX_SELF_HOSTED_URL",
+    "CONVEX_URL",
+    "VITE_CONVEX_URL",
+    "NEXT_PUBLIC_CONVEX_URL",
+  ]);
+}
+
+/**
+ * Where the bundled page READS. The shared deployment wins.
+ *
+ * Deliberately the opposite order, and the difference is the whole point: a
+ * teammate cloning this repo has no docker backend and no Telegram session, so
+ * a page hardwired to whatever this machine happens to run locally shows them
+ * nothing. Setting CONVEX_URL to a Convex Cloud deployment points the page at
+ * something they can actually reach, while `convexUrl()` above keeps the bridge
+ * writing locally.
+ *
+ * Point both variables at the same URL and the two collapse back into one.
+ */
+export function browserConvexUrl(): string {
+  return resolve([
+    "CONVEX_URL",
+    "VITE_CONVEX_URL",
+    "NEXT_PUBLIC_CONVEX_URL",
+    "CONVEX_SELF_HOSTED_URL",
+  ]);
+}
+
 /** What both bundlers pass as `define`. One place, so they cannot drift. */
 export function convexDefine(): Record<string, string> {
-  return { __CONVEX_URL__: JSON.stringify(convexUrl()) };
+  return { __CONVEX_URL__: JSON.stringify(browserConvexUrl()) };
 }
 
 /**

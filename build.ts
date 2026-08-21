@@ -5,7 +5,7 @@
  * what the Tauri shell will load from disk later.
  */
 
-import { convexDefine, convexUrl } from "./scripts/convex-url.ts";
+import { browserConvexUrl, convexDefine } from "./scripts/convex-url.ts";
 
 const built = await Bun.build({
   entrypoints: ["src/main.ts"],
@@ -31,4 +31,8 @@ await Bun.write("dist/fonts.css", Bun.file("assets/fonts.css"));
 const bytes = (await Bun.file("dist/app.js").text()).length;
 console.log(`dist/app.js  ${bytes.toLocaleString("en-US")} bytes`);
 console.log(`dist/index.html written.`);
-console.log(convexUrl() ? `convex       ${convexUrl()}` : `convex       not configured — the bundle will use the seed`);
+// browserConvexUrl, not convexUrl: report what was actually baked in. They
+// differ whenever the bridge writes to docker and the page reads from Cloud,
+// and a build log naming the wrong one is worse than no log at all.
+const baked = browserConvexUrl();
+console.log(baked ? `convex       ${baked}` : `convex       not configured — the bundle will use the seed`);
