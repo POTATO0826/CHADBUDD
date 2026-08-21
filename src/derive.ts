@@ -453,10 +453,11 @@ function build(thread: SeedThread): ClientView {
     bigA: latency.recent,
     bigB: questions.recent === "0.0/mo" ? "0 questions" : `${questions.recent} questions`,
     bigBTone: questions.severity > 0.6 ? "critical" : questions.severity > 0.3 ? "serious" : "good",
-    // Rosé Pine Moon: each hero washes the client's own status hue into the
-    // base, so the plate reads as a tint of the palette rather than a new colour.
-    heroA: tone === "good" ? "#2b3d4a" : tone === "butter" ? "#4a3f30" : tone === "warn" ? "#463a2c" : "#452a38",
-    heroB: "#232136",
+    // Each hero washes the client's own status hue into the surface, so the
+    // plate reads as a tint of the palette rather than as a new colour. Mixed
+    // from tokens rather than written as hex, so it tracks the token set.
+    heroA: `color-mix(in oklab, ${tone === "butter" ? "var(--m-warn)" : MARK[tone]} 26%, var(--card))`,
+    heroB: "var(--card)",
   };
 }
 

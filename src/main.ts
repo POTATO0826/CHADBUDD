@@ -17,12 +17,11 @@ import type { Idea, QueueKind, QueueRow } from "./copy.ts";
 import type { Cell, ClientView, RecMessage, Tone, Week } from "./derive.ts";
 import {
   ADVISOR, INK, MARK, clientById, clients, dateShort, humanGap, replyClock,
-  severityInk, severityMark, totals, weekBars,
+  totals, weekBars,
 } from "./derive.ts";
 import { openDays } from "./ledger.ts";
 import type { LedgerEntry } from "./ledger.ts";
 import { isTauri, quit, reportHotRect, watchHotRect } from "./shell.ts";
-import type { SignalScore } from "./score.ts";
 
 /* ── tiny helpers ────────────────────────────────────────────────── */
 
@@ -38,23 +37,51 @@ function need<T extends HTMLElement>(id: string): T {
 const inkOf = (t: Tone): string => (t === "butter" ? "var(--butter)" : INK[t]);
 const markOf = (t: Tone): string => (t === "butter" ? "var(--butter)" : MARK[t]);
 
+/**
+ * A status colour at partial strength — a fill behind a chip, a ring, a glow.
+ *
+ * These used to be written by suffixing two hex digits onto the token — mark
+ * followed by "29" — which worked only because custom-property substitution is
+ * textual and the tokens happened to be six-digit hex. They are `oklch()` now,
+ * and `oklch(...)29` is not a colour, so the alpha has to be applied rather
+ * than appended. `oklab` keeps the mix perceptually even across the four hues.
+ */
+const tint = (colour: string, pct: number): string =>
+  `color-mix(in oklab, ${colour} ${pct}%, transparent)`;
+
 /* ── state ───────────────────────────────────────────────────────── */
 
 type IslandState = "idle" | "alert" | "call" | "peek" | "open";
 type Page = "home" | "clients" | QueueKind;
 type Mode = "profile" | "record";
 type Filter = "all" | "client" | "flagged";
+/** The clients page is a grid of cards until one of them is opened. */
+type ClientView2 = "grid" | "detail";
+
+/** One turn in the ask-the-agent box. `sug` indexes into ideas[client]. */
+interface AskTurn {
+  from: "you" | "agent";
+  text: string;
+  sug?: number[];
+  cites?: string[];
+}
 
 interface State {
   st: IslandState;
   page: Page;
   sel: ClientKey;
-  mode: Mode;
   rule: number;
-  idea: number;
   filter: Filter;
   /** Message the current citation is pointing at. */
   lit: string | null;
+  /** Clients page: the grid of cards, or one client opened. */
+  cview: ClientView2;
+  /** Live text in the chat-history search box. */
+  q: string;
+  /** Ask-the-agent transcript, per client — switching clients keeps yours. */
+  ask: Partial<Record<ClientKey, AskTurn[]>>;
+  /** Draft in the ask composer. */
+  draft: string;
 }
 
 const top = clients[0]!;
@@ -63,11 +90,13 @@ const state: State = {
   st: "idle",
   page: "home",
   sel: top.key,
-  mode: "profile",
   rule: 0,
-  idea: 0,
   filter: "all",
   lit: null,
+  cview: "grid",
+  q: "",
+  ask: {},
+  draft: "",
 };
 
 const island = need("island");
@@ -274,23 +303,6 @@ function citeChips(ids: string[], client: ClientKey): string {
     .join("");
 }
 
-function meter(pct: number, colour: string, hatch = false): string {
-  const bg = hatch ? `background:transparent;background-image:var(--hatch)` : `background:${colour}`;
-  return `<span class="meter"><i style="width:${pct}%;${bg}"></i></span>`;
-}
-
-function signalRow(s: SignalScore): string {
-  const pct = Math.round(s.severity * 100);
-  return `
-    <div class="sig">
-      <div class="hd m">
-        <span class="k">${e(s.label)}</span>
-        <span class="v" style="color:${severityInk(s.severity)}">${e(s.recent)} · ${e(s.baseline)}</span>
-      </div>
-      ${meter(pct, severityMark(s.severity))}
-    </div>`;
-}
-
 /* ── open: chrome ────────────────────────────────────────────────── */
 
 const NAV: Array<{ page: Page; label: string; count: number }> = [
@@ -359,7 +371,7 @@ function overviewPage(): string {
       (d) => `
       <div class="col" title="${e(d.label)}: ${d.count} client message${d.count === 1 ? "" : "s"}">
         ${d.isPeak ? `<span class="tip">${d.count} on ${e(d.label)}</span>` : ""}
-        <i style="height:${Math.max(2, d.height)}%;background:${d.isPeak ? "var(--butter)" : "rgba(224,222,244,.24)"}"></i>
+        <i style="height:${Math.max(2, d.height)}%;background:${d.isPeak ? "var(--butter)" : "color-mix(in oklab, var(--foreground) 24%, transparent)"}"></i>
         <span class="day">${e(d.day)}</span>
       </div>`,
     )
@@ -373,7 +385,7 @@ function overviewPage(): string {
   const kinds = [
     { label: "send", n: pending.filter((a) => a.glyph === "→").length, fill: "var(--butter)" },
     { label: "unblock", n: pending.filter((a) => a.glyph === "!" || a.glyph === "◇").length, fill: "var(--chip-dark)" },
-    { label: "dismiss", n: pending.filter((a) => a.glyph === "☏").length, fill: "rgba(224,222,244,.14)" },
+    { label: "dismiss", n: pending.filter((a) => a.glyph === "☏").length, fill: "color-mix(in oklab, var(--foreground) 14%, transparent)" },
   ].filter((k) => k.n > 0);
   const kindTotal = kinds.reduce((n, k) => n + k.n, 0) || 1;
   const split = kinds
@@ -381,7 +393,7 @@ function overviewPage(): string {
       (k) => `
       <div class="seg" style="flex:${k.n}">
         <span class="pc">${Math.round((k.n / kindTotal) * 100)}%</span>
-        <i style="background:${k.fill}${k.fill === "var(--chip-dark)" ? ";box-shadow:inset 0 0 0 1px rgba(224,222,244,.1)" : ""}"></i>
+        <i style="background:${k.fill}${k.fill === "var(--chip-dark)" ? ";box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent)" : ""}"></i>
       </div>`,
     )
     .join("");
@@ -395,7 +407,7 @@ function overviewPage(): string {
           <span class="ttl">${e(a.title)}</span>
           <span class="mt">${e(a.meta)}</span>
         </span>
-        <span class="tick" style="background:${a.done ? "var(--butter)" : "transparent"};box-shadow:inset 0 0 0 1px ${a.done ? "var(--butter)" : "rgba(224,222,244,.2)"}">${a.done ? "✓" : ""}</span>
+        <span class="tick" style="background:${a.done ? "var(--butter)" : "transparent"};box-shadow:inset 0 0 0 1px ${a.done ? "var(--butter)" : "color-mix(in oklab, var(--foreground) 20%, transparent)"}">${a.done ? "✓" : ""}</span>
       </button>`,
     )
     .join("");
@@ -448,7 +460,7 @@ function overviewPage(): string {
             </div>
             <div class="pillcol">
               <span class="lbl">blocked</span>
-              <span class="pill" style="box-shadow:inset 0 0 0 1px rgba(235,111,146,.4);background:transparent;color:var(--i-crit)">${blocked}</span>
+              <span class="pill" style="box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--destructive) 40%, transparent);background:transparent;color:var(--i-crit)">${blocked}</span>
             </div>
             <div class="pillcol" style="flex:1;min-width:0">
               <span class="lbl">quiet by design</span>
@@ -500,7 +512,10 @@ function overviewPage(): string {
           </div>
           <div class="clock">
             <div class="dial" role="img" aria-label="Worst median reply latency ${e(replyClock.value)}">
-              <div class="ring" style="background:conic-gradient(var(--butter) 0deg ${replyClock.degrees}deg, rgba(224,222,244,.08) ${replyClock.degrees}deg 360deg)">
+              <!-- The swept arc is a severity reading, not an affordance, so it
+                   takes the MARK ramp rather than the accent — on the light
+                   ramp the accent is near-black and the dial went to a blob. -->
+              <div class="ring" style="background:conic-gradient(var(--m-warn) 0deg ${replyClock.degrees}deg, color-mix(in oklab, var(--foreground) 8%, transparent) ${replyClock.degrees}deg 360deg)">
                 <div class="hole">
                   <span class="v">${e(replyClock.value)}</span>
                   <span class="lbl" style="font-size:8.5px">worst median</span>
@@ -518,7 +533,7 @@ function overviewPage(): string {
               <span class="num" style="margin-left:auto;font-size:17px;letter-spacing:-.02em;color:var(--butter)">${pending.length}</span>
             </div>
             <div class="split">${split}</div>
-            <span class="m" style="font-size:9.5px;color:var(--t4)">butter = send · dark = unblock · grey = dismiss</span>
+            <span class="m" style="font-size:9.5px;color:var(--t4)">accent = send · dark = unblock · grey = dismiss</span>
           </div>
           <div class="tile deep" style="flex:1;min-height:0;gap:12px">
             <div style="display:flex;align-items:baseline;gap:10px">
@@ -546,8 +561,8 @@ function overviewPage(): string {
                 <span class="s">D-012 · ${oldest ? openDays(oldest) : 0} days</span>
               </span>
               <span class="faces" aria-hidden="true">
-                <i style="background:rgba(235,111,146,.3);color:var(--i-crit)">AL</i>
-                <i style="background:rgba(246,193,119,.24);color:var(--butter)">WH</i>
+                <i style="background:color-mix(in oklab, var(--destructive) 30%, transparent);color:var(--i-crit)">AL</i>
+                <i style="background:color-mix(in oklab, var(--primary) 24%, transparent);color:var(--butter)">WH</i>
               </span>
             </div>
             <div class="tl-ev" style="left:55%;bottom:18px">
@@ -562,46 +577,27 @@ function overviewPage(): string {
     </div>`;
 }
 
-/* ── page: client profile ────────────────────────────────────────── */
-
-function clientCard(c: ClientView): string {
-  const on = c.key === state.sel;
-  return `
-    <button class="ccard" data-act="select" data-client="${c.key}"${on ? ' aria-current="true"' : ""}>
-      <span class="hd">
-        <span class="ava s34" style="background:${markOf(c.tone)}29;box-shadow:inset 0 0 0 1px ${markOf(c.tone)}59;color:${inkOf(c.tone)}">${e(c.initials)}</span>
-        <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
-          <span class="nm">${e(c.name)}</span>
-          <span class="sub">${e(c.sub)}</span>
-        </span>
-      </span>
-      <span class="twotone" aria-hidden="true">
-        <i style="width:${c.w1}%;background:var(--butter)"></i>
-        <i style="width:${c.w2}%;background:var(--chip-dark);box-shadow:inset 0 0 0 1px rgba(224,222,244,.14)"></i>
-        <i style="flex:1;background:rgba(224,222,244,.08)"></i>
-      </span>
-      <span class="rec">☏ chat record · ${c.messageCount} msgs →</span>
-    </button>`;
-}
+/* ── clients: the shared pieces ──────────────────────────────────── */
 
 function cellStyle(cell: Cell): string {
   switch (cell.kind) {
     case "cited":
       return "background:var(--butter);color:var(--butter-d)";
     case "you":
-      return "background:rgba(246,193,119,.13);box-shadow:inset 0 0 0 1px rgba(246,193,119,.28)";
+      return "background:color-mix(in oklab, var(--primary) 13%, transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--primary) 28%, transparent)";
     case "them":
-      return "background:rgba(224,222,244,.07);box-shadow:inset 0 0 0 1px rgba(224,222,244,.08)";
+      return "background:color-mix(in oklab, var(--foreground) 7%, transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent)";
     case "outside":
-      return "background:transparent;box-shadow:inset 0 0 0 1px rgba(224,222,244,.05);background-image:var(--hatch)";
+      return "background:transparent;box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 5%, transparent);background-image:var(--hatch)";
     default:
-      return `background:transparent;box-shadow:inset 0 0 0 1px rgba(224,222,244,.055)${cell.weekend ? ";background-image:var(--hatch)" : ""}`;
+      return `background:transparent;box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 5.5%, transparent)${cell.weekend ? ";background-image:var(--hatch)" : ""}`;
   }
 }
 
 function cellInk(cell: Cell): string {
-  if (cell.kind === "cited") return "rgba(35,33,54,.78)";
-  if (cell.kind === "outside") return "rgba(224,222,244,.22)";
+  // Opaque for the same reason the --t ramp is: see the note above it.
+  if (cell.kind === "cited") return "color-mix(in oklab, var(--background) 78%, var(--primary))";
+  if (cell.kind === "outside") return "color-mix(in oklab, var(--foreground) 42%, var(--card))";
   if (cell.kind === "you") return "var(--butter)";
   if (cell.kind === "them") return "var(--t3)";
   return "var(--t4)";
@@ -615,8 +611,8 @@ function weekGrid(weeks: Week[]): string {
           (cell) => `
         <div class="cell" style="${cellStyle(cell)}" title="${e(cell.a11y)}">
           <span class="top">
-            <span class="n" style="color:${cell.kind === "cited" ? "var(--butter-d)" : cell.kind === "outside" ? "rgba(224,222,244,.22)" : "var(--t1)"}">${e(cell.num)}</span>
-            ${cell.kind === "cited" ? `<span class="lk" style="color:rgba(35,33,54,.6)">◆</span>` : ""}
+            <span class="n" style="color:${cell.kind === "cited" ? "var(--butter-d)" : cell.kind === "outside" ? "var(--t5)" : "var(--t1)"}">${e(cell.num)}</span>
+            ${cell.kind === "cited" ? `<span class="lk" style="color:color-mix(in oklab, var(--background) 60%, var(--primary))">◆</span>` : ""}
           </span>
           ${cell.label ? `<span class="lb" style="color:${cellInk(cell)}">${e(cell.label)}</span>` : ""}
         </div>`,
@@ -624,7 +620,7 @@ function weekGrid(weeks: Week[]): string {
         .join("");
 
       const band = w.band
-        ? `<div class="band" style="background:${markOf(w.band.tone)}1a;box-shadow:inset 0 0 0 1px ${markOf(w.band.tone)}4d">
+        ? `<div class="band" style="background:${tint(markOf(w.band.tone), 10)};box-shadow:inset 0 0 0 1px ${tint(markOf(w.band.tone), 30)}">
              <i style="background:${markOf(w.band.tone)}"></i>
              <span style="color:${inkOf(w.band.tone)}">${e(w.band.label)}</span>
              <span class="rg">${e(w.band.range)}</span>
@@ -636,232 +632,329 @@ function weekGrid(weeks: Week[]): string {
     .join("");
 }
 
-function profilePage(c: ClientView): string {
+/* ── page: clients ───────────────────────────────────────────────── */
+
+/**
+ * How long since anyone said anything, and whether that counts as quiet.
+ *
+ * "Silent" is a scored judgement, not a stopwatch: score.ts decides it from a
+ * client's own baseline, so a client who was always slow does not get called
+ * silent for being slow again. The day count here is only the caption.
+ */
+/**
+ * The pulse and the status chip beside it answer two different questions, and
+ * keeping them apart is the point.
+ *
+ * The pulse is traffic: is anyone still typing? The chip is the scored verdict:
+ * is the relationship holding? A silently churning client is normally *both* —
+ * still messaging every week and no longer asking anything — so a pulse that
+ * read "silent" would contradict the thread sitting right next to it. Traffic
+ * is the only thing the pulse reports; the colour it reports it in comes from
+ * the score, which is how the two stay legible as one reading.
+ */
+function pulseOf(c: ClientView): { live: boolean; word: string; rest: string; tone: Tone } {
+  const days = Math.max(0, Math.round((NOW - c.lastContact) / 86_400_000));
+  const live = days <= 14;
+  return {
+    live,
+    word: live ? "active" : "dormant",
+    rest: `last ${dateShort.format(c.lastContact)}`,
+    tone: c.score.silent
+      ? "butter"
+      : c.score.status === "decaying"
+        ? "critical"
+        : c.score.status === "watch"
+          ? "warn"
+          : "good",
+  };
+}
+
+function pulse(c: ClientView): string {
+  const p = pulseOf(c);
+  return `
+    <span class="pulse" style="color:${inkOf(p.tone)}">
+      <i class="${p.live ? "live" : ""}" style="background:${markOf(p.tone)}"></i>
+      ${e(p.word)}
+      <span class="rest">· ${e(p.rest)}</span>
+    </span>`;
+}
+
+function clientTile(c: ClientView): string {
+  const lat = c.score.signals.find((s) => s.name === "latency")!;
+  const owed = c.open.length;
+
+  return `
+    <button class="pcard" data-act="open-client" data-client="${c.key}" aria-label="Open ${e(c.name)}">
+      <span class="rail" style="background:${markOf(c.tone)}"></span>
+      <span class="glow" aria-hidden="true" style="background:radial-gradient(closest-side, ${tint(markOf(c.tone), 12)}, transparent)"></span>
+
+      <span class="top">
+        <span class="ava s34" style="background:${tint(markOf(c.tone), 16)};box-shadow:inset 0 0 0 1px ${tint(markOf(c.tone), 35)};color:${inkOf(c.tone)}">${e(c.initials)}</span>
+        <span class="who">
+          <span class="nm">${e(c.name)}</span>
+          <span class="sub">${e(c.handle)}</span>
+        </span>
+        <span class="chip" data-tone="${c.chipTone}">${e(c.statusWord)}</span>
+      </span>
+
+      ${pulse(c)}
+      <span class="line">${e(c.headline)}</span>
+
+      <span class="nums">
+        <span class="n"><span class="v">${c.messageCount}</span><span class="lbl">messages</span></span>
+        <span class="d"></span>
+        <span class="n"><span class="v">${e(lat.recent)}</span><span class="lbl">median reply</span></span>
+        <span class="d"></span>
+        <span class="n"><span class="v" style="color:${owed ? inkOf(c.ledgerTone) : "var(--t1)"}">${owed}</span><span class="lbl">open items</span></span>
+      </span>
+
+      <span class="go">☏ WhatsApp · ${c.clientMessageCount} theirs <b>Open →</b></span>
+    </button>`;
+}
+
+function clientsGrid(): string {
+  return `
+    <div class="page">
+      <div class="qhead">
+        <span class="hero-h d">Clients</span>
+        <span class="mt">One card per thread, ordered so silent churn sits first — it is the case
+          a human would never surface unaided. Open a card for the chat, what they are
+          waiting on, and what to say next.</span>
+      </div>
+      <div class="cgrid">${clients.map(clientTile).join("")}</div>
+    </div>`;
+}
+
+/* ── the ask-the-agent box ───────────────────────────────────────── */
+
+/**
+ * The agent reads this client's thread and answers out of it.
+ *
+ * There is no model behind this and the UI does not pretend there is: the
+ * intents below map a question onto a derivation that already exists — the
+ * score, the ledger, the turning point, the ranked ideas in copy.ts — and the
+ * answer carries the message ids it was built from. An agent that cannot cite
+ * is an agent that can be wrong quietly, which is the failure this product is
+ * built to avoid.
+ */
+type AskIntent = "suggest" | "why" | "owed" | "history" | "help";
+
+const ASK_PRESETS: Array<[string, AskIntent]> = [
+  ["What should I say?", "suggest"],
+  ["Why have they gone quiet?", "why"],
+  ["What do I owe them?", "owed"],
+  ["Summarise the thread", "history"],
+];
+
+function classify(q: string): AskIntent {
+  const s = q.toLowerCase();
+  const has = (...w: string[]): boolean => w.some((x) => s.includes(x));
+
+  if (has("owe", "owed", "promise", "open item", "outstanding", "pending", "waiting on me")) return "owed";
+  if (has("quiet", "silent", "why", "decay", "stopped", "ghost", "gone cold", "not repl")) return "why";
+  if (has("summar", "history", "recap", "background", "context", "how long", "when did", "last spoke")) return "history";
+  if (has("say", "talk", "message", "send", "write", "draft", "suggest", "topic", "next", "do", "reach out", "follow up")) {
+    return "suggest";
+  }
+  return "help";
+}
+
+function answer(c: ClientView, intent: AskIntent): AskTurn {
   const lat = c.score.signals.find((s) => s.name === "latency")!;
   const q = c.score.signals.find((s) => s.name === "questions")!;
   const init = c.score.signals.find((s) => s.name === "initiation")!;
-  const r = c.windows.recent;
+  const list = ideas[c.key] ?? [];
+  const days = Math.max(0, Math.round((NOW - c.lastContact) / 86_400_000));
 
-  return `
-    <div class="page">
-      ${clientHead(c)}
-      <div class="cols3">
-        <div class="clist">
-          ${clients.map(clientCard).join("")}
-          <div class="pager">
-            <span class="edge">←</span><button class="on">1</button>
-            <span class="dots">·</span><span class="edge">→</span>
-          </div>
-        </div>
+  switch (intent) {
+    case "suggest":
+      return {
+        from: "agent",
+        text: list.length
+          ? `<b>${e(c.name.split(" ")[0]!)}</b> is ${e(c.statusWord)}. ${list.length} thing${list.length === 1 ? "" : "s"} worth opening with, ranked — the first is what I would send today.`
+          : `Nothing to suggest for <b>${e(c.name)}</b>: the thread is current and nothing is owed either way.`,
+        sug: list.map((_, n) => n),
+      };
 
-        <div class="mid">
-          <div class="toolrow">
-            <button class="tool" title="Last 30 days">◴</button>
-            <button class="tool" title="Grid">▤</button>
-            <div class="search">⌕ <span>Search this thread — a quote, an id, a date…</span></div>
-            <button class="tool" title="Filters">⌗</button>
-            <button class="tool acc" data-act="open-record" data-client="${c.key}" title="Open the chat record">+</button>
-          </div>
+    /* Silence here means "stopped asking", not "stopped replying" — that
+       distinction is the product's whole thesis, so the answer has to lead
+       with it rather than quote a days-since-last-message count that would
+       say the opposite. The quote already carries its own quotation marks. */
+    case "why":
+      return {
+        from: "agent",
+        text: c.score.silent
+          ? `Not a complaint — a fade. Median reply is still <b>${e(lat.recent)}</b>, so they are answering. What stopped is the asking: <b>${e(q.recent)}</b> questions, and they start <b>${e(init.recent)}</b> of the conversations. The turning point reads: <em>${e(c.turn.quote)}</em>`
+          : `${e(c.headline)} Median reply <b>${e(lat.recent)}</b>, questions <b>${e(q.recent)}</b>. Last exchange ${e(dateShort.format(c.lastContact))}, ${days} days ago.`,
+        cites: c.turn.cite !== "—" ? [c.turn.cite] : [],
+      };
 
-          <div class="bignums">
-            <div class="pair">
-              <span class="v">${e(lat.recent)}</span>
-              <span class="sl">/</span>
-              <span class="v" style="color:${inkOf(c.bigBTone)}">${e(c.bigB)}</span>
-            </div>
-            <span class="range">Last 30 days ⌄</span>
-          </div>
+    case "owed":
+      return {
+        from: "agent",
+        text: c.open.length === 0
+          ? `Nothing open. ${c.settledCount} item${c.settledCount === 1 ? "" : "s"} settled and verbatim-checked against the thread.`
+          // ledgerLabel already reads "3 open · yours" — do not count it twice
+          : `<b>${e(c.ledgerLabel)}</b>.<br>${c.open
+              .map((x) => `· ${e(x.kind)} — ${e(x.text)} <em>(${openDays(x)} days, owed by ${e(x.owedBy)})</em>`)
+              .join("<br>")}`,
+        cites: c.open.map((x) => x.sourceMessageId),
+      };
 
-          <div class="mpills">
-            <div class="c" style="flex:2.6">
-              <span class="lbl">replies</span>
-              <span class="v a">${r.latencies.length} replies · median ${e(lat.recent)}</span>
-            </div>
-            <div class="c" style="flex:1.2">
-              <span class="lbl">questions</span>
-              <span class="v b">${e(q.recent)}</span>
-            </div>
-            <div class="c" style="flex:1.5">
-              <span class="lbl">they started</span>
-              <span class="v c">${e(init.recent)}</span>
-            </div>
-          </div>
+    case "history":
+      return {
+        from: "agent",
+        text: `<b>${c.messageCount}</b> messages since ${e(dateShort.format(c.firstContact))}, ${c.clientMessageCount} of them theirs. Last contact ${e(dateShort.format(c.lastContact))} — ${days} days ago. WhatsApp only; nothing else was read.<br>${e(c.headline)}`,
+      };
 
-          <div class="dow7">
-            <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span class="we">Sat</span><span class="we">Sun</span>
-          </div>
-          <div class="weeks">${weekGrid(c.weeks)}</div>
-        </div>
-
-        <div class="rpanel">
-          <div class="hero" style="background:linear-gradient(150deg,${c.heroA},${c.heroB})">
-            <span class="grain" aria-hidden="true"></span>
-            <span class="plate" style="box-shadow:0 0 0 4px rgba(35,33,54,.95), inset 0 0 0 1px ${markOf(c.tone)}59;color:${inkOf(c.tone)}">${e(c.initials)}</span>
-          </div>
-          <div class="in">
-            <div class="who">
-              <span class="n">${e(c.name)}</span>
-              <span class="s">${e(c.sub)}</span>
-            </div>
-
-            <div class="sect">
-              <span class="h">Basic information</span>
-              ${c.facts
-                .map(
-                  (f) => `<div class="fact"><span class="g">${e(f.glyph)}</span><span class="k">${e(f.k)}</span><span class="d"></span><span class="v">${e(f.v)}</span></div>`,
-                )
-                .join("")}
-            </div>
-
-            <div class="sect">
-              <span class="h">Evidence</span>
-              <div class="evid">
-                <button class="wa" data-act="open-record" data-client="${c.key}">
-                  <span class="k" style="background:rgba(246,193,119,.22);color:var(--butter)">WA</span>
-                  <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
-                    <span class="t">Thread</span><span class="s">${c.messageCount} msgs</span>
-                  </span>
-                </button>
-                <div style="background:${markOf(c.ledgerTone)}1a;box-shadow:inset 0 0 0 1px ${markOf(c.ledgerTone)}4d">
-                  <span class="k" style="background:${markOf(c.ledgerTone)}33;color:${inkOf(c.ledgerTone)}">LG</span>
-                  <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
-                    <span class="t">Ledger</span><span class="s">${e(c.ledgerLabel)}</span>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div class="sect">
-              <span class="h">Signals</span>
-              ${c.score.signals.map(signalRow).join("")}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>`;
+    default:
+      return {
+        from: "agent",
+        text: `I only read <b>${e(c.name)}</b>'s thread — ${c.messageCount} messages, nothing else. Ask me what to say, why they have gone quiet, what is owed, or for a summary.`,
+      };
+  }
 }
 
-function clientHead(c: ClientView): string {
-  return `
-    <div class="phead">
-      <span class="hero-h d">${e(c.name)}</span>
-      <span class="chip" data-tone="${c.chipTone}" style="margin-bottom:7px">${e(c.statusWord)}</span>
-      <div class="seg2">
-        <button data-act="mode" data-mode="profile"${state.mode === "profile" ? ' aria-current="true"' : ""}>profile</button>
-        <button data-act="mode" data-mode="record"${state.mode === "record" ? ' aria-current="true"' : ""}>chat record</button>
-      </div>
-    </div>`;
-}
-
-/* ── page: chat record ───────────────────────────────────────────── */
-
-function keeps(m: RecMessage): boolean {
-  if (state.filter === "client") return m.who === "client";
-  if (state.filter === "flagged") return m.flag !== "" || m.chips.length > 0;
-  return true;
-}
-
-function messageRow(m: RecMessage): string {
-  const chips = m.chips
-    .map(
-      (ch) => `<span class="ec" style="color:${inkOf(ch.tone)};border:1px ${ch.dashed ? "dashed" : "solid"} ${markOf(ch.tone)}66">${e(ch.label)}</span>`,
-    )
+function askTurn(t: AskTurn, c: ClientView): string {
+  const sug = (t.sug ?? [])
+    .map((n) => {
+      const i = ideas[c.key]?.[n];
+      if (!i) return "";
+      return `
+        <div class="sug${i.primary ? " primary" : ""}">
+          <div class="hd">
+            <span class="rank">${e(i.rank)}</span>
+            <span class="t">${e(i.title)}</span>
+          </div>
+          <span class="why">${e(i.why)}</span>
+          <div class="draft">
+            <span class="lb">${e(i.draftLabel)}</span>
+            <span class="tx">${e(i.draft)}</span>
+          </div>
+          <div class="acts">
+            <button class="btn${i.primary ? " acc" : ""}">${e(i.btn)}</button>
+            <button class="btn ghost">Edit</button>
+            ${i.cites.length ? citeChips(i.cites, c.key) : ""}
+          </div>
+        </div>`;
+    })
     .join("");
 
+  const cites = (t.cites ?? []).length ? `<div class="citerow">${citeChips(t.cites!, c.key)}</div>` : "";
+
   return `
-    <div class="msg${state.lit === m.id ? " lit" : ""}" data-who="${m.who}" data-mid="${e(m.id)}">
-      ${m.gap ? `<span class="gap"><i></i><span style="color:${inkOf(m.gapTone)}">${e(m.gap)}</span><i></i></span>` : ""}
-      <div class="bub">
-        <span class="tx">${e(m.text)}</span>
-        <span class="meta">${chips}<span class="id">${e(m.time)} · ${e(m.id)}</span></span>
-      </div>
-      ${m.flag ? `<span class="flag" style="color:${inkOf(m.flagTone)}">◆ ${e(m.flag)}</span>` : ""}
+    <div class="at" data-from="${t.from}">
+      <span class="b">${t.text}</span>
+      ${sug}
+      ${cites}
     </div>`;
 }
 
-function ideaCard(i: Idea, n: number, client: ClientKey): string {
-  const on = state.idea === n;
+function askBox(c: ClientView): string {
+  const log = state.ask[c.key] ?? [];
+  const opening: AskTurn = {
+    from: "agent",
+    text: `I have read all <b>${c.messageCount}</b> of ${e(c.name.split(" ")[0]!)}'s messages. Ask me what to say next — or pick one below.`,
+  };
+
   return `
-    <div class="idea${i.primary ? " primary" : ""}" aria-expanded="${on}">
-      <button class="hd" data-act="idea" data-i="${n}" style="width:100%">
-        <span class="rank">${e(i.rank)}</span>
-        <span class="t">${e(i.title)}</span>
-      </button>
-      <span class="why">${e(i.why)}</span>
-      <div class="det">
-        <div class="draft">
-          <span class="lb">${e(i.draftLabel)}</span>
-          <span class="tx">${e(i.draft)}</span>
-        </div>
-        <div class="acts">
-          <button class="btn${i.primary ? " acc" : ""}">${e(i.btn)}</button>
-          <button class="btn ghost">Edit</button>
-          <span class="mt">${e(i.meta)}</span>
-        </div>
-        ${i.cites.length ? `<div class="citerow">${citeChips(i.cites, client)}</div>` : ""}
+    <div class="ask">
+      <div class="hd">
+        <span class="t">Ask the agent</span>
+        <span class="tag">reads this thread only</span>
       </div>
+      <div class="log sc" id="asklog">
+        ${[opening, ...log].map((t) => askTurn(t, c)).join("")}
+      </div>
+      <div class="chips">
+        ${ASK_PRESETS.map(([label]) => `<button data-act="ask-preset" data-q="${e(label)}">${e(label)}</button>`).join("")}
+      </div>
+      <div class="composer">
+        <input data-act="draft" type="text" value="${e(state.draft)}" placeholder="Ask about ${e(c.name.split(" ")[0]!)}…" aria-label="Ask the agent about ${e(c.name)}">
+        <button class="send" data-act="ask" title="Ask" aria-label="Ask"${state.draft.trim() ? "" : " disabled"}>→</button>
+      </div>
+      <span class="note" title="Answers are derived from this thread and cite the messages they came from. Nothing is sent to ${e(c.name)} without your click.">Derived from this thread · cited · nothing sends without your click</span>
     </div>`;
 }
 
-function recordPage(c: ClientView): string {
-  const shown = c.messages.filter(keeps);
-  const filters: Array<[Filter, string]> = [["all", "all"], ["client", "client only"], ["flagged", "flagged"]];
+/* ── one client, opened ──────────────────────────────────────────── */
+
+/** Wrap the run of characters the search matched, so the hit is visible. */
+function mark(text: string, q: string): string {
+  if (!q) return e(text);
+  const at = text.toLowerCase().indexOf(q.toLowerCase());
+  if (at < 0) return e(text);
+  return `${e(text.slice(0, at))}<span class="hit">${e(text.slice(at, at + q.length))}</span>${e(text.slice(at + q.length))}`;
+}
+
+function searchKeeps(m: RecMessage): boolean {
+  if (!keeps(m)) return false;
+  const q = state.q.trim().toLowerCase();
+  if (!q) return true;
+  return m.text.toLowerCase().includes(q) || m.id.toLowerCase().includes(q) || m.time.toLowerCase().includes(q);
+}
+
+function clientDetail(c: ClientView): string {
+  const shown = c.messages.filter(searchKeeps);
+  const filters: Array<[Filter, string]> = [["all", "all"], ["client", "theirs"], ["flagged", "flagged"]];
 
   return `
-    <div class="page">
-      ${clientHead(c)}
-      <div class="cols3 rec">
-        <div class="contacts">
-          <span class="cap">contacts</span>
-          ${clients
-            .map(
-              (x) => `
-            <button class="contact" data-act="open-record" data-client="${x.key}"${x.key === c.key ? ' aria-current="true"' : ""}>
-              <span class="ava s28" style="background:${markOf(x.tone)}29;box-shadow:inset 0 0 0 1px ${markOf(x.tone)}59;color:${inkOf(x.tone)}">${e(x.initials)}</span>
-              <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
-                <span class="nm">${e(x.name)}</span>
-                <span class="mt">${x.messageCount} msgs · ${e(dateShort.format(x.lastContact))}</span>
-              </span>
-            </button>`,
-            )
-            .join("")}
-          <span class="note">Reading is local. Nothing is sent to a client from this screen without your click.</span>
-        </div>
+    <div class="page fixed">
+      <div class="dhead">
+        <button class="back" data-act="clients-back" title="Back to all clients">← All</button>
+        <span class="ava s34" style="background:${tint(markOf(c.tone), 16)};box-shadow:inset 0 0 0 1px ${tint(markOf(c.tone), 35)};color:${inkOf(c.tone)}">${e(c.initials)}</span>
+        <span class="nm">${e(c.name)}</span>
+        <span class="chip" data-tone="${c.chipTone}">${e(c.statusWord)}</span>
+        ${pulse(c)}
+      </div>
 
-        <div class="thread">
-          <div class="bar">
-            <div class="search sm">⌕ <span>Search ${c.messageCount} messages…</span></div>
-            <div class="filters">
-              ${filters
-                .map(
-                  ([f, label]) =>
-                    `<button data-act="filter" data-f="${f}" aria-pressed="${state.filter === f}">${e(label)}</button>`,
-                )
+      <div class="dcols">
+        <!-- who they are -->
+        <div class="dcol info sc">
+          <div class="tile" style="gap:11px">
+            <span class="t" style="font-size:14px;font-weight:500">Basic information</span>
+            <div class="sect">
+              ${c.facts
+                .map((f) => `<div class="fact"><span class="g">${e(f.glyph)}</span><span class="k">${e(f.k)}</span><span class="d"></span><span class="v">${e(f.v)}</span></div>`)
                 .join("")}
             </div>
           </div>
+
+          <div class="tile" style="gap:9px">
+            <span class="t" style="font-size:14px;font-weight:500">Activity</span>
+            <div class="dow7">
+              <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span class="we">S</span><span class="we">S</span>
+            </div>
+            <div class="weeks sm">${weekGrid(c.weeks)}</div>
+          </div>
+
+          ${c.open.length ? openLedgerTile(c) : ""}
+        </div>
+
+        <!-- what was actually said -->
+        <div class="thread sm">
+          <div class="bar">
+            <span class="qwrap">
+              <span class="mag" aria-hidden="true">⌕</span>
+              <input class="qbox" data-act="search" type="text" value="${e(state.q)}"
+                     placeholder="Search ${c.messageCount} messages…" aria-label="Search this thread">
+              ${state.q ? `<button class="clr" data-act="search-clear" title="Clear" aria-label="Clear search">✕</button>` : ""}
+            </span>
+            <div class="filters">
+              ${filters.map(([f, label]) => `<button data-act="filter" data-f="${f}" aria-pressed="${state.filter === f}">${e(label)}</button>`).join("")}
+            </div>
+            <span class="count">${shown.length}/${c.messageCount}</span>
+          </div>
           <div class="msgs sc" id="msgs">
-            ${shown.length ? shown.map(messageRow).join("") : `<p class="m" style="color:var(--t4);font-size:11px">No messages match this filter.</p>`}
+            ${shown.length
+              ? shown.map((m) => messageRow(m, state.q.trim())).join("")
+              : `<p class="empty">No message matches “${e(state.q)}”.<br>Search runs over the text, the id and the timestamp.</p>`}
           </div>
         </div>
 
-        <div class="rrail sc">
-          <div class="tile" style="gap:12px;flex:none">
-            <div style="display:flex;align-items:baseline;gap:9px">
-              <span class="t" style="font-size:14.5px;font-weight:500">Emotion spans</span>
-              <span class="lbl" style="margin-left:auto">stage 3</span>
-            </div>
-            <div class="emo">
-              <div class="hd">
-                <span class="lb" style="color:var(--t3)">Not extracted yet</span>
-                <span class="ct">0 spans</span>
-              </div>
-              ${meter(100, "transparent", true)}
-              <span class="nt">The hatch is an absence, not a low score. Warmth, appreciation and curiosity need the extraction pass that isn't built — so this panel shows nothing rather than a number nobody measured. What the messages can already prove is on the chips beside them.</span>
-            </div>
-          </div>
-
-          <div class="turn" style="background:${markOf(c.turn.tone)}17;box-shadow:inset 0 0 0 1px ${markOf(c.turn.tone)}4d">
+        <!-- what to do about it -->
+        <div class="dcol agent">
+          <div class="turn" style="background:${tint(markOf(c.turn.tone), 9)};box-shadow:inset 0 0 0 1px ${tint(markOf(c.turn.tone), 30)}">
             <span class="hd" style="color:${inkOf(c.turn.tone)}">${e(c.turn.head)}</span>
             <div class="q">
               <i style="background:${inkOf(c.turn.tone)}"></i>
@@ -870,18 +963,34 @@ function recordPage(c: ClientView): string {
             <span class="nt">${e(c.turn.note)}</span>
             ${c.turn.cite !== "—" ? `<span>${citeChips([c.turn.cite], c.key)}</span>` : ""}
           </div>
-
-          <div class="tile deep" style="gap:12px;flex:none">
-            <div style="display:flex;align-items:baseline;gap:9px">
-              <span class="t" style="font-size:14.5px;font-weight:500">How to solve it</span>
-              <span class="lbl" style="margin-left:auto">hand-written · you decide</span>
-            </div>
-            ${(ideas[c.key] ?? []).map((i, n) => ideaCard(i, n, c.key)).join("")}
-          </div>
-
-          ${c.open.length ? openLedgerTile(c) : ""}
+          ${askBox(c)}
         </div>
       </div>
+    </div>`;
+}
+
+
+function keeps(m: RecMessage): boolean {
+  if (state.filter === "client") return m.who === "client";
+  if (state.filter === "flagged") return m.flag !== "" || m.chips.length > 0;
+  return true;
+}
+
+function messageRow(m: RecMessage, hit = ""): string {
+  const chips = m.chips
+    .map(
+      (ch) => `<span class="ec" style="color:${inkOf(ch.tone)};border:1px ${ch.dashed ? "dashed" : "solid"} ${tint(markOf(ch.tone), 40)}">${e(ch.label)}</span>`,
+    )
+    .join("");
+
+  return `
+    <div class="msg${state.lit === m.id ? " lit" : ""}" data-who="${m.who}" data-mid="${e(m.id)}">
+      ${m.gap ? `<span class="gap"><i></i><span style="color:${inkOf(m.gapTone)}">${e(m.gap)}</span><i></i></span>` : ""}
+      <div class="bub">
+        <span class="tx">${mark(m.text, hit)}</span>
+        <span class="meta">${chips}<span class="id">${e(m.time)} · ${e(m.id)}</span></span>
+      </div>
+      ${m.flag ? `<span class="flag" style="color:${inkOf(m.flagTone)}">◆ ${e(m.flag)}</span>` : ""}
     </div>`;
 }
 
@@ -889,11 +998,11 @@ function openLedgerTile(c: ClientView): string {
   const row = (x: LedgerEntry) => `
     <div style="display:flex;flex-direction:column;gap:6px;padding:9px 0;border-bottom:1px solid var(--hair)">
       <div style="display:flex;align-items:baseline;gap:8px">
-        <span class="ec" style="color:var(--butter);border:1px dashed rgba(246,193,119,.5)">${e(x.kind)}</span>
+        <span class="ec" style="color:var(--butter);border:1px dashed color-mix(in oklab, var(--primary) 50%, transparent)">${e(x.kind)}</span>
         <span style="font-size:12px">${e(x.text)}</span>
       </div>
       <span class="m" style="font-size:9.5px;color:var(--t4)">owed by ${e(x.owedBy)} · open ${openDays(x)} days · since ${e(dateShort.format(x.openedAt))}</span>
-      <blockquote style="margin:0;padding:6px 9px;border-left:2px solid rgba(224,222,244,.18);background:rgba(224,222,244,.035);font-size:11.5px;font-style:italic;color:var(--t3)">“${e(x.quote)}”</blockquote>
+      <blockquote style="margin:0;padding:6px 9px;border-left:2px solid color-mix(in oklab, var(--foreground) 18%, transparent);background:color-mix(in oklab, var(--foreground) 3.5%, transparent);font-size:11.5px;font-style:italic;color:var(--t3)">“${e(x.quote)}”</blockquote>
       <span>${citeChips([x.sourceMessageId], c.key)}</span>
     </div>`;
 
@@ -913,13 +1022,13 @@ function queueRow(r: QueueRow): string {
   const cites = r.who ? citeChips(r.cites, r.who) : "";
   return `
     <div class="lrow" style="${r.rail ? `box-shadow:inset 2px 0 0 ${markOf(r.tone)}` : ""}${r.dim ? ";opacity:.72" : ""}">
-      <span class="sq" style="background:${markOf(r.tone)}29;color:${inkOf(r.tone)}">${e(r.initials)}</span>
+      <span class="sq" style="background:${tint(markOf(r.tone), 16)};color:${inkOf(r.tone)}">${e(r.initials)}</span>
       <span class="who">
         <span class="n">${e(r.name)}</span>
         <span class="w">${e(r.when)}</span>
       </span>
       <span class="kindcol">
-        <span class="kind" style="color:${inkOf(r.kindTone)};background:${r.kindDashed ? "transparent" : `${markOf(r.kindTone)}29`};border:1px ${r.kindDashed ? "dashed" : "solid"} ${r.kindDashed ? `${markOf(r.kindTone)}80` : "transparent"}">${e(r.kind)}</span>
+        <span class="kind" style="color:${inkOf(r.kindTone)};background:${r.kindDashed ? "transparent" : `${tint(markOf(r.kindTone), 16)}`};border:1px ${r.kindDashed ? "dashed" : "solid"} ${r.kindDashed ? `${tint(markOf(r.kindTone), 50)}` : "transparent"}">${e(r.kind)}</span>
       </span>
       <span class="bodycol">
         <span class="tx" style="color:${r.dim ? "var(--t2)" : "var(--t1)"}">${e(r.text)}</span>
@@ -952,13 +1061,21 @@ function queuePage(kind: QueueKind): string {
 function body(): string {
   if (state.page === "home") return overviewPage();
   if (state.page === "clients") {
-    const c = clientById(state.sel.toLowerCase());
-    return state.mode === "record" ? recordPage(c) : profilePage(c);
+    if (state.cview === "grid") return clientsGrid();
+    return clientDetail(clientById(state.sel.toLowerCase()));
   }
   return queuePage(state.page);
 }
 
 let compactRendered = false;
+
+/* Rendering is a full innerHTML swap, which throws away the focused element —
+   fine for a screen you click, fatal for one you type into. Any handler that
+   fires per keystroke names the input it wants back and render() restores it,
+   caret at the end, after the swap. Scroll offsets in the ask log and the
+   message list are preserved the same way, so the view does not jump under the
+   cursor while a search narrows. */
+let refocus: string | null = null;
 
 function render(): void {
   if (!compactRendered) {
@@ -968,9 +1085,64 @@ function render(): void {
     compactRendered = true;
   }
   if (state.st === "open") {
+    const keep = new Map<string, number>();
+    for (const id of ["msgs", "asklog"]) {
+      const el = document.getElementById(id);
+      if (el) keep.set(id, el.scrollTop);
+    }
+
     need("l-open").innerHTML = `<div class="dash">${header()}<div class="body sc">${body()}</div>${footer()}</div>`;
+
+    for (const [id, y] of keep) {
+      const el = document.getElementById(id);
+      if (el) el.scrollTop = y;
+    }
+    if (refocus) {
+      const el = island.querySelector<HTMLInputElement>(refocus);
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+      refocus = null;
+    }
   }
   reportHotRect(island);
+}
+
+/**
+ * Open one client's detail screen.
+ *
+ * The search box and the filter are cleared on the way in: they belong to the
+ * thread being read, and carrying "flagged only" from one client into the next
+ * makes the new thread look emptier than it is. The ask-the-agent transcript is
+ * deliberately *not* cleared — it is keyed by client, so going back and forth
+ * keeps each conversation where you left it.
+ */
+function openClient(key: ClientKey): void {
+  if (key !== state.sel) {
+    state.q = "";
+    state.filter = "all";
+    state.draft = "";
+  }
+  state.sel = key;
+  state.page = "clients";
+  state.cview = "detail";
+}
+
+/** Put a question to the agent and append both halves of the exchange. */
+function ask(c: ClientView, q: string): void {
+  const text = q.trim();
+  if (!text) return;
+  const log = (state.ask[c.key] ??= []);
+  log.push({ from: "you", text: e(text) });
+  log.push(answer(c, classify(text)));
+  state.draft = "";
+  render();
+  // The reply lands below the fold on anything but the first exchange.
+  requestAnimationFrame(() => {
+    const el = document.getElementById("asklog");
+    if (el) el.scrollTop = el.scrollHeight;
+  });
 }
 
 function setState(st: IslandState): void {
@@ -1045,63 +1217,55 @@ island.addEventListener("click", (ev) => {
       return;
     case "page":
       state.page = (hit.dataset.page ?? "home") as Page;
+      // A section tab goes to the section, so clicking "clients" from inside a
+      // client returns to the grid rather than looking like a dead button.
+      if (state.page === "clients") state.cview = "grid";
       setState("open");
       return;
-    case "select":
-      if (key) state.sel = key;
-      render();
-      return;
-    case "mode":
-      state.mode = (hit.dataset.mode ?? "profile") as Mode;
-      state.idea = 0;
-      render();
-      return;
+    /* Every route into a client — a card, an overview tile, a queue row, a
+       notification, a citation — lands on the same detail screen. There is no
+       longer a profile/record split to choose between. */
+    case "open-client":
     case "open-profile":
-      if (key) state.sel = key;
-      state.page = "clients";
-      state.mode = "profile";
+    case "open-record":
+      if (key) openClient(key);
       setState("open");
       return;
-    case "open-record":
-      if (key) state.sel = key;
-      state.page = "clients";
-      state.mode = (hit.dataset.mode as Mode | undefined) ?? "record";
-      state.idea = 0;
-      setState("open");
+    case "clients-back":
+      state.cview = "grid";
+      render();
       return;
     case "rule":
       state.rule = state.rule === Number(hit.dataset.i) ? -1 : Number(hit.dataset.i);
-      render();
-      return;
-    case "idea":
-      state.idea = state.idea === Number(hit.dataset.i) ? -1 : Number(hit.dataset.i);
       render();
       return;
     case "filter":
       state.filter = (hit.dataset.f ?? "all") as Filter;
       render();
       return;
+    case "search-clear":
+      state.q = "";
+      refocus = ".qbox";
+      render();
+      return;
+    case "ask":
+      ask(clientById(state.sel.toLowerCase()), state.draft);
+      return;
+    case "ask-preset":
+      ask(clientById(state.sel.toLowerCase()), hit.dataset.q ?? "");
+      return;
     case "notif-open": {
       // Read before setState — leaving alert/call clears the current notif.
       const n = current;
-      if (n?.client) {
-        state.sel = n.client;
-        state.page = "clients";
-        state.mode = n.mode ?? "record";
-        state.idea = 0;
-      } else if (n?.kind === "reminder") {
-        state.page = "calls";
-      }
+      if (n?.client) openClient(n.client);
+      else if (n?.kind === "reminder") state.page = "calls";
       setState("open");
       return;
     }
     case "cite": {
       const id = hit.dataset.id;
       if (!id || !key) return;
-      state.sel = key;
-      state.page = "clients";
-      state.mode = "record";
-      state.filter = "all";
+      openClient(key);
       state.lit = id;
       setState("open");
       focusCite(id);
@@ -1109,6 +1273,46 @@ island.addEventListener("click", (ev) => {
     }
     default:
       return;
+  }
+});
+
+/* The two live inputs. Both re-render on every keystroke — the search because
+   it filters as you type, the composer because the send button enables on the
+   first non-space character — and both name themselves for refocus so the
+   caret survives the swap. */
+island.addEventListener("input", (ev) => {
+  const el = ev.target as HTMLInputElement;
+  const act = el.dataset.act;
+  if (act === "search") {
+    state.q = el.value;
+    refocus = ".qbox";
+    render();
+  } else if (act === "draft") {
+    state.draft = el.value;
+    refocus = '[data-act="draft"]';
+    render();
+  }
+});
+
+/* Enter sends the question. Escape inside a text field clears that field
+   rather than closing the island — closing the whole dashboard because someone
+   wanted to abandon a search is a hostile amount of undo. */
+island.addEventListener("keydown", (ev) => {
+  const el = ev.target as HTMLElement;
+  const act = el.dataset?.act;
+  if (act !== "draft" && act !== "search") return;
+
+  if (ev.key === "Enter" && act === "draft") {
+    ev.preventDefault();
+    ask(clientById(state.sel.toLowerCase()), state.draft);
+    return;
+  }
+  if (ev.key === "Escape") {
+    ev.stopPropagation();
+    if (act === "search") state.q = "";
+    else state.draft = "";
+    refocus = act === "search" ? ".qbox" : '[data-act="draft"]';
+    render();
   }
 });
 
@@ -1153,11 +1357,7 @@ if (wanted === "alert" || wanted === "call") {
   const page = qs.get("page");
   if (page) state.page = page as Page;
   const who = qs.get("client");
-  if (who) {
-    state.sel = who.toUpperCase() as ClientKey;
-    state.page = "clients";
-    state.mode = (qs.get("mode") as Mode | null) ?? "profile";
-  }
+  if (who) openClient(who.toUpperCase() as ClientKey);
   setState("open");
 }
 
