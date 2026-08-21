@@ -18,7 +18,7 @@ import { anyApi } from "convex/server";
 import type { FunctionReference } from "convex/server";
 
 import { TelegramSource } from "./telegram/source.ts";
-import { DAY, WANTED_DAYS, type BridgeMessage, type Source } from "./types.ts";
+import { DAY, WANTED_DAYS, type BridgeChat, type BridgeMessage, type Source } from "./types.ts";
 import { MISSING_CONVEX, convexUrl as resolveConvexUrl } from "../scripts/convex-url.ts";
 
 /** Must match BATCH_LIMIT in convex/ingest.ts — mutations get one second. */
@@ -81,6 +81,7 @@ const m = (module: string, name: string): FunctionReference<"mutation"> =>
   lookup[module]?.[name] as FunctionReference<"mutation">;
 
 const API = {
+  pickClients: m("ingest", "pickClients"),
   pendingSends: q("outbox", "pending"),
   markSent: m("outbox", "markSent"),
   markFailed: m("outbox", "markFailed"),
@@ -111,10 +112,86 @@ async function ingest(sourceId: string, messages: BridgeMessage[]): Promise<numb
   return inserted;
 }
 
-async function publishChats(): Promise<void> {
+async function publishChats(): Promise<BridgeChat[]> {
   const chats = await source.listChats(50);
   await convex.mutation(API.upsertChats, { chats });
   console.log(`[bridge] published ${chats.length} chats to the picker`);
+  return chats;
+}
+
+/* ── auto-promotion ──────────────────────────────────────────────────
+   The original rule was "nothing is a client until the advisor picks it",
+   and it produced exactly the failure it was guarding against, seen from the
+   other side: a real person messaged, the bridge shrugged, and the advisor
+   heard about it a day later from the person. So the rule narrows: a HUMAN
+   DIRECT MESSAGE promotes itself. Groups stay manual — a group is not a
+   client — and bots stay out entirely; both were the actual noise the old
+   rule existed for. Every promotion is logged loudly, because an automatic
+   client the advisor cannot see being created is how trust in the list dies. */
+
+/** How much history a self-promoted chat pulls, so the agent has context. */
+const PROMOTE_BACKFILL_DAYS = 45;
+
+/** A person who messaged while the bridge was down is caught this far back. */
+const SWEEP_HOURS = 48;
+
+const promoting = new Set<string>();
+
+async function promoteChat(chat: BridgeChat, why: string): Promise<void> {
+  if (promoting.has(chat.sourceId)) return;
+  promoting.add(chat.sourceId);
+
+  await convex.mutation(API.upsertChats, { chats: [chat] });
+  const picked = (await convex.mutation(API.pickClients, {
+    sourceIds: [chat.sourceId],
+  })) as Array<{ key: string }>;
+
+  const history = await source.history(chat.sourceId, Date.now() - PROMOTE_BACKFILL_DAYS * DAY);
+  const inserted = await ingest(chat.sourceId, history);
+
+  console.log(
+    `[auto] ${chat.name} promoted to client ${picked[0]?.key ?? "?"} (${why}) — ` +
+      `${history.length} messages read, ${inserted} new`,
+  );
+}
+
+/** Human DM: not a group, not a bot, not the service account. */
+const promotable = (c: BridgeChat): boolean => !c.isGroup && !c.isBot;
+
+/**
+ * Startup sweep: whoever messaged while nothing was listening.
+ *
+ * The bridge holds the only socket, so its downtime is a hole in the record.
+ * On start, any untracked human DM whose last message landed inside the sweep
+ * window is promoted and backfilled — the "someone messaged me yesterday and
+ * nothing happened" failure, repaired at the next start rather than
+ * discovered in person. Capped, so a first run against a busy account cannot
+ * promote half an address book in one go.
+ */
+async function sweepMissed(chats: BridgeChat[]): Promise<void> {
+  const rows = (await convex.query(API.recentChats, { limit: 200 })) as Array<{
+    sourceId: string;
+    tracked: boolean;
+  }>;
+  const trackedIds = new Set(rows.filter((r) => r.tracked).map((r) => r.sourceId));
+
+  const missed = chats
+    .filter(promotable)
+    .filter((c) => !trackedIds.has(c.sourceId))
+    .filter((c) => c.lastTs > Date.now() - SWEEP_HOURS * 3_600_000)
+    .sort((a, b) => b.lastTs - a.lastTs);
+
+  const CAP = 10;
+  for (const chat of missed.slice(0, CAP)) {
+    try {
+      await promoteChat(chat, "messaged while the bridge was down");
+    } catch (err) {
+      console.error(`[auto] could not promote ${chat.name}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  if (missed.length > CAP) {
+    console.log(`[auto] ${missed.length - CAP} more recent DMs left unpromoted (cap ${CAP}) — pick them manually`);
+  }
 }
 
 /**
@@ -177,7 +254,8 @@ async function main(): Promise<void> {
   await say("open");
   console.log("[bridge] connected");
 
-  await publishChats();
+  const chats = await publishChats();
+  await sweepMissed(chats);
   await backfill();
 
   // Live arrivals. Only chats already promoted to clients are ingested —
@@ -201,11 +279,30 @@ async function main(): Promise<void> {
         const n = await ingest(chatId, [message]);
         if (n > 0) console.log(`[live] ${chatId} · ${message.from}: ${message.text.slice(0, 60)}`);
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+
+        /* An unknown sender. If it is a human DM, this is a prospective
+           client introducing themselves — promote, backfill, then ingest the
+           message that triggered all of it. A chat with a fresh message is by
+           definition near the top of the dialog list, so one listChats call
+           finds it. */
+        if (msg.includes("No tracked client") && !promoting.has(chatId)) {
+          try {
+            const chat = (await source.listChats(30)).find((c) => c.sourceId === chatId);
+            if (chat && promotable(chat)) {
+              await promoteChat(chat, "new conversation");
+              await ingest(chatId, [message]);
+              return;
+            }
+          } catch (inner) {
+            console.error(`[auto] promotion of ${chatId} failed: ${inner instanceof Error ? inner.message : inner}`);
+          }
+        }
+
         if (warned.has(chatId)) return;
         warned.add(chatId);
-        const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("No tracked client")) {
-          console.log(`[skip] ${chatId} is not a tracked client — pick it to ingest its messages`);
+          console.log(`[skip] ${chatId} — group or bot, not promoted. Pick it manually if it is a client.`);
         } else {
           console.error(`[live] ${chatId} failed: ${msg}`);
         }

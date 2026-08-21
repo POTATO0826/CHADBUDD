@@ -15,10 +15,23 @@
  */
 
 import { cronJobs } from "convex/server";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 const crons = cronJobs();
 
 crons.interval("calendar sync", { minutes: 5 }, internal.calendar.tick, {});
+
+/**
+ * The agent pass, running itself.
+ *
+ * This used to be a script somebody remembered to run, which in practice
+ * meant it never ran — the deployment had no API key and nobody noticed for
+ * a week, because a pass that requires remembering is a pass that does not
+ * exist. Fifteen minutes against a ten-minute per-client debounce means a
+ * client with nothing new costs one skipped read, and a client who just
+ * poured their heart out gets read within a quarter hour, around the clock,
+ * whether or not the desktop app is open.
+ */
+crons.interval("agent pass", { minutes: 15 }, api.agent.analyzeAll, {});
 
 export default crons;
