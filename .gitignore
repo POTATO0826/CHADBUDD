@@ -33,3 +33,9 @@ _shot*.png
 
 # throwaway backend probes
 scripts-local/
+
+# agent tooling, installed per-machine by the convex plugin
+.agents/
+.claude/
+skills-lock.json
+convex/_generated/ai/

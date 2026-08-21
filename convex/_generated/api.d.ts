@@ -10,13 +10,9 @@
 
 import type * as agent from "../agent.js";
 import type * as agentData from "../agentData.js";
-import type * as calendar from "../calendar.js";
 import type * as chats from "../chats.js";
-import type * as crons from "../crons.js";
-import type * as http from "../http.js";
 import type * as ingest from "../ingest.js";
 import type * as outbox from "../outbox.js";
-import type * as scheduling from "../scheduling.js";
 import type * as seed from "../seed.js";
 import type * as threads from "../threads.js";
 import type * as verbatim from "../verbatim.js";
@@ -30,13 +26,9 @@ import type {
 declare const fullApi: ApiFromModules<{
   agent: typeof agent;
   agentData: typeof agentData;
-  calendar: typeof calendar;
   chats: typeof chats;
-  crons: typeof crons;
-  http: typeof http;
   ingest: typeof ingest;
   outbox: typeof outbox;
-  scheduling: typeof scheduling;
   seed: typeof seed;
   threads: typeof threads;
   verbatim: typeof verbatim;

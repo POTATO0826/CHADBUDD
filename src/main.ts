@@ -12,11 +12,11 @@
 
 import { NOW } from "../data/clock.ts";
 import type { ClientKey } from "../data/types.ts";
-import { approvals, ideas, queues } from "./copy.ts";
+import { approvals, ideas, queues, rules } from "./copy.ts";
 import type { Idea, QueueKind, QueueRow } from "./copy.ts";
-import type { ClientView, RecMessage, Tone } from "./derive.ts";
+import type { Cell, ClientView, RecMessage, Tone, Week } from "./derive.ts";
 import {
-  ADVISOR, INK, MARK, clientById, clients, dateShort, humanGap, replyClock, stamp,
+  ADVISOR, INK, MARK, clientById, clients, dateShort, humanGap, replyClock,
   totals, weekBars,
 } from "./derive.ts";
 import { openDays } from "./ledger.ts";
@@ -28,15 +28,7 @@ import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
 import { initLive, queueSend } from "./live.ts";
-import { connectCalendar } from "./convexCalendar.ts";
 import { initScramble } from "./scramble.ts";
-import { POINT_GLYPH, POINT_LABEL, notesFor } from "./contact.ts";
-import type { TaskKind } from "./inbox.ts";
-import { TASK_GLYPH, TASK_LABEL, decisions, inboxTotals, tasksOfKind } from "./inbox.ts";
-import { GATE_REASON, TIER_ACTION } from "./gates.ts";
-import { NOTIFY_THRESHOLD_MIN, conflictsFrom, delayText, laterToday, markRunningOver, overrunFor } from "./presence.ts";
-import { calendarDay, calendarMonth, calendarSource, nowMs, refreshCalendar, refreshMonth } from "./daysource.ts";
-import type { CalendarEvent } from "./calendar.ts";
 import { initDrag } from "./drag.ts";
 import { focusWindow, isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
 
@@ -72,7 +64,7 @@ const tint = (colour: string, pct: number): string =>
 /* ── state ───────────────────────────────────────────────────────── */
 
 type IslandState = "idle" | "alert" | "call" | "peek" | "open";
-type Page = "home" | "clients" | "agenda" | "calendar" | "assist" | QueueKind;
+type Page = "home" | "clients" | "agenda" | QueueKind;
 type Mode = "profile" | "record";
 type Filter = "all" | "client" | "flagged";
 /** The clients page is a grid of cards until one of them is opened. */
@@ -90,6 +82,7 @@ interface State {
   st: IslandState;
   page: Page;
   sel: ClientKey;
+  rule: number;
   filter: Filter;
   /** Message the current citation is pointing at. */
   lit: string | null;
@@ -101,10 +94,6 @@ interface State {
   up: number | null;
   /** Agenda page: which slot's context is open. Defaults to the next one. */
   slot: string | null;
-  /** Calendar page: first-of-month being shown. Null follows the clock. */
-  month: number | null;
-  /** Calendar page: the day whose blocks are open. Null follows the clock. */
-  pick: number | null;
   /** Live text in the chat-history search box. */
   q: string;
   /** Ask-the-agent transcript, per client — switching clients keeps yours. */
@@ -135,14 +124,13 @@ const state: State = {
   st: "idle",
   page: "home",
   sel: top.key,
+  rule: 0,
   filter: "all",
   lit: null,
   cview: "grid",
   stage: null,
   up: null,
   slot: null,
-  month: null,
-  pick: null,
   q: "",
   ask: {},
   draft: "",
@@ -173,7 +161,7 @@ function idleLayer(): string {
 /* ── notifications ───────────────────────────────────────────────
    Two kinds of automatic enlargement, both fed by real data:
 
-   · message — a client's latest Telegram message replays as an incoming
+   · message — a client's latest WhatsApp message replays as an incoming
      alert: the pill grows to 360px with the butter sweep and a NEW tag,
      dwells 7 seconds, and returns to idle.
    · reminder — the agent surfaces a pending item from the approval queue
@@ -226,15 +214,7 @@ const notifs: Notif[] = (() => {
 
   const STYLE: Record<string, { tag: string; tone: "butter" | "critical"; dwell: number | null }> = {
     "→": { tag: "SEND", tone: "butter", dwell: 9000 },
-    /* Owed items used to sit here until acted on — dwell: null — on the
-       reasoning that a 104-day promise should not be dismissable by waiting.
-       In practice it meant the island parked over whatever the advisor was
-       working in and stayed there, which is not urgency, it is an obstruction:
-       the one notification you cannot dismiss is the one you learn to ignore.
-
-       Nine seconds like the rest. The urgency is not lost — the item stays in
-       the approval queue and the overview keeps counting it. */
-    "!": { tag: "OWED", tone: "critical", dwell: 9000 },
+    "!": { tag: "OWED", tone: "critical", dwell: null },
     "☏": { tag: "CALL", tone: "critical", dwell: 9000 },
     "◇": { tag: "HELD", tone: "butter", dwell: 9000 },
   };
@@ -411,9 +391,10 @@ function citeChips(ids: string[], client: ClientKey): string {
 const NAV: Array<{ page: Page; label: string; count: number }> = [
   { page: "home", label: "overview", count: 0 },
   { page: "agenda", label: "day", count: dayTotals.left },
-  { page: "calendar", label: "calendar", count: 0 },
   { page: "clients", label: "clients", count: totals.clients },
+  { page: "gifts", label: "gifts", count: queues.gifts.rows.filter((r) => r.btn !== "").length },
   { page: "calls", label: "calls", count: queues.calls.rows.filter((r) => r.btn !== "").length },
+  { page: "sources", label: "sources", count: 0 },
 ];
 
 /**
@@ -508,7 +489,6 @@ const SLOT_GLYPH: Record<string, string> = {
 
 const hhmmFmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kuala_Lumpur" });
 const hhmmOf = (ms: number): string => hhmmFmt.format(ms);
-
 
 /** A slot borrows its client's status colour; the advisor's own time stays quiet. */
 function slotTone(s: AgendaSlot): Tone {
@@ -606,8 +586,6 @@ function slotRow(s: AgendaSlot, on: boolean): string {
     </button>`;
 }
 
-
-
 /**
  * The context panel.
  *
@@ -616,91 +594,6 @@ function slotRow(s: AgendaSlot, on: boolean): string {
  * uses, and "where the purpose stands" is that client's measured state rather
  * than a sentence about how the relationship feels.
  */
-/**
- * Running over, and who that lands on.
- *
- * A calendar records intentions; it has no idea whether the 13:15 actually
- * finished. The advisor does, and one tap here is the only signal that is
- * never wrong — the assistant's own two routes (somebody mentioning a delay,
- * a check that goes unanswered for ten minutes) exist because this tap will
- * often not happen, not because they are better.
- *
- * The consequences are shown before the tap rather than after. Anyone about
- * to tell three clients they are late should see which three first.
- */
-function overrunBlock(s: AgendaSlot): string {
-  const event = calendarDay().find((x) => x.id === s.id);
-  if (!event) return "";
-
-  const over = overrunFor(s.id);
-  const now = nowMs();
-  const ended = Date.parse(event.at) + event.minutes * 60_000;
-  // Nothing to say about a block that has not started.
-  if (now < Date.parse(event.at)) return "";
-
-  const affected = over ? conflictsFrom(over, laterToday(calendarDay(), now), now) : [];
-
-  const who = affected.length
-    ? `<div class="told">${affected
-        .map((x) => {
-          const cc = clientById(x.client.toLowerCase());
-          return `<span class="t1">${e(cc.name)}<em>${e(delayText(x))}</em></span>`;
-        })
-        .join("")}</div>`
-    : over
-      ? `<span class="none">Under ${NOTIFY_THRESHOLD_MIN} minutes, or nobody close enough to affect — no messages sent.</span>`
-      : "";
-
-  return `
-    <div class="sect over" data-on="${over ? "yes" : "no"}">
-      <span class="lbl">running over</span>
-      ${over
-        ? `<span class="state">${over.minutes} minutes past ${e(
-             over.by === "tapped"
-               ? "— you said so"
-               : over.by === "mentioned"
-                 ? "— someone mentioned it in a thread"
-                 : "— the check went unanswered for ten minutes",
-           )}</span>`
-        : now > ended
-          ? `<span class="state">Scheduled to end at ${e(hhmmOf(ended))}. Did it?</span>`
-          : `<span class="state">Ends at ${e(hhmmOf(ended))}.</span>`}
-      ${who}
-      <div class="ctxacts">
-        <button class="btn${over ? "" : " acc"}" data-act="running-over" data-slot="${e(s.id)}">
-          ${over ? "Still running" : "Running over"}</button>
-      </div>
-    </div>`;
-}
-
-/**
- * A block this app booked from something it read.
- *
- * The whole reason inferring a time from a message is safe is that the result
- * arrives here rather than in the client's inbox: pencilled in, attributed to
- * the message it came from, and one tap from gone. A tentative block with no
- * way to resolve it would be worse than not booking at all — it would leave the
- * advisor with a diary they cannot trust and no way to fix it.
- */
-function tentativeBlock(s: AgendaSlot): string {
-  const event = calendarDay().find((x) => x.id === s.id);
-  if (!event || event.booking !== "tentative") return "";
-
-  const from = event.inferredFrom;
-  return `
-    <div class="sect tent">
-      <span class="lbl">pencilled in</span>
-      <span class="state">Nobody confirmed this to you — it was read out of a ${e(
-        from?.source ?? "message",
-      )} thread, so check it before you rely on it.</span>
-      ${from && s.withClient ? `<div class="citerow">${citeChips([from.cite], s.withClient)}</div>` : ""}
-      <div class="ctxacts">
-        <button class="btn acc" data-act="confirm-slot" data-slot="${e(s.id)}">That is right</button>
-        <button class="btn" data-act="drop-slot" data-slot="${e(s.id)}">Remove it</button>
-      </div>
-    </div>`;
-}
-
 function slotContext(s: AgendaSlot): string {
   const c = s.withClient ? clientById(s.withClient.toLowerCase()) : null;
   const tone = slotTone(s);
@@ -741,10 +634,6 @@ function slotContext(s: AgendaSlot): string {
       ${s.prep.length ? `<div class="sect"><span class="lbl">have ready</span>
         ${s.prep.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>` : ""}
 
-      ${tentativeBlock(s)}
-
-      ${overrunBlock(s)}
-
       ${c ? `<div class="ctxacts"><button class="btn acc" data-act="open-client" data-client="${c.key}">Open ${e(c.name.split(" ")[0]!)}</button></div>` : ""}
     </div>`;
 }
@@ -761,276 +650,6 @@ function agendaPage(): string {
       <div class="daycols">
         <div class="daylist sc" id="daylist">${agenda.map((x) => slotRow(x, x.id === sel.id)).join("")}</div>
         <div class="dayctx sc" id="dayctx">${slotContext(sel)}</div>
-      </div>
-    </div>`;
-}
-
-/* ── the month ───────────────────────────────────────────────────
-   A calendar the advisor can step through, shaded by how committed each day
-   is. The day tab answers "where am I going next"; this answers the question
-   that comes before booking anything — "what does that week already look
-   like". */
-
-/**
- * What counts as load.
- *
- * Time in front of people, and the driving between it. Focus and admin blocks
- * are work but they are the advisor's own to move, and breaks are the opposite
- * of load — shading a day darker because it has a protected lunch in it would
- * punish exactly the habit the assistant is trying to defend.
- */
-const LOAD_KINDS: ReadonlySet<string> = new Set(["meeting", "call", "travel"]);
-
-function loadMinutes(events: CalendarEvent[]): number {
-  return events.reduce((n, x) => (LOAD_KINDS.has(x.kind) ? n + x.minutes : n), 0);
-}
-
-/**
- * Hours of committed time at which a day moves up a step.
- *
- * Four steps, and it stops. A ten-hour day and a six-hour day are drawn
- * identically on purpose: past a point the difference is not something the
- * advisor can act on, and a scale that keeps deepening turns a working diary
- * into a chart of how bad things are. The ramp exists to help someone find a
- * gap, not to grade their week.
- */
-const LOAD_STEPS = [2, 4, 6];
-
-function loadStep(minutes: number): number {
-  if (minutes <= 0) return 0;
-  const hours = minutes / 60;
-  return 1 + LOAD_STEPS.filter((h) => hours >= h).length;
-}
-
-/**
- * The ramp: one hue, deepening.
- *
- * A single calm hue rather than green-to-red, and foam rather than love or
- * gold, because the busiest day of someone's week should not be coloured like
- * an error. Sequential data gets one hue by rule; which hue is the part that
- * decides whether the page reads as a plan or as an alarm.
- *
- * On a dark surface "darker" has to mean more ink, not lower lightness — a
- * genuinely darker fill on #232136 disappears into the background, so a packed
- * day would recede exactly where it should stand out. Density does the work.
- */
-const LOAD_FILL = ["transparent", "12%", "24%", "38%", "54%"];
-
-const loadTint = (step: number): string =>
-  step === 0 ? "transparent" : `color-mix(in oklab, var(--foam) ${LOAD_FILL[step]}, transparent)`;
-
-const monthFmt = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" });
-
-/** Monday-first, which is how a working week is read here. */
-const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const startOfDay = (ms: number): number => {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-};
-
-/**
- * The grid, including the days either side that complete the first and last
- * weeks. Those are drawn faint and are not clickable: they belong to another
- * month, and the events for them were never fetched, so a count on them would
- * be a zero that means "not asked" rather than "nothing booked".
- */
-function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
-  const first = new Date(anchorMs);
-  first.setDate(1);
-  first.setHours(0, 0, 0, 0);
-
-  const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
-  // getDay() is Sunday-first; shift so Monday is column 0.
-  const lead = (first.getDay() + 6) % 7;
-
-  const today = startOfDay(nowMs());
-  const picked = state.pick === null ? today : startOfDay(state.pick);
-
-  const byDay = new Map<number, CalendarEvent[]>();
-  for (const ev of events) {
-    const k = startOfDay(Date.parse(ev.at));
-    const list = byDay.get(k);
-    if (list) list.push(ev);
-    else byDay.set(k, [ev]);
-  }
-
-  const cells: string[] = [];
-
-  for (let i = 0; i < lead; i++) cells.push(`<span class="cell out" aria-hidden="true"></span>`);
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    const at = new Date(first.getFullYear(), first.getMonth(), d).getTime();
-    const list = byDay.get(at) ?? [];
-    const step = loadStep(loadMinutes(list));
-    const isToday = at === today;
-    const isPicked = at === picked;
-    const weekend = [5, 6].includes((new Date(at).getDay() + 6) % 7);
-
-    /* The count is the honest label. Dots read nicely at four events and turn
-       into a smear at nine, and the number is what someone is actually asking
-       for when they look at a shaded square. */
-    const n = list.length;
-    const tentative = list.some((x) => x.booking === "tentative");
-
-    cells.push(`
-      <button class="cell${isToday ? " today" : ""}${isPicked ? " on" : ""}${weekend ? " wk" : ""}"
-        data-act="pick-day" data-day="${at}" data-step="${step}"
-        style="--fill:${loadTint(step)}"
-        aria-current="${isToday ? "date" : "false"}"
-        aria-label="${e(new Date(at).toDateString())}, ${n} ${n === 1 ? "entry" : "entries"}">
-        <span class="dn">${d}</span>
-        ${n ? `<span class="cn">${n}</span>` : ""}
-        ${tentative ? `<span class="tq" title="Something pencilled in">·</span>` : ""}
-      </button>`);
-  }
-
-  const tail = (7 - ((lead + daysInMonth) % 7)) % 7;
-  for (let i = 0; i < tail; i++) cells.push(`<span class="cell out" aria-hidden="true"></span>`);
-
-  return `
-    <div class="dow">${DOW.map((x) => `<span>${x}</span>`).join("")}</div>
-    <div class="grid">${cells.join("")}</div>`;
-}
-
-/**
- * One day, drawn to scale.
- *
- * Blocks are positioned and sized by real time rather than listed, because the
- * thing worth seeing is the shape of the day — where the gaps are, and whether
- * two commitments are back to back. A list of five rows makes an hour and a
- * ten-minute call look the same size.
- */
-function dayBlocks(dayMs: number, events: CalendarEvent[]): string {
-  const day = startOfDay(dayMs);
-  const list = events
-    .filter((x) => startOfDay(Date.parse(x.at)) === day)
-    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-
-  if (list.length === 0) {
-    return `
-      <div class="empty">
-        <span class="hero-h d" style="font-size:19px">Nothing booked</span>
-        <span class="mt">No commitments on this day. Worth keeping some of it.</span>
-      </div>`;
-  }
-
-  /* The window fits the day rather than assuming office hours: a 07:00 airport
-     run and a 20:00 call both have to be inside it, and a fixed 09–18 scale
-     would quietly clip them off the top or bottom of the column. */
-  const starts = list.map((x) => Date.parse(x.at));
-  const ends = list.map((x, i) => starts[i]! + x.minutes * 60_000);
-  const from = Math.min(...starts, day + 8 * 3_600_000);
-  const to = Math.max(...ends, day + 18 * 3_600_000);
-  const span = to - from;
-
-  const hours: string[] = [];
-  for (let h = new Date(from).getHours(); h * 3_600_000 + day <= to; h++) {
-    const at = day + h * 3_600_000;
-    if (at < from) continue;
-    hours.push(`<span class="hr" style="top:${((at - from) / span) * 100}%">${String(h).padStart(2, "0")}</span>`);
-  }
-
-  /**
-   * Side by side when they overlap.
-   *
-   * A real calendar has a call inside a travel block and a meeting that runs
-   * into the next one; drawn full width they cover each other and the one
-   * underneath simply is not there. Lanes are assigned greedily in start order
-   * — the first lane whose last block has already ended — which is what every
-   * calendar does and is right for the handful of overlaps a day can hold.
-   */
-  const laneEnds: number[] = [];
-  const lane = starts.map((start, i) => {
-    const free = laneEnds.findIndex((endsAt) => endsAt <= start);
-    const at = free === -1 ? laneEnds.length : free;
-    laneEnds[at] = ends[i]!;
-    return at;
-  });
-  const lanes = Math.max(1, laneEnds.length);
-
-  const blocks = list
-    .map((x, i) => {
-      const top = ((starts[i]! - from) / span) * 100;
-      const height = ((ends[i]! - starts[i]!) / span) * 100;
-      const width = 100 / lanes;
-      const left = lane[i]! * width;
-      const c = x.withClient ? clientById(x.withClient.toLowerCase()) : null;
-      const heavy = x.kind === "meeting" || x.kind === "call";
-
-      return `
-        <button class="blk${heavy ? " hv" : ""}${x.booking === "tentative" ? " tent" : ""}"
-          style="top:${top}%;height:${Math.max(height, 4)}%;left:${left}%;width:calc(${width}% - 3px)"
-          ${c ? `data-act="open-client" data-client="${c.key}"` : `data-act="noop"`}
-          aria-label="${e(x.title)} at ${e(hhmmOf(starts[i]!))}">
-          <span class="bt">${e(hhmmOf(starts[i]!))}</span>
-          <span class="bn">${e(SLOT_GLYPH[x.kind] ?? "◍")} ${e(x.title)}</span>
-          ${x.where ? `<span class="bw">${e(x.where)}</span>` : ""}
-        </button>`;
-    })
-    .join("");
-
-  return `<div class="track">${hours.join("")}<div class="blocks">${blocks}</div></div>`;
-}
-
-function calendarPage(): string {
-  const anchor = state.month ?? nowMs();
-  const events = calendarMonth();
-  const picked = state.pick ?? nowMs();
-
-  const busiest = (() => {
-    let worst = 0;
-    const byDay = new Map<number, CalendarEvent[]>();
-    for (const ev of events) {
-      const k = startOfDay(Date.parse(ev.at));
-      byDay.set(k, [...(byDay.get(k) ?? []), ev]);
-    }
-    for (const list of byDay.values()) worst = Math.max(worst, loadMinutes(list));
-    return worst;
-  })();
-
-  const committed = loadMinutes(events);
-
-  return `
-    <div class="page fixed">
-      <div class="qhead">
-        <span class="hero-h d">${e(monthFmt.format(anchor))}</span>
-        <span class="mt">${events.length} ${events.length === 1 ? "entry" : "entries"} ·
-          ${Math.round(committed / 60)}h committed · busiest day
-          ${busiest === 0 ? "—" : `${Math.round((busiest / 60) * 10) / 10}h`}. Shading is time in
-          front of people and the driving between it, not everything on the diary.</span>
-      </div>
-
-      <div class="calcols">
-        <div class="month">
-          <div class="mnav">
-            <button class="ico" data-act="month-step" data-by="-1" aria-label="Previous month">‹</button>
-            <button class="btn" data-act="month-step" data-by="0">Today</button>
-            <button class="ico" data-act="month-step" data-by="1" aria-label="Next month">›</button>
-          </div>
-
-          ${monthGrid(anchor, events)}
-
-          <div class="ramp">
-            <span class="lbl">committed time</span>
-            <span class="sw" style="--fill:${loadTint(0)}"></span>
-            <span class="sw" style="--fill:${loadTint(1)}"></span>
-            <span class="sw" style="--fill:${loadTint(2)}"></span>
-            <span class="sw" style="--fill:${loadTint(3)}"></span>
-            <span class="sw" style="--fill:${loadTint(4)}"></span>
-            <span class="rt">clear · under 2h · 4h · 6h and beyond</span>
-          </div>
-        </div>
-
-        <div class="dayside sc">
-          <div class="dhead">
-            <span class="hero-h d" style="font-size:21px">${e(
-              new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(picked),
-            )}</span>
-          </div>
-          ${dayBlocks(picked, events)}
-        </div>
       </div>
     </div>`;
 }
@@ -1083,139 +702,6 @@ function stageFunnel(): string {
     </div>`;
 }
 
-/**
- * What is waiting, and how much of it never needed you.
- *
- * This replaced the rules accordion, which was four lines of static policy text
- * that never changed and never told anyone to do anything.
- *
- * ── the headline is the ratio, not the count ─────────────────────────
- * Every inbox can tell you eight things are waiting. The number that argues for
- * the product is the second one: seventeen arrived and nine were dealt with
- * without you. Leading with "8" alone would make the assistant look like a
- * source of work rather than a filter on it.
- *
- * ── ordered by what it costs to ignore ───────────────────────────────
- * By age, oldest first, because a 104-day promise does not become less urgent
- * for sitting under a fresh draft. The approval rows carry no timestamp — they
- * are authored — so they sort last rather than being given an age they do not
- * have.
- *
- * ── the cell is 250px ────────────────────────────────────────────────
- * Too narrow to carry the evidence inline, so each row shows the count and the
- * single worst instance, and the click opens the client where the citations
- * already live. A summary that tries to be the detail ends up being neither.
- */
-function needsYouTile(): string {
-  const kinds: TaskKind[] = ["call-back", "follow-up", "answer", "approve"];
-
-  const rows = kinds
-    .map((kind) => {
-      const of = tasksOfKind(kind);
-      if (of.length === 0) return "";
-
-      // Worst first, and the list is already sorted, so this is the head.
-      const worst = of[0]!;
-      const c = clientById(worst.client.toLowerCase());
-      const age = worst.days > 0 ? `${worst.days} days` : "ready";
-
-      return `
-        <button class="nrow" data-act="open-client" data-client="${e(worst.client)}"
-          aria-label="${of.length} to ${e(TASK_LABEL[kind])}. Oldest: ${e(c.name)}, ${e(age)}.">
-          <span class="g" data-kind="${e(kind)}">${e(TASK_GLYPH[kind])}</span>
-          <span class="col">
-            <span class="k">${e(TASK_LABEL[kind])}</span>
-            <span class="m">${e(c.name.split(" ")[0]!)} · ${e(age)}</span>
-          </span>
-          <span class="n">${of.length}</span>
-        </button>`;
-    })
-    .join("");
-
-  return `
-    <div class="needs">
-      <div class="nhead">
-        <span class="lbl">needs you</span>
-        <span class="fig">${inboxTotals.needsYou}</span>
-      </div>
-      <span class="sub">of ${inboxTotals.arrived} that arrived today</span>
-
-      <div class="nlist">${rows || `<p class="nempty">Nothing waiting. Everything that came in was answered.</p>`}</div>
-
-      <button class="done" data-act="page" data-page="assist"
-        aria-label="${inboxTotals.handled} answered automatically. Review them.">
-        <span class="g">✓</span>
-        <span class="col">
-          <span class="k">${inboxTotals.handled} sent · ${inboxTotals.held + inboxTotals.refused} stopped</span>
-          <span class="m">see what the gates decided</span>
-        </span>
-      </button>
-    </div>`;
-}
-
-/**
- * The decision log.
- *
- * Every message the assistant considered, what it did, and which rule made it
- * do that. With no outbox and no recall, this is the only recourse after the
- * fact — so it records the gates by name rather than a verdict, and it records
- * the ones that fired on messages that still went out.
- *
- * The refusals are the part worth reading. A T4 is not the assistant failing to
- * produce something; it is the assistant declining to write a message that
- * would have cost more than silence, and handing over a question instead.
- */
-function assistPage(): string {
-  const rows = decisions
-    .map((a) => {
-      const c = clientById(a.reply.client.toLowerCase());
-      const d = a.decision;
-
-      const gates = d.gates.length
-        ? `<div class="gates">${d.gates
-            .map((g) => `<span class="gate" title="${e(GATE_REASON[g])}">${e(g)}</span>`)
-            .join("")}</div>`
-        : "";
-
-      const prompt = a.prompt
-        ? `<div class="ask">
-             <span class="lbl">ask her instead</span>
-             <span class="tx">${e(a.prompt.text)}</span>
-             <span class="from">from her meeting notes · ${e(a.prompt.cite)}</span>
-           </div>`
-        : "";
-
-      return `
-        <div class="drow" data-outcome="${e(d.outcome)}">
-          <div class="dhd">
-            <span class="tier" data-tier="${e(d.tier)}">${e(d.tier)}</span>
-            <button class="who" data-act="open-client" data-client="${e(a.reply.client)}">${e(c.name)}</button>
-            <span class="act">${e(TIER_ACTION[d.tier])}</span>
-            <span class="when">${e(stamp.format(Date.parse(a.reply.at)))}</span>
-          </div>
-          <span class="q">“${e(a.reply.asked)}”</span>
-          <span class="rz">${e(d.reason)}</span>
-          ${gates}
-          ${d.outcome === "refused" ? "" : `<p class="body">${e(a.reply.sent)}</p>`}
-          ${a.reply.source ? `<span class="src">source · ${e(a.reply.source.ref)}</span>` : ""}
-          ${prompt}
-        </div>`;
-    })
-    .join("");
-
-  return `
-    <div class="page fixed">
-      <div class="qhead">
-        <span class="hero-h d">What the assistant decided</span>
-        <span class="mt">${inboxTotals.handled} sent · ${inboxTotals.held} held for you ·
-          ${inboxTotals.refused} it would not write. Nine gates run before anything goes out, and
-          any one of them forces a person. Every decision below records which fired — with no
-          recall on a sent message, the log is the only recourse there is.</span>
-      </div>
-      <div class="dlist sc" id="dlist">${rows}</div>
-    </div>`;
-}
-
 function overviewPage(): string {
 
   const bars = weekBars.days
@@ -1264,6 +750,25 @@ function overviewPage(): string {
     )
     .join("");
 
+  const ruleRows = rules
+    .map(
+      (r, i) => `
+      <div class="rule" aria-expanded="${state.rule === i}">
+        <button class="hd" data-act="rule" data-i="${i}">
+          <span>${e(r.label)}</span>
+          <span class="car">${state.rule === i ? "⌃" : "⌄"}</span>
+        </button>
+        <div class="det">
+          <span class="thumb" aria-hidden="true"></span>
+          <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
+            <span style="font-size:11.5px">${e(r.detailTitle)}</span>
+            <span class="m" style="font-size:9px;color:var(--t4)">${e(r.detailMeta)}</span>
+          </span>
+          <span class="m" style="margin-left:auto;font-size:11px;color:var(--t4)">⋮</span>
+        </div>
+      </div>`,
+    )
+    .join("");
 
   return `
     <div class="page">
@@ -1354,12 +859,67 @@ function overviewPage(): string {
           </div>
         </div>
 
-        ${needsYouTile()}
+        <div class="rules">${ruleRows}</div>
 
         ${stageFunnel()}
         </div>
       </div>
     </div>`;
+}
+
+/* ── clients: the shared pieces ──────────────────────────────────── */
+
+function cellStyle(cell: Cell): string {
+  switch (cell.kind) {
+    case "cited":
+      return "background:var(--butter);color:var(--butter-d)";
+    case "you":
+      return "background:color-mix(in oklab, var(--primary) 13%, transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--primary) 28%, transparent)";
+    case "them":
+      return "background:color-mix(in oklab, var(--foreground) 7%, transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent)";
+    case "outside":
+      return "background:transparent;box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 5%, transparent);background-image:var(--hatch)";
+    default:
+      return `background:transparent;box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 5.5%, transparent)${cell.weekend ? ";background-image:var(--hatch)" : ""}`;
+  }
+}
+
+function cellInk(cell: Cell): string {
+  // Opaque for the same reason the --t ramp is: see the note above it.
+  if (cell.kind === "cited") return "color-mix(in oklab, var(--background) 78%, var(--primary))";
+  if (cell.kind === "outside") return "color-mix(in oklab, var(--foreground) 42%, var(--card))";
+  if (cell.kind === "you") return "var(--butter)";
+  if (cell.kind === "them") return "var(--t3)";
+  return "var(--t4)";
+}
+
+function weekGrid(weeks: Week[]): string {
+  return weeks
+    .map((w) => {
+      const cells = w.cells
+        .map(
+          (cell) => `
+        <div class="cell" style="${cellStyle(cell)}" title="${e(cell.a11y)}">
+          <span class="top">
+            <span class="n" style="color:${cell.kind === "cited" ? "var(--butter-d)" : cell.kind === "outside" ? "var(--t5)" : "var(--t1)"}">${e(cell.num)}</span>
+            ${cell.kind === "cited" ? `<span class="lk" style="color:color-mix(in oklab, var(--background) 60%, var(--primary))">◆</span>` : ""}
+          </span>
+          ${cell.label ? `<span class="lb" style="color:${cellInk(cell)}">${e(cell.label)}</span>` : ""}
+        </div>`,
+        )
+        .join("");
+
+      const band = w.band
+        ? `<div class="band" style="background:${tint(markOf(w.band.tone), 10)};box-shadow:inset 0 0 0 1px ${tint(markOf(w.band.tone), 30)}">
+             <i style="background:${markOf(w.band.tone)}"></i>
+             <span style="color:${inkOf(w.band.tone)}">${e(w.band.label)}</span>
+             <span class="rg">${e(w.band.range)}</span>
+           </div>`
+        : "";
+
+      return `<div class="week"><div class="cells">${cells}</div>${band}</div>`;
+    })
+    .join("");
 }
 
 /* ── page: clients ───────────────────────────────────────────────── */
@@ -1432,11 +992,13 @@ function clientTile(c: ClientView): string {
 
       <span class="nums">
         <span class="n"><span class="v">${c.messageCount}</span><span class="lbl">messages</span></span>
+        <span class="d"></span>
         <span class="n"><span class="v">${e(lat.recent)}</span><span class="lbl">median reply</span></span>
+        <span class="d"></span>
         <span class="n"><span class="v" style="color:${owed ? inkOf(c.ledgerTone) : "var(--t1)"}">${owed}</span><span class="lbl">open items</span></span>
       </span>
 
-      <span class="go">☏ Telegram · ${c.clientMessageCount} theirs <b>Open →</b></span>
+      <span class="go">☏ WhatsApp · ${c.clientMessageCount} theirs <b>Open →</b></span>
     </button>`;
 }
 
@@ -1554,7 +1116,7 @@ function answer(c: ClientView, intent: AskIntent): AskTurn {
     case "history":
       return {
         from: "agent",
-        text: `<b>${c.messageCount}</b> messages since ${e(dateShort.format(c.firstContact))}, ${c.clientMessageCount} of them theirs. Last contact ${e(dateShort.format(c.lastContact))} — ${days} days ago. Telegram, the phone log and meeting notes — nothing else was read.<br>${e(c.headline)}`,
+        text: `<b>${c.messageCount}</b> messages since ${e(dateShort.format(c.firstContact))}, ${c.clientMessageCount} of them theirs. Last contact ${e(dateShort.format(c.lastContact))} — ${days} days ago. WhatsApp only; nothing else was read.<br>${e(c.headline)}`,
       };
 
     default:
@@ -1666,84 +1228,6 @@ function searchKeeps(m: RecMessage): boolean {
   return m.text.toLowerCase().includes(q) || m.id.toLowerCase().includes(q) || m.time.toLowerCase().includes(q);
 }
 
-/**
- * What was actually said, and when.
- *
- * This replaces the activity heatmap that used to sit here. The heatmap showed
- * *that* there had been contact — thirty-five squares, darker where there were
- * more messages — which is a shape the four signals already measure, and
- * measure better. What no view showed was the thing an advisor with three
- * hundred clients genuinely cannot hold: what this particular person said about
- * their own life, in a meeting, four months ago.
- *
- * That is what personalised retention is made of. Michelle turned down the
- * Singapore role because of the travel, not the money; her brother lost money
- * on a Johor property in 2019 and she will not touch a five-year lock-in. Ask
- * her the wrong question and the relationship costs nothing to lose. Neither
- * sentence appears anywhere in her chat export.
- *
- * ── every note carries its moment ────────────────────────────────────
- * Date and time to the minute, and a relative age beside it. The timestamp is
- * not decoration: it is what lets someone find the passage again in a
- * recording, and what makes a note from June read differently from one from
- * last week.
- *
- * ── silence is shown, not hidden ─────────────────────────────────────
- * A meeting that produced no notes still appears, with the reason. "He declined
- * recording" is a fact about the relationship; "nobody asked" is a fact about
- * the advisor, and collapsing both into an empty list would conceal the second
- * — which is the one that can be fixed.
- */
-function keyInfoTile(c: ClientView): string {
-  const notes = notesFor(c.key);
-
-  const rows = notes.moments
-    .map(
-      (m) => `
-      <div class="kp" data-kind="${e(m.kind)}">
-        <span class="g" title="${e(POINT_LABEL[m.kind])}">${e(POINT_GLYPH[m.kind])}</span>
-        <span class="col">
-          <span class="tx">${e(m.text)}</span>
-          <span class="mt">${e(stamp.format(Date.parse(m.at)))} · ${m.daysAgo}d ago · ${e(m.where)}</span>
-        </span>
-      </div>`,
-    )
-    .join("");
-
-  const quiet = notes.silent
-    .map(
-      (s) => `
-      <div class="kp quiet">
-        <span class="g">○</span>
-        <span class="col">
-          <span class="tx">${e(s.meeting.where)} · ${s.meeting.minutes} min</span>
-          <span class="mt">${e(dateShort.format(Date.parse(s.meeting.at)))} · ${
-            s.reason === "declined"
-              ? "no notes — they declined recording"
-              : "no notes — consent was never asked for"
-          }</span>
-        </span>
-      </div>`,
-    )
-    .join("");
-
-  const empty = !rows && !quiet;
-
-  return `
-    <div class="tile keyinfo" style="gap:9px">
-      <div class="kihead">
-        <span class="t" style="font-size:14px;font-weight:500">Key information</span>
-        <span class="lbl">${notes.moments.length} noted</span>
-      </div>
-      ${
-        empty
-          ? `<p class="kempty">No meetings recorded with this client yet. Notes appear here once a
-             conversation is captured with their consent.</p>`
-          : `<div class="klist sc" id="keynotes">${rows}${quiet}</div>`
-      }
-    </div>`;
-}
-
 function clientDetail(c: ClientView): string {
   const shown = c.messages.filter(searchKeeps);
   const filters: Array<[Filter, string]> = [["all", "all"], ["client", "theirs"], ["flagged", "flagged"]];
@@ -1770,7 +1254,13 @@ function clientDetail(c: ClientView): string {
             </div>
           </div>
 
-          ${keyInfoTile(c)}
+          <div class="tile" style="gap:9px">
+            <span class="t" style="font-size:14px;font-weight:500">Activity</span>
+            <div class="dow7">
+              <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span class="we">S</span><span class="we">S</span>
+            </div>
+            <div class="weeks sm">${weekGrid(c.weeks)}</div>
+          </div>
 
           ${c.open.length ? openLedgerTile(c) : ""}
         </div>
@@ -1913,8 +1403,6 @@ function openStage(stage: Stage): void {
 function body(): string {
   if (state.page === "home") return overviewPage();
   if (state.page === "agenda") return agendaPage();
-  if (state.page === "calendar") return calendarPage();
-  if (state.page === "assist") return assistPage();
   if (state.page === "clients") {
     if (state.cview === "grid") return clientsGrid();
     return clientDetail(clientById(state.sel.toLowerCase()));
@@ -1941,7 +1429,7 @@ function render(): void {
   }
   if (state.st === "open") {
     const keep = new Map<string, number>();
-    for (const id of ["msgs", "asklog", "daylist", "dayctx", "keynotes", "dlist"]) {
+    for (const id of ["msgs", "asklog", "daylist", "dayctx"]) {
       const el = document.getElementById(id);
       if (el) keep.set(id, el.scrollTop);
     }
@@ -2067,12 +1555,11 @@ function focusCite(id: string): void {
   });
 }
 
-
+/* ── events ──────────────────────────────────────────────────────── */
 
 /* Bound once to the island rather than to the names themselves, because
    render() replaces those on every state change. */
 initScramble(island);
-
 
 /* Hover-with-intent. A deliberate hover expands to the summary card; a
    cursor merely passing through does not — the 160ms delay filters the
@@ -2278,69 +1765,6 @@ island.addEventListener("click", (ev) => {
       if (want) openStage(want);
       return;
     }
-    /* The advisor saying the meeting has not finished. Everything downstream
-       — who is told, and how late they are told they are — follows from this
-       one fact, which is why it is a tap and not an inference. */
-    /* Resolving a pencilled-in block. Both write to the real calendar, which
-       is the point: a block the advisor confirmed here has to be confirmed on
-       the phone they will actually check. */
-    case "confirm-slot":
-    case "drop-slot": {
-      const id = hit.dataset.slot;
-      if (id) {
-        void calendarSource()
-          .settle(id, act === "confirm-slot" ? "confirmed" : "cancelled")
-          .then(refreshCalendar)
-          .then(render)
-          .catch((err) => console.error("[chadbuddy] could not settle", id, err));
-      }
-      return;
-    }
-    /* Stepping months. `0` is Today, which returns both the grid and the
-       open day to now rather than only one of them — landing on this month
-       with a day from three months ago still selected reads as a bug. */
-    case "month-step": {
-      const by = Number(hit.dataset.by ?? "0");
-      const base = new Date(state.month ?? nowMs());
-      base.setDate(1);
-      base.setHours(0, 0, 0, 0);
-
-      if (by === 0) {
-        state.month = null;
-        state.pick = null;
-      } else {
-        base.setMonth(base.getMonth() + by);
-        state.month = base.getTime();
-        /* The open day moves with the grid. Landing on November with a day in
-           August still selected leaves the right-hand panel showing a date
-           that is not on screen, which reads as the arrows being broken. */
-        state.pick = base.getTime();
-      }
-
-      void refreshMonth(state.month ?? nowMs()).then(render);
-      render();
-      return;
-    }
-
-    case "pick-day": {
-      const at = Number(hit.dataset.day ?? "");
-      if (Number.isFinite(at)) state.pick = at;
-      render();
-      return;
-    }
-
-    /* A block with nobody on the other side. The button still exists so the
-       whole row is one hit target rather than a mix of live and dead pixels. */
-    case "noop":
-      return;
-
-    case "running-over": {
-      const id = hit.dataset.slot;
-      const ev = id ? calendarDay().find((x) => x.id === id) : undefined;
-      if (ev) markRunningOver(ev, nowMs());
-      render();
-      return;
-    }
     case "open-slot":
       state.slot = hit.dataset.slot ?? null;
       state.page = "agenda";
@@ -2352,6 +1776,10 @@ island.addEventListener("click", (ev) => {
       return;
     case "clients-back":
       state.cview = "grid";
+      render();
+      return;
+    case "rule":
+      state.rule = state.rule === Number(hit.dataset.i) ? -1 : Number(hit.dataset.i);
       render();
       return;
     case "filter":
@@ -2567,16 +1995,6 @@ window.addEventListener("error", () => {
   reportHotRect(island);
 });
 
-/* The calendar is async by design — a Google-backed source cannot be
-   anything else — so the day is fetched once here and re-read after
-   anything that changes it. render() stays synchronous. */
-void refreshCalendar().then(render);
-
-/* The month the calendar page opens on. Fetched at boot rather than on first
-   visit, so stepping onto the tab shows a filled grid rather than an empty one
-   that populates a frame later — an empty calendar reads as a free month. */
-void refreshMonth(nowMs()).then(render);
-
 render();
 watchHotRect(island);
 
@@ -2639,24 +2057,10 @@ const live = initLive(
       mode: "record",
       dwell: 9000,
     });
-
-    /* Reading this message for an agreed time is the backend's job now —
-       convex/scheduling.ts runs on ingest, so it works when the app is shut.
-       Doing it here as well would put two writers on the same sentence. The
-       block it creates arrives back through the calendar subscription. */
   },
 );
 
 if (live) {
-  /* The day, from Google rather than the seed file.
-     After initLive because it needs the connected client, and re-fetching
-     immediately because the seeded day is on screen by now and the live one
-     replaces it wholesale. Nothing below the swap knows which source answered
-     — see src/daysource.ts. */
-  if (connectCalendar(() => void refreshCalendar().then(render))) {
-    void refreshCalendar().then(render);
-  }
-
   /* The seed replay loop is a stand-in for events that have not happened yet.
      Once real ones do, it stops — two sources competing for the same island
      would show a months-old seed message over a live one. */

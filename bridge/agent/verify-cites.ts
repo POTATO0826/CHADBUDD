@@ -16,15 +16,9 @@ import { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
 import type { FunctionReference } from "convex/server";
 
-import { MISSING_CONVEX, convexUrl as resolveConvexUrl } from "../../scripts/convex-url.ts";
-
-/* Resolved the same way the page resolves it, so a backend the dashboard can
-   reach is a backend this can reach. It covers both deployments: self-hosted on
-   loopback, and Convex Cloud, where `convex dev` writes only CONVEX_DEPLOYMENT
-   and the hostname is derived from it. */
-const convexUrl = resolveConvexUrl();
+const convexUrl = process.env["CONVEX_SELF_HOSTED_URL"] ?? process.env["CONVEX_URL"] ?? "";
 if (convexUrl === "") {
-  console.error(MISSING_CONVEX);
+  console.error("Missing CONVEX_SELF_HOSTED_URL — is `docker compose up -d` running?");
   process.exit(1);
 }
 

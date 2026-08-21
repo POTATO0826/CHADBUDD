@@ -40,7 +40,7 @@ export interface SeedMessage {
 export interface SeedThread {
   key: ClientKey;
   clientName: string;
-  /** Telegram handle, masked the way the advisor's phone would show it. */
+  /** WhatsApp handle, masked the way the advisor's phone would show it. */
   handle: string;
   messages: SeedMessage[];
 }

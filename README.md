@@ -24,10 +24,6 @@ bun run check        # tsc --noEmit
 bun run tauri:dev    # the real thing: transparent overlay on the desktop
 ```
 
-Google Calendar is optional and set up separately — see
-[convex/CALENDAR.md](convex/CALENDAR.md). Without it the app runs on the seeded
-day exactly as before; `src/daysource.ts` is the one seam that decides which.
-
 ## Where the stages stand
 
 | Stage | State |

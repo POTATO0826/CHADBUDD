@@ -5,8 +5,6 @@
  * what the Tauri shell will load from disk later.
  */
 
-import { convexDefine, convexUrl } from "./scripts/convex-url.ts";
-
 const built = await Bun.build({
   entrypoints: ["src/main.ts"],
   target: "browser",
@@ -14,9 +12,6 @@ const built = await Bun.build({
   minify: true,
   outdir: "dist",
   naming: "app.js",
-  // The deployment URL is baked in: a Tauri build loads from disk with no
-  // server in front of it to inject anything, and a browser cannot read .env.
-  define: convexDefine(),
 });
 
 if (!built.success) {
@@ -31,4 +26,3 @@ await Bun.write("dist/fonts.css", Bun.file("assets/fonts.css"));
 const bytes = (await Bun.file("dist/app.js").text()).length;
 console.log(`dist/app.js  ${bytes.toLocaleString("en-US")} bytes`);
 console.log(`dist/index.html written.`);
-console.log(convexUrl() ? `convex       ${convexUrl()}` : `convex       not configured — the bundle will use the seed`);
