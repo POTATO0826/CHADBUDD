@@ -322,6 +322,26 @@ const NAV: Array<{ page: Page; label: string; count: number }> = [
   { page: "sources", label: "sources", count: 0 },
 ];
 
+/**
+ * The mark: a squircle with two bars cut out of it.
+ *
+ * The bars are the product in one glyph. The top one runs the full width, the
+ * one under it reaches barely half as far — a message, and the reply that came
+ * back shorter. That is not decorative shorthand, it is the signal the engine
+ * actually measures: across the seed threads a decaying client's average
+ * message falls from 105 characters to 20 while everything else stays polite.
+ *
+ * Drawn as negative space rather than as two strokes on a plate, so the mark
+ * stays one solid silhouette and survives being set at 14px next to the
+ * wordmark. One path, one `currentColor` fill, no gradients and no ids — it
+ * inherits whatever colour the brand pill is using and cannot collide with
+ * another copy of itself on the page.
+ */
+const BRAND_MARK = `
+  <svg class="mk" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path fill="currentColor" fill-rule="evenodd" d="M7.6 0h8.8C20.6 0 24 3.4 24 7.6v8.8c0 4.2-3.4 7.6-7.6 7.6H7.6C3.4 24 0 20.6 0 16.4V7.6C0 3.4 3.4 0 7.6 0Z M7.55 8.05a1.3 1.3 0 0 0 0 2.6h8.9a1.3 1.3 0 0 0 0-2.6Z M7.55 13.35a1.3 1.3 0 0 0 0 2.6h3.8a1.3 1.3 0 0 0 0-2.6Z"/>
+  </svg>`;
+
 function header(): string {
   const nav = NAV.map((n) => {
     const on = n.page === state.page;
@@ -333,7 +353,7 @@ function header(): string {
 
   return `
     <div class="hdr">
-      <span class="brand">chadbuddy</span>
+      <span class="brand">${BRAND_MARK}<span class="wm">chadbuddy</span></span>
       <nav class="nav" aria-label="Sections">${nav}</nav>
       <div class="orbs">
         ${isTauri ? `<button class="orb" data-act="quit" title="Quit ChadBuddy" aria-label="Quit">⏻</button>` : ""}

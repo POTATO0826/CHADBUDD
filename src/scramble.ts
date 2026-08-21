@@ -37,12 +37,19 @@ const MAX_LENGTH = 64;
 
 /**
  * The headings, in the order they appear on screen: page titles, tile titles,
- * the uppercase stat and pill labels, and the "most urgent" flag.
+ * the uppercase stat and pill labels, the "most urgent" flag, and the brand
+ * wordmark.
  *
  * `.flag` is qualified because message rows reuse the class for evidence
  * markers inside a thread, which are data and must not move.
+ *
+ * The brand entry targets `.brand .wm`, never `.brand`. The pill also holds the
+ * logo's inline <svg>, and a frame here is written with textContent — which
+ * replaces every child. Pointed at the wrapper it would delete the mark on
+ * first hover and never put it back, because the captured original is the
+ * element's text and the svg is not text.
  */
-const HEADINGS = ".hero-h, .tile-h .t, .lbl, .urgent .flag, .brand";
+const HEADINGS = ".hero-h, .tile-h .t, .lbl, .urgent .flag, .brand .wm";
 
 /**
  * Fisher-Yates. Shuffles a copy — the caller's array is the source of truth for
