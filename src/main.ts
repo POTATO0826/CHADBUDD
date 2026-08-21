@@ -1922,14 +1922,42 @@ if (wanted === "alert" || wanted === "call") {
 /* The live feed. First notification lands 6s after boot, then one every 22s,
    cycling through the real events — each fires only if the island is idle, so
    nothing ever barges in over the dashboard or a hover. */
-window.setTimeout(nextNotif, 6_000);
-window.setInterval(nextNotif, 22_000);
+const demoFirst = window.setTimeout(nextNotif, 6_000);
+const demoLoop = window.setInterval(nextNotif, 22_000);
 
 /* Live mode, off unless `?live` is in the URL.
    `clients`, `totals` and `ideas` are imported bindings, and ES modules make
    imports live views — so live.ts reassigns them at their source and a plain
    render() picks everything up. Nothing above this line had to change. */
-initLive(() => {
-  state.sel = clients[0]?.key ?? state.sel;
-  render();
-});
+const live = initLive(
+  () => {
+    state.sel = clients[0]?.key ?? state.sel;
+    render();
+  },
+  /* A real message arriving is exactly what the alert state was built for:
+     the pill grows to 360px, the gold ring spins, and it returns to idle.
+     showNotif already refuses to fire unless the island is idle, so this can
+     never barge over the open dashboard or a hover. */
+  (a) => {
+    showNotif({
+      kind: "message",
+      client: a.key,
+      title: a.clientName.split(" ")[0] ?? a.clientName,
+      body: a.text.length > 30 ? `${a.text.slice(0, 29)}…` : a.text,
+      meta: a.gapMs === null ? "just now" : humanGap(a.gapMs),
+      tag: "NEW",
+      tone: "butter",
+      initials: a.initials,
+      mode: "record",
+      dwell: 9000,
+    });
+  },
+);
+
+if (live) {
+  /* The seed replay loop is a stand-in for events that have not happened yet.
+     Once real ones do, it stops — two sources competing for the same island
+     would show a months-old seed message over a live one. */
+  window.clearTimeout(demoFirst);
+  window.clearInterval(demoLoop);
+}

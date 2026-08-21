@@ -180,13 +180,33 @@ async function main(): Promise<void> {
 
   // Live arrivals. Only chats already promoted to clients are ingested —
   // everything else is noise until the advisor says otherwise.
+  /**
+   * Untracked chats are expected to fail here and are not worth logging — most
+   * of the account is noise the advisor never picked.
+   *
+   * But they fail *identically* to a chat id that does not match the one the
+   * picker stored, and that is a real hazard: listChats reads the dialog id
+   * while live events carry message.chatId, and Telegram's sign conventions for
+   * groups and channels are not obviously the same. A silent catch would make
+   * "your messages never arrive" indistinguishable from "you didn't pick that
+   * chat". So each unknown id is reported once, with the tracked set beside it.
+   */
+  const warned = new Set<string>();
+
   source.onMessage((chatId, message) => {
     void (async () => {
       try {
         const n = await ingest(chatId, [message]);
-        if (n > 0) console.log(`[live] ${chatId}: ${message.text.slice(0, 60)}`);
-      } catch {
-        // An untracked chat throws by design; it is not an error worth logging.
+        if (n > 0) console.log(`[live] ${chatId} · ${message.from}: ${message.text.slice(0, 60)}`);
+      } catch (err) {
+        if (warned.has(chatId)) return;
+        warned.add(chatId);
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("No tracked client")) {
+          console.log(`[skip] ${chatId} is not a tracked client — pick it to ingest its messages`);
+        } else {
+          console.error(`[live] ${chatId} failed: ${msg}`);
+        }
       }
     })();
   });

@@ -24,7 +24,7 @@ import { fmtMinutes, score } from "./score.ts";
 import { conversationStarts, isQuestion, windows } from "./signals.ts";
 import type { Windows } from "./signals.ts";
 
-export const ADVISOR = "Wei Han";
+export const ADVISOR = "Vince";
 
 const DAY = 86_400_000;
 const TZ = "Asia/Kuala_Lumpur";

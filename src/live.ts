@@ -25,7 +25,7 @@ import type { FunctionReference } from "convex/server";
 
 import { setNow } from "../data/clock.ts";
 import type { ClientKey, SeedThread } from "../data/types.ts";
-import { rebuild } from "./derive.ts";
+import { initialsOf, rebuild } from "./derive.ts";
 import { setIdeas } from "./copy.ts";
 import { isTauri } from "./shell.ts";
 import type { Idea } from "./copy.ts";
@@ -64,15 +64,27 @@ interface IdeaRow extends Idea {
   model: string;
 }
 
+/** A message that genuinely just arrived, for the island to announce. */
+export interface Arrival {
+  key: ClientKey;
+  clientName: string;
+  initials: string;
+  text: string;
+  at: string;
+  /** Gap since the previous message in that thread, or null if it's the first. */
+  gapMs: number | null;
+}
+
 /**
  * Connect and keep the view model in step with the database.
  *
  * `onRender` is called after each update rather than this module importing
- * main.ts, which would be a cycle. Returns false if live mode wasn't asked for
+ * main.ts, which would be a cycle; `onArrive` fires for client messages that
+ * appear after the first payload. Returns false if live mode wasn't asked for
  * or the client could not be constructed, so the caller can carry on with the
  * seed.
  */
-export function initLive(onRender: () => void): boolean {
+export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void): boolean {
   if (!isLive) return false;
 
   const url = params.get("convex") ?? DEFAULT_URL;
@@ -113,8 +125,58 @@ export function initLive(onRender: () => void): boolean {
     onRender();
   };
 
+  /**
+   * Every message id already accounted for.
+   *
+   * Seeded from the first payload *without* announcing anything, which is the
+   * whole reason it exists. A backfill can deliver months of history in one
+   * update, and firing the island for each would turn the first second of the
+   * app into a notification storm of conversations the advisor had long ago.
+   * Only messages that appear after the app is watching are arrivals.
+   */
+  const seen = new Set<string>();
+  let primed = false;
+
   client.onUpdate(q("threads", "list"), {}, (value) => {
-    threads = value as SeedThread[];
+    const next = value as SeedThread[];
+
+    if (!primed) {
+      for (const t of next) for (const m of t.messages) seen.add(m.externalId);
+      primed = true;
+    } else if (onArrive) {
+      for (const t of next) {
+        // Only the newest unseen message per client is announced. A burst of
+        // five should grow the island once, not five times — and the latest is
+        // the one worth reading.
+        let latest: { text: string; at: string; gapMs: number | null } | null = null;
+
+        t.messages.forEach((m, i) => {
+          if (seen.has(m.externalId)) return;
+          seen.add(m.externalId);
+          if (m.from !== "client") return; // the advisor's own replies are not news
+          const prev = i > 0 ? t.messages[i - 1] : undefined;
+          latest = {
+            text: m.text,
+            at: m.at,
+            gapMs: prev ? Date.parse(m.at) - Date.parse(prev.at) : null,
+          };
+        });
+
+        if (latest !== null) {
+          const a = latest as { text: string; at: string; gapMs: number | null };
+          onArrive({
+            key: t.key,
+            clientName: t.clientName,
+            initials: initialsOf(t.clientName),
+            text: a.text,
+            at: a.at,
+            gapMs: a.gapMs,
+          });
+        }
+      }
+    }
+
+    threads = next;
     ready = true;
     apply();
   });
