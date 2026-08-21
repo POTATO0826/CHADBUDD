@@ -17,7 +17,7 @@ import type { NewMessageEvent } from "telegram/events/index.js";
 import type { Api } from "telegram";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
-import { DAY, type BridgeChat, type BridgeMessage, type Source } from "../types.ts";
+import { DAY, WANTED_DAYS, type BridgeChat, type BridgeMessage, type Source } from "../types.ts";
 
 const SESSION_FILE = ".tg/session.txt";
 
@@ -29,6 +29,13 @@ const TELEGRAM_SERVICE_ID = "777000";
 
 /** Ceiling per history call so one busy chat can't stall the whole backfill. */
 const MAX_HISTORY = 5_000;
+
+/**
+ * Ceiling when counting a chat's density for the picker. Lower than
+ * MAX_HISTORY on purpose: the picker only needs to know whether a chat is
+ * alive, and "at least 400 messages" answers that as well as an exact count.
+ */
+const COUNT_SCAN = 400;
 
 export class TelegramSource implements Source {
   readonly platform = "telegram" as const;
@@ -76,10 +83,14 @@ export class TelegramSource implements Source {
     this.#client = client;
   }
 
-  async listChats(limit: number): Promise<BridgeChat[]> {
+  /**
+   * `windowDays` is not decoration — see the msgCount comment below.
+   */
+  async listChats(limit: number, windowDays = WANTED_DAYS): Promise<BridgeChat[]> {
     const client = this.#need();
     const dialogs = await client.getDialogs({ limit });
     const now = Date.now();
+    const cutoff = now - windowDays * DAY;
     const out: BridgeChat[] = [];
 
     for (const d of dialogs) {
@@ -93,6 +104,26 @@ export class TelegramSource implements Source {
       const first = (await client.getMessages(d.entity, { limit: 1, reverse: true }))[0];
       const spanDays = first ? Math.floor((now - first.date * 1000) / DAY) : 0;
 
+      /**
+       * Text messages inside the scoring window — and the reason this method
+       * is slower than a dialog list has any right to be.
+       *
+       * `spanDays` says when a chat *started*, not whether it is *alive*. A
+       * conversation that opened two years ago and went quiet has a superb
+       * span and nothing to measure: picking two such chats produced 1 message
+       * and 0 messages respectively, both reported as scorable beforehand.
+       *
+       * Density and span are independent, and a picker that reports one while
+       * implying the other is worse than a picker that reports neither.
+       */
+      let msgCount = 0;
+      let scanned = 0;
+      for await (const m of client.iterMessages(d.entity, { limit: COUNT_SCAN, waitTime: 1 })) {
+        if (++scanned > COUNT_SCAN) break;
+        if (m.date * 1000 < cutoff) break;
+        if (typeof m.message === "string" && m.message.trim() !== "") msgCount++;
+      }
+
       out.push({
         sourceId: String(d.id ?? ent?.id?.toString() ?? ""),
         name: d.title ?? "(untitled)",
@@ -100,7 +131,7 @@ export class TelegramSource implements Source {
         isGroup: d.isGroup === true || d.isChannel === true,
         isBot: ent?.bot === true || ent?.id?.toString() === TELEGRAM_SERVICE_ID,
         lastTs: (d.message?.date ?? 0) * 1000,
-        msgCount: 0,
+        msgCount,
         spanDays,
       });
     }

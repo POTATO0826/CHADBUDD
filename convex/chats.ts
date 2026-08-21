@@ -19,6 +19,20 @@ import { query } from "./_generated/server";
 /** Below this there is no baseline to measure decay against — see threads.ts. */
 const MIN_SPAN_DAYS = 120;
 
+/**
+ * Text messages needed inside the window before a chat is worth scoring.
+ *
+ * Span and density are independent, and an earlier version of this file
+ * checked only span — which reads as "this chat is old enough to score" and
+ * was taken to mean "this chat has something to score". Two chats promoted on
+ * that basis, spanning 172 and 753 days, yielded 1 message and 0 messages.
+ *
+ * 20 is deliberately modest: enough to distinguish a live conversation from a
+ * dormant one, not so high that a quiet-but-real client gets filtered out of
+ * the advisor's own picker.
+ */
+const MIN_MESSAGES = 20;
+
 export const recent = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
@@ -38,22 +52,28 @@ export const recent = query({
       isBot: c.isBot,
       lastTs: c.lastTs,
       spanDays: c.spanDays,
+      msgCount: c.msgCount,
       tracked: tracked.has(c.sourceId),
       /**
        * Whether this chat can actually be scored, and if not, why.
        *
-       * The dashboard measures change, so a busy three-week-old chat produces
-       * a number with nothing behind it. Saying so here is better than
-       * rendering that number and letting the advisor trust it.
+       * Needs all four: a human, one relationship, enough elapsed time to have
+       * a baseline, and enough messages in the window to have anything to
+       * measure. A busy three-week-old chat and a two-year-old dormant one
+       * fail for opposite reasons, and both would otherwise produce a number
+       * with nothing behind it.
        */
-      scorable: !c.isBot && !c.isGroup && c.spanDays >= MIN_SPAN_DAYS,
+      scorable:
+        !c.isBot && !c.isGroup && c.spanDays >= MIN_SPAN_DAYS && c.msgCount >= MIN_MESSAGES,
       reason: c.isBot
         ? "bot or service account"
         : c.isGroup
           ? "group chat, not one relationship"
           : c.spanDays < MIN_SPAN_DAYS
             ? `only ${c.spanDays}d of history; needs ${MIN_SPAN_DAYS}d for a baseline`
-            : null,
+            : c.msgCount < MIN_MESSAGES
+              ? `dormant: ${c.msgCount} messages in the last ${MIN_SPAN_DAYS}d, needs ${MIN_MESSAGES}`
+              : null,
     }));
   },
 });

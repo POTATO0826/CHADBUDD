@@ -23,6 +23,10 @@
 # default, so anything that can reach 3210 can read every tracked message.
 # Loopback is the only thing standing between that and the local network.
 
+# Project name, so containers, network and volume read as chadbuddy-* rather
+# than being named after whatever the checkout directory happens to be called.
+name: chadbuddy
+
 services:
   backend:
     image: ghcr.io/get-convex/convex-backend:latest
