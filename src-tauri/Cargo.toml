@@ -1,0 +1,25 @@
+[package]
+name = "voltage"
+version = "0.1.0"
+description = "Voltage — live power and thermal readout"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "voltage_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+# macos-private-api is what allows a transparent NSWindow.
+tauri = { version = "2.11.5", features = ["macos-private-api"] }
+window-vibrancy = "0.8.0"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

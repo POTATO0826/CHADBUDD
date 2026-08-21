@@ -1,0 +1,19 @@
+{
+  "name": "voltage-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run server.ts",
+    "build": "bun run build.ts",
+    "check": "bunx tsc --noEmit",
+    "icon": "bun run scripts/make-icon.ts && tauri icon scripts/icon-source.png -o src-tauri/icons",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
