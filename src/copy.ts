@@ -203,7 +203,7 @@ export let ideas: Record<ClientKey, Idea[]> = {
         "She opened 3 of the last 5 conversations and asked 4 questions in 30 days. Inbound is working; unprompted contact competes with a channel that is already healthy.",
       draftLabel: "recommendation",
       draft:
-        "No outreach, no review invite, no gift. The September payslip change and the rider trim are both already agreed and diarised. Silence is the correct action.",
+        "No outreach, no review invite. The September payslip change and the rider trim are both already agreed and diarised. Silence is the correct action.",
       btn: "Confirm hold",
       meta: "breaks automatically if she messages",
       intent: "hold",
@@ -214,7 +214,7 @@ export let ideas: Record<ClientKey, Idea[]> = {
 
 /* ── queues ──────────────────────────────────────────────────────── */
 
-export type QueueKind = "gifts" | "calls" | "sources";
+export type QueueKind = "calls";
 
 export interface QueueRow {
   who: ClientKey | null;
@@ -245,47 +245,6 @@ export interface Queue {
 }
 
 export const queues: Record<QueueKind, Queue> = {
-  gifts: {
-    title: "Gifts & loyalty",
-    meta: "you request · admin approves the spend · a gift is blocked while that client is owed something",
-    foot:
-      "You cannot buy your way out of a 104-day promise. The rule exists because a gift that arrives instead of the thing owed reads as payment for silence.",
-    rows: [
-      {
-        who: "D", name: "Adrian Lim", initials: "AL", when: "requested 15 Aug",
-        kind: "held", kindTone: "critical", kindDashed: false, tone: "critical", rail: true, dim: true,
-        text: "Held by rule — a promise of yours has been open 104 days. Unblocks the moment D-012 is actually delivered.",
-        why: "auto-held · an override is logged against your name",
-        cites: ["D-012"],
-        state: "held by rule", stateTone: "critical", btn: "Override", btn2: "Why?", primary: false,
-      },
-      {
-        who: "B", name: "Faizal Rahman", initials: "FR", when: "service recovery",
-        kind: "on hold", kindTone: "butter", kindDashed: true, tone: "warn", rail: false, dim: false,
-        text: "Apology voucher for the two reschedules. Hold it: he asked to be left alone two days ago, and a voucher is contact.",
-        why: "requested 13 Aug · paused by his own instruction",
-        cites: ["B-051"],
-        state: "waiting on the hold", stateTone: "butter", btn: "Queue for October", btn2: "Withdraw", primary: false,
-      },
-      {
-        who: "C", name: "Michelle Tan", initials: "MT", when: "no milestone on file",
-        kind: "not yet", kindTone: "butter", kindDashed: true, tone: "butter", rail: false, dim: false,
-        text: "Nothing suggested yet — and if it were, it would go after the question, not before it. A hamper answers something she never asked.",
-        why: "silent ≠ unhappy · a gift here buys another month of politeness",
-        cites: [],
-        state: "question first", stateTone: "butter", btn: "Open her record", btn2: "Dismiss", primary: true,
-      },
-      {
-        who: "A", name: "Priya Ramasamy", initials: "PR", when: "no milestone on file",
-        kind: "nothing due", kindTone: "good", kindDashed: false, tone: "good", rail: false, dim: false,
-        text: "None suggested. She is engaged, asks more than you do, and nothing is owed in either direction.",
-        why: "healthy · silence is the gift here",
-        cites: [],
-        state: "nothing due", stateTone: "good", btn: "", btn2: "", primary: false,
-      },
-    ],
-  },
-
   calls: {
     title: "Call reminders",
     meta: "fires only on friction the agent can quote back to you · never on a client who is merely quiet",
@@ -319,30 +278,6 @@ export const queues: Record<QueueKind, Queue> = {
     ],
   },
 
-  sources: {
-    title: "Sources",
-    meta: "one scored source · nothing else is read, and nothing else is scored",
-    foot:
-      "The brief said no social media scraping anywhere in this build, so there is nothing here to quarantine. If a scraped source is ever added it lands on this page, wears its origin, and never touches a meter, a score or a recommendation.",
-    rows: [
-      {
-        who: null, name: "WhatsApp export", initials: "WA", when: "read 17 Aug · 09:41",
-        kind: "scored", kindTone: "good", kindDashed: false, tone: "good", rail: true, dim: false,
-        text: "222 messages across 4 threads. Feeds all four signals, the ledger, the recency windows and every recommendation on the other pages.",
-        why: "18 ledger entries verbatim-checked · 0 discarded",
-        cites: [],
-        state: "scored", stateTone: "good", btn: "Re-read", btn2: "···", primary: false,
-      },
-      {
-        who: null, name: "Scraped sources", initials: "—", when: "none",
-        kind: "none", kindTone: "butter", kindDashed: true, tone: "butter", rail: false, dim: true,
-        text: "Empty by design, not by accident. No public-web, directory or social lookup runs in this build — so there is no unverified context to weigh against a message you can actually quote.",
-        why: "constraint · WhatsApp only",
-        cites: [],
-        state: "not implemented", stateTone: "butter", btn: "", btn2: "", primary: false,
-      },
-    ],
-  },
 };
 
 /* ── overview furniture ──────────────────────────────────────────── */
@@ -361,20 +296,6 @@ export const approvals: ApprovalRow[] = [
   { glyph: "→", title: "Send Michelle's question", meta: "draft ready in her record", done: false, go: { client: "C", mode: "record" } },
   { glyph: "!", title: "Adrian comparison — blocked", meta: "104 days · attach the file first", done: false, go: { client: "D", mode: "record" } },
   { glyph: "☏", title: "Dismiss Faizal's call reminder", meta: "superseded by B-051", done: false, go: { client: "B", mode: "record" } },
-  { glyph: "◇", title: "Adrian gift — held by rule", meta: "unblocks when D-012 ships", done: false, go: { client: "D", mode: "profile" } },
-];
-
-export interface Rule {
-  label: string;
-  detailTitle: string;
-  detailMeta: string;
-}
-
-export const rules: Rule[] = [
-  { label: "Gift held while you owe something", detailTitle: "Adrian Lim · D-012", detailMeta: "promise open 104 days · gift auto-held 15 Aug" },
-  { label: "Source · WhatsApp export only", detailTitle: "chat-export-17aug.zip", detailMeta: "222 messages · 4 threads · read 09:41" },
-  { label: "Silence can be the recommendation", detailTitle: "Priya Ramasamy · hold", detailMeta: "inbound working · 3 of 5 threads hers" },
-  { label: "A client's instruction outranks a trigger", detailTitle: "Faizal Rahman · B-051", detailMeta: "“Park it for now.” · call reminder marked stale" },
 ];
 
 /**
