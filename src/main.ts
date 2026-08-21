@@ -1432,9 +1432,7 @@ function clientTile(c: ClientView): string {
 
       <span class="nums">
         <span class="n"><span class="v">${c.messageCount}</span><span class="lbl">messages</span></span>
-        <span class="d"></span>
         <span class="n"><span class="v">${e(lat.recent)}</span><span class="lbl">median reply</span></span>
-        <span class="d"></span>
         <span class="n"><span class="v" style="color:${owed ? inkOf(c.ledgerTone) : "var(--t1)"}">${owed}</span><span class="lbl">open items</span></span>
       </span>
 
