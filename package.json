@@ -17,5 +17,9 @@
     "@tauri-apps/cli": "^2",
     "@types/bun": "latest",
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@liquid-dom/core": "^0.1.1",
+    "@liquid-dom/react": "^0.1.1"
   }
 }

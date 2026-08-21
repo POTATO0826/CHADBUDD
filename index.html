@@ -31,40 +31,49 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
    have to survive a retheme; what changes is what they resolve to.
 
    One consequence worth stating: the accent is still called --butter, but it
-   now holds --primary, which on this ramp is near-black. The name is load
-   bearing in derive.ts and copy.ts; the colour it resolves to is not.
+   holds --primary, which on this ramp is iris. The name is load bearing in
+   derive.ts and copy.ts; the colour it resolves to is not.
 
-   Light only. A dark ramp shipped here briefly and came out — one set of
-   surfaces means every alpha in the sheet is tuned against one background
-   instead of hedged between two, which is most of why the tints below can be
-   this quiet and still read.
+   Rosé Pine Moon, and dark only. One set of surfaces means every alpha in the
+   sheet is tuned against one background instead of hedged between two, which is
+   most of why the tints below can be this quiet and still read — so the ramp is
+   swapped at the token block rather than duplicated behind a media query.
+
+   The two derived ramps carry the inversion on their own: the text steps mix
+   --foreground toward --card, which fades toward the surface whichever end is
+   lighter, and the tile/deep surfaces mix --foreground into transparent, which
+   is a light film here where it was an ink wash before.
 
    Still deliberately blur-free. In the Tauri shell the window is
    transparent and always-on-top, so backdrop-filter has nothing to sample:
    the compositor never hands the webview the desktop behind it. Separation
-   comes from plane opacity and the shadow scale instead. */
-:root{
-  color-scheme: light;
+   comes from plane opacity and the shadow scale instead.
 
-  --background: oklch(0.9195 0.0169 88.0030);
-  --foreground: oklch(0.2350 0 0);
-  --card: oklch(0.9530 0.0156 86.4257);
-  --card-foreground: oklch(0.2350 0 0);
-  --popover: oklch(0.9530 0.0156 86.4257);
-  --popover-foreground: oklch(0.2350 0 0);
-  --primary: oklch(0.3012 0 0);
-  --primary-foreground: oklch(0.9169 0.0175 99.6160);
-  --secondary: oklch(0.8647 0.0201 87.5232);
-  --secondary-foreground: oklch(0.3012 0 0);
-  --muted: oklch(0.8340 0.0232 87.1630);
-  --muted-foreground: oklch(0.4688 0.0136 84.5932);
-  --accent: oklch(0.9169 0.0175 99.6160);
-  --accent-foreground: oklch(0.3012 0 0);
-  --destructive: oklch(0.5771 0.2152 27.3250);
-  --destructive-foreground: oklch(1.0000 0 0);
-  --border: oklch(0.8434 0.0231 87.1621);
-  --input: oklch(0.8434 0.0231 87.1621);
-  --ring: oklch(0.3012 0 0);
+   The named palette maps onto the system's token slots below: base →
+   background, surface → card, overlay → secondary/muted, highlight-med →
+   border, iris → primary, and the accents onto the status bands. */
+:root{
+  color-scheme: dark;
+
+  --background: #232136;              /* base    */
+  --foreground: #e0def4;              /* text    */
+  --card: #2a273f;                    /* surface */
+  --card-foreground: #e0def4;
+  --popover: #2a273f;
+  --popover-foreground: #e0def4;
+  --primary: #c4a7e7;                 /* iris    */
+  --primary-foreground: #232136;
+  --secondary: #393552;               /* overlay */
+  --secondary-foreground: #e0def4;
+  --muted: #393552;
+  --muted-foreground: #908caa;        /* subtle  */
+  --accent: #44415a;                  /* highlight-med */
+  --accent-foreground: #e0def4;
+  --destructive: #eb6f92;             /* love    */
+  --destructive-foreground: #232136;
+  --border: #44415a;
+  --input: #44415a;
+  --ring: #c4a7e7;
   --chart-1: oklch(0.6863 0.1743 34.2614);
   --chart-2: oklch(0.2350 0 0);
   --chart-3: oklch(0.4688 0.0136 84.5932);
@@ -81,25 +90,43 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
   --shadow-xl:  0 1px 10px 0px hsl(0 0% 0% / 0.05), 0 8px 10px -1px hsl(0 0% 0% / 0.05);
   --shadow-2xl: 0 1px 10px 0px hsl(0 0% 0% / 0.13);
 
-  /* The design system's font stacks, with the inlined faces behind them.
-     Google Sans Flex / Google Sans Code are not redistributable, so they are
-     used when the machine has them and Instrument Sans / Geist Mono — which
-     ship base64'd in fonts.css — carry the offline Tauri build. Both stacks
-     are geometric-ish and tabular, so the layout does not shift between them. */
-  --sans: "Google Sans Flex", "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* ── the type stacks ──
+     Three faces carrying three jobs, the split Alché uses: one face for
+     headings, one for reading, one for the uppercase labels above them.
+
+     Acumin Pro and Kozuka Gothic Pr6N are Adobe Fonts. They cannot be
+     self-hosted, and fonts.css exists precisely because the Tauri shell loads
+     from disk with no network — so each is named first and backed by the
+     closest open face from the same drawing tradition, base64'd in fonts.css:
+
+       Acumin Pro        → Source Sans 3   (Robert Slimbach, same designer,
+                                            same neo-grotesque skeleton)
+       Kozuka Gothic Pr6N → Noto Sans JP   (Adobe/Google's open gothic, the
+                                            direct descendant of Kozuka)
+
+     A machine with Creative Cloud installed renders the real faces; every
+     other machine gets a twin close enough that the metrics barely move. */
+  --sans: "IBM Plex Sans JP", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "Google Sans Code", "Geist Mono", ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  /* The uppercase mini-headings — stat labels, chips, the brand mark. Kozuka's
+     even, open caps are what make wide tracking read as deliberate rather than
+     as a sans stretched apart. Numbers stay on --mono: the figures in this app
+     have to line up in columns, and neither of these faces is tabular. */
+  --label: "Kozuka Gothic Pr6N", "KozGoPr6N", "Noto Sans JP", var(--sans);
 
   /* Titles get their own face rather than the body sans cut tight.
      A UI sans set large is legible but characterless — it reads as text that
-     happens to be big. Outfit is geometric where Instrument Sans is neutral:
-     circular bowls, a single-storey 'a', an even stroke that holds together at
-     26–46px. It carries headings only, so the two never sit close enough to
-     compete, and the body copy stays the face that is easier to read small. */
-  --display: "Google Sans Flex", "Outfit", "Instrument Sans", system-ui, sans-serif;
+     happens to be big. Acumin is a neo-grotesque built for exactly this: a
+     tighter aperture and a firmer stroke than Plex, which holds at 26–46px
+     where a UI face goes slack. It carries headings only, so the two never sit
+     close enough to compete. */
+  --display: "Acumin Pro", "Acumin Variable Concept", "Source Sans 3", var(--sans);
   /* The one place a real serif still earns its keep: the italic pull-quote at
-     the foot of a queue. Outfit has no italic, and a synthesised oblique of a
-     geometric sans is worse than the serif italic already sitting in the
-     bundle. --serif means this and only this now. */
+     the foot of a queue. The display face does have a true italic now, but a
+     sans italic there reads as emphasis inside the UI rather than as a change
+     of voice — the serif is what makes the quote sound like someone else
+     speaking. --serif means this and only this. */
   --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
 
   --morph: cubic-bezier(.32,.94,.28,1);
@@ -163,19 +190,24 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
      than derived. --*-hi is the hot centre of the travelling band, a lighter
      step of the same hue so the sweep reads as a highlight rather than as a
      second colour crossing the first. */
-  --gold:     oklch(0.7800 0.1480 84);
-  --gold-hi:  oklch(0.9300 0.0850 95);
-  --alarm:    oklch(0.6200 0.2150 27);
-  --alarm-hi: oklch(0.7700 0.1650 30);
+  --gold:     #f6c177;                /* gold */
+  --gold-hi:  #fbe0b0;
+  --alarm:    #eb6f92;                /* love */
+  --alarm-hi: #f5a8bd;
 
   /* ── bridge: status ──
-     MARK fills a shape, INK sets type — so on a light ramp INK is the darker
-     of the pair, since it has to hold against a light surface. Four bands:
-     teal steady, amber watch, terracotta slipping, red gone. */
-  --m-good: oklch(0.5800 0.0740 196);      --i-good: oklch(0.4300 0.0640 197);
-  --m-warn: oklch(0.7500 0.1280 74);       --i-warn: oklch(0.5100 0.1020 66);
-  --m-ser:  oklch(0.6863 0.1743 34.2614);  --i-ser:  oklch(0.4900 0.1560 32);
-  --m-crit: oklch(0.5771 0.2152 27.3250);  --i-crit: oklch(0.4850 0.1900 27);
+     MARK fills a shape, INK sets type. The pair is ordered by which one has to
+     survive the surface: on the old light ramp INK was the darker of the two,
+     and on this dark ramp that inverts — INK is now the lighter, because it is
+     the one holding against a dark plane. MARK only ever appears mixed down to
+     a low-alpha fill, so it takes the deeper step.
+
+     Four bands, on the palette's own accents: pine/foam steady, gold watch,
+     rose slipping, love gone. */
+  --m-good: #3e8fb0;  --i-good: #9ccfd8;   /* pine  → foam */
+  --m-warn: #f6c177;  --i-warn: #f6c177;   /* gold        */
+  --m-ser:  #ea9a97;  --i-ser:  #ea9a97;   /* rose        */
+  --m-crit: #eb6f92;  --i-crit: #eb6f92;   /* love        */
 
   /* ── bridge: elevation ──
      The system's shadow scale is tuned for cards sitting on a page. The
@@ -228,17 +260,21 @@ button{ font: inherit; color: inherit; background: none; border: 0; padding: 0; 
 :focus-visible{ outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--r-sm); }
 
 /* type roles */
-/* Display role. Outfit's geometry lets it take tighter tracking than the body
-   sans would tolerate — the round bowls keep the counters open as it closes
-   up, which is what makes a large line look set rather than merely enlarged. */
-.d{ font-family: var(--display); font-weight: 500; letter-spacing: -.03em; }
+/* Display role. Acumin takes tighter tracking than the body sans would
+   tolerate — a neo-grotesque holds its counters as it closes up, which is what
+   makes a large line look set rather than merely enlarged. */
+/* The scale, taken from Alché: weights sit on 300/400/600, headings track
+   tight at -.015em, and the uppercase labels open up the further apart they
+   sit — .12em where they are packed into a row, .3em where one stands alone.
+   Tracking carries the hierarchy so the sizes do not have to shout. */
+.d{ font-family: var(--display); font-weight: 600; letter-spacing: -.015em; }
 /* `.t` is the title role wherever it appears — panel headings, card headings,
    the inline ones built in main.ts. Declared once here so a heading picks up
    the display face by being a heading, not by remembering to ask. */
 .t{ font-family: var(--display); }
 .m{ font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .num{ font-variant-numeric: tabular-nums; }
-.lbl{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--t4); }
+.lbl{ font-family: var(--label); font-weight: 500; font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--t4); }
 
 .sc{ scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--foreground) 38%, var(--card)) transparent; }
 .sc::-webkit-scrollbar{ width: 8px; height: 8px; }
@@ -471,7 +507,7 @@ html[data-shell="tauri"] #desk{ display: none; }
 .peek .strip i{ height: 4px; flex: 1; display: block; border-radius: 2px; }
 
 /* status chip — the word always travels with the colour */
-.chip{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase;
+.chip{ font-family: var(--label); font-weight: 500; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
   padding: 2.5px 7px; border-radius: var(--r-sm); white-space: nowrap; }
 /* Each chip is filled by its own MARK at low alpha and set in its own INK, so
    the four bands stay distinguishable without any of them borrowing the accent
@@ -508,7 +544,7 @@ html[data-shell="tauri"] #desk{ display: none; }
    padding into them — which is why the peek card's contents sat low and inset
    rather than centred in the pill. */
 .hdr{ position: relative; padding: 16px 22px 0; display: flex; align-items: center; gap: 16px; flex: none; }
-.brand{ font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+.brand{ font-family: var(--label); font-weight: 500; font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
   padding: 8px 15px; border-radius: 999px; flex: none;
   color: var(--iris); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--iris) 28%, transparent); }
 .nav{ display: flex; gap: 2px; padding: 4px; border-radius: 999px; background: var(--tile-2); box-shadow: var(--edge); margin: 0 auto; }
@@ -561,7 +597,7 @@ html[data-shell="tauri"] #desk{ display: none; }
 .tile{ border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); padding: 16px; display: flex; flex-direction: column; }
 .tile.deep{ background: var(--deep); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent); }
 .tile-h{ display: flex; align-items: flex-start; gap: 10px; }
-.tile-h .t{ font-family: var(--display); font-size: 17px; font-weight: 500; letter-spacing: -.018em; }
+.tile-h .t{ font-family: var(--display); font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
 .tile-h .t.sm{ font-size: 15px; }
 .ico{
   margin-left: auto; width: 26px; height: 26px; border-radius: 50%; box-shadow: var(--edge-2);
@@ -572,7 +608,7 @@ html[data-shell="tauri"] #desk{ display: none; }
 .ico:hover{ background: color-mix(in oklab, var(--foreground) 7%, transparent); }
 .ico.sm{ width: 28px; height: 28px; box-shadow: var(--edge-3); }
 
-.hero-h{ font-family: var(--display); font-weight: 500; font-size: 46px; line-height: 1; letter-spacing: -.032em; }
+.hero-h{ font-family: var(--display); font-weight: 600; font-size: 46px; line-height: 1; letter-spacing: -.015em; }
 .stat{ display: flex; flex-direction: column; gap: 2px; }
 .stat .v{ font-size: 44px; line-height: .95; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
 .stat .v.acc{ color: var(--butter); }
@@ -611,7 +647,7 @@ html[data-shell="tauri"] #desk{ display: none; }
   box-shadow: var(--edge); padding: 16px; display: flex; flex-direction: column; width: 100%; }
 .urgent .grain{ position: absolute; inset: 0; background-image: repeating-linear-gradient(135deg,color-mix(in oklab, var(--foreground) 4.5%, transparent) 0 1px,transparent 1px 8px); }
 .urgent .glow{ position: absolute; right: -40px; top: -40px; width: 200px; height: 200px; background: radial-gradient(closest-side,color-mix(in oklab, var(--destructive) 18%, transparent),transparent); }
-.urgent .flag{ position: relative; font-family: var(--mono); font-size: 9px; letter-spacing: .11em; text-transform: uppercase;
+.urgent .flag{ position: relative; font-family: var(--label); font-weight: 500; font-size: 9px; letter-spacing: .3em; text-transform: uppercase;
   color: var(--i-crit); background: color-mix(in oklab, var(--destructive) 18%, transparent); padding: 3px 7px; border-radius: var(--r-sm); align-self: flex-start; }
 .urgent .btm{ position: relative; margin: auto 0 0; display: flex; align-items: flex-end; gap: 10px; }
 .urgent .nm{ font-family: var(--display); font-size: 19px; font-weight: 500; letter-spacing: -.022em; }
@@ -980,7 +1016,19 @@ html[data-shell="tauri"] #desk{ display: none; }
 .ask{
   border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge);
   display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; overflow: hidden;
+  position: relative;
 }
+/* When the GPU surface is up it *is* the panel fill, so CSS stops painting one
+   — two stacked surfaces would double the tint and flatten the refraction. The
+   inset ring stays: the glass replaces the fill, not the edge.
+
+   `overflow: hidden` above is what makes this safe. The renderer's canvas is
+   locked to `alphaMode: "opaque"` and paints black wherever it draws nothing,
+   so the panel clipping it to this radius is the entire reason no black corners
+   show. Set by src/glass.ts, which never adds the attribute when WebGPU is
+   missing — so the CSS above is the design, and this is only the enhancement. */
+.ask[data-glass="on"]{ background: transparent; }
+.ask[data-glass="on"] > :not(canvas){ position: relative; z-index: 1; }
 .ask .hd{ padding: 9px 12px 8px; display: flex; align-items: center; gap: 8px; flex: none; border-bottom: 1px solid var(--hair); }
 .ask .hd .t{ font-family: var(--display); font-size: 12.5px; font-weight: 500; letter-spacing: -.014em; }
 .ask .hd .tag{ margin-left: auto; font-family: var(--mono); font-size: 8px; letter-spacing: .09em;
