@@ -297,6 +297,24 @@ export default defineSchema({
     ts: v.number(),
   }).index("by_client_block", ["clientId", "blockId"]),
 
+  /**
+   * The phone's call log, one row per call, posted by an automation app on
+   * the phone itself — the only device that can see it. Matched to a client
+   * by number where possible; kept anyway where not, because an unmatched
+   * missed call is still a fact the advisor may want to see.
+   */
+  phoneCalls: defineTable({
+    /** As the phone reported it. Normalised digits kept alongside. */
+    number: v.string(),
+    digits: v.string(),
+    direction: v.union(v.literal("incoming"), v.literal("outgoing"), v.literal("missed")),
+    durationSec: v.number(),
+    ts: v.number(),
+    clientId: v.optional(v.id("clients")),
+  })
+    .index("by_ts", ["ts"])
+    .index("by_client", ["clientId"]),
+
   pairing: defineTable({
     platform: v.string(),
     state: v.union(
