@@ -25,7 +25,10 @@
     "agent:check": "bun run bridge/agent/check.ts",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "seed:load": "bun run bridge/seed-load.ts",
+    "agent:run": "bunx convex run agent:analyzeAll",
+    "agent:verify": "bun run bridge/agent/verify-cites.ts"
   },
   "type": "module",
   "dependencies": {

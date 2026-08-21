@@ -26,6 +26,20 @@ const BATCH = 200;
 /** Refresh the picker's chat list this often. */
 const CHAT_REFRESH_MS = 5 * 60_000;
 
+/**
+ * How far back to pull history on start. **Zero by default — live only.**
+ *
+ * The dashboard measures decay against a 90-day baseline, so old history is
+ * normally the whole point. On this account it isn't: profiling found 0 of 50
+ * chats scorable — every DM is a bot, too short, or dormant. Backfilling that
+ * fills the dashboard with conversations that cannot be scored and buries the
+ * messages the advisor actually wants to watch.
+ *
+ * So the default is to start blank and accumulate from the first live message.
+ * Set BRIDGE_BACKFILL_DAYS=120 to pull history once a chat is worth it.
+ */
+const BACKFILL_DAYS = Number(process.env["BRIDGE_BACKFILL_DAYS"] ?? "0");
+
 const convexUrl = process.env["CONVEX_SELF_HOSTED_URL"] ?? process.env["CONVEX_URL"] ?? "";
 const apiId = Number(process.env["TELEGRAM_API_ID"] ?? "");
 const apiHash = process.env["TELEGRAM_API_HASH"] ?? "";
@@ -110,6 +124,14 @@ async function publishChats(): Promise<void> {
  * tracking a watermark, because a wrong watermark corrupts citations silently.
  */
 async function backfill(): Promise<void> {
+  if (BACKFILL_DAYS <= 0) {
+    console.log(
+      "[bridge] live-only: no history pulled. The dashboard starts blank and fills\n" +
+        "         from your next message. Set BRIDGE_BACKFILL_DAYS=120 to pull history.",
+    );
+    return;
+  }
+
   const clients = (await convex.query(API.tracked, {})) as Array<{
     key: string;
     name: string;
@@ -125,7 +147,7 @@ async function backfill(): Promise<void> {
     tracked: boolean;
   }>;
 
-  const since = Date.now() - WANTED_DAYS * DAY;
+  const since = Date.now() - BACKFILL_DAYS * DAY;
 
   for (const chat of chats.filter((c) => c.tracked)) {
     const history = await source.history(chat.sourceId, since);

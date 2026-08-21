@@ -8,8 +8,11 @@
  * @module
  */
 
+import type * as agent from "../agent.js";
+import type * as agentData from "../agentData.js";
 import type * as chats from "../chats.js";
 import type * as ingest from "../ingest.js";
+import type * as seed from "../seed.js";
 import type * as threads from "../threads.js";
 import type * as verbatim from "../verbatim.js";
 
@@ -20,8 +23,11 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agent: typeof agent;
+  agentData: typeof agentData;
   chats: typeof chats;
   ingest: typeof ingest;
+  seed: typeof seed;
   threads: typeof threads;
   verbatim: typeof verbatim;
 }>;
