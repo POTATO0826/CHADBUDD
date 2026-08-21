@@ -37,6 +37,8 @@ import { GATE_REASON, TIER_ACTION } from "./gates.ts";
 import { NOTIFY_THRESHOLD_MIN, conflictsFrom, delayText, laterToday, markRunningOver, overrunFor } from "./presence.ts";
 import { calendarDay, calendarMonth, calendarSource, nowMs, refreshCalendar, refreshMonth } from "./daysource.ts";
 import type { CalendarEvent } from "./calendar.ts";
+import type { MarketRow, MaturingRow, Report, StaleRow } from "./desk.ts";
+import { deskView, dismissBrief, snoozeBrief } from "./desk.ts";
 import { initDrag } from "./drag.ts";
 import { focusWindow, isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
 
@@ -105,6 +107,10 @@ interface State {
   month: number | null;
   /** Calendar page: the day whose blocks are open. Null follows the clock. */
   pick: number | null;
+  /** Desk: the expanded row, by brief id. Null is everything collapsed. */
+  desk: string | null;
+  /** Desk: which market hit's draft is open inside an expanded event. */
+  deskHit: string | null;
   /** Live text in the chat-history search box. */
   q: string;
   /** Ask-the-agent transcript, per client — switching clients keeps yours. */
@@ -143,6 +149,8 @@ const state: State = {
   slot: null,
   month: null,
   pick: null,
+  desk: null,
+  deskHit: null,
   q: "",
   ask: {},
   draft: "",
@@ -1286,6 +1294,7 @@ function overviewPage(): string {
 
   return `
     <div class="page">
+      <div class="ovfill">
       <div class="greet">
         <div class="left">
           <div class="hero-h d">${greeting()}, ${e(ADVISOR)}</div>
@@ -1378,6 +1387,193 @@ function overviewPage(): string {
         ${stageFunnel()}
         </div>
       </div>
+      </div>
+
+      ${deskSection()}
+    </div>`;
+}
+
+/* ── the desk ────────────────────────────────────────────────────────
+   ChadBuddy's own section, scrolled to below the dashboard grid. Three
+   ranked queues — maturing, market, stale — derived in src/desk.ts. This
+   file only draws them; the shapes arrive capped, so nothing here can
+   accidentally render one row per client when the book grows. */
+
+/** Twelve months in 120px. Shape, not axes — the numbers sit beside it. */
+function sparkline(r: Report): string {
+  const pts = r.spark.map((v, i) => `${(i * (120 / 11)).toFixed(1)},${(26 - 22 * v).toFixed(1)}`);
+  const last = pts[pts.length - 1]!.split(",");
+  return `
+    <svg class="spark" viewBox="0 0 120 30" aria-hidden="true">
+      <polyline points="${pts.join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <circle cx="${last[0]}" cy="${last[1]}" r="2" fill="currentColor"/>
+    </svg>`;
+}
+
+/** The draft, its provenance label, and what can be done with it. */
+function deskDraft(id: string, draft: string): string {
+  return `
+    <div class="ddraft">
+      <span class="lbl" style="color:var(--iris)">drafted by chadbuddy — check before sending</span>
+      <p class="dtext">${e(draft)}</p>
+      <div class="ctxacts">
+        <button class="btn" disabled title="Sending connects in phase 3">Send Telegram</button>
+        <button class="btn" disabled title="Sending connects in phase 3">Send Email</button>
+        <button class="btn" data-act="desk-snooze" data-brief="${e(id)}">Snooze 7d</button>
+        <button class="btn" data-act="desk-dismiss" data-brief="${e(id)}">Dismiss</button>
+      </div>
+    </div>`;
+}
+
+function maturingRow(row: MaturingRow, urgent: boolean): string {
+  const on = state.desk === row.id;
+  const tone = urgent ? "var(--gold)" : "var(--t3)";
+  return `
+    <div class="drow${on ? " on" : ""}">
+      <button class="dhead" data-act="desk-open" data-brief="${e(row.id)}" aria-expanded="${on}">
+        <span class="dd" style="color:${tone}">${row.daysLeft}d</span>
+        <span class="dwho">${e(row.clientName)}</span>
+        <span class="dwhat">${e(row.holding.name)}</span>
+        <span class="dval">${row.holding.value > 0 ? e(row.report.valueText) : "renewal"}</span>
+        <span class="dcaret">${on ? "⌃" : "⌄"}</span>
+      </button>
+      ${
+        on
+          ? `<div class="dbody">
+              ${
+                row.holding.value > 0
+                  ? `<div class="dfacts">
+                      <span class="dspark" style="color:var(--foam)">${sparkline(row.report)}</span>
+                      <span class="df"><i>matures</i>${e(row.matureText)}</span>
+                      <span class="df"><i>stands at</i>${e(row.report.valueText)}</span>
+                      <span class="df"><i>12 months</i>${row.report.yearPct >= 0 ? "+" : ""}${row.report.yearPct}%</span>
+                      <span class="df"><i>since start</i>${e(row.report.gainText)}</span>
+                    </div>`
+                  : `<div class="dfacts"><span class="df"><i>renews</i>${e(row.matureText)}</span></div>`
+              }
+              ${deskDraft(row.id, row.draft)}
+              <div class="ctxacts"><button class="btn acc" data-act="open-client" data-client="${row.client}">Open ${e(row.clientName.split(" ")[0]!)}</button></div>
+            </div>`
+          : ""
+      }
+    </div>`;
+}
+
+function marketRow(row: MarketRow): string {
+  const evId = `ev:${row.event.id}`;
+  const on = state.desk === evId;
+  const leanGlyph = row.event.lean === "pressure" ? "▼" : row.event.lean === "relief" ? "▲" : "●";
+  const leanInk =
+    row.event.lean === "pressure" ? "var(--alarm)" : row.event.lean === "relief" ? "var(--foam)" : "var(--t3)";
+  return `
+    <div class="drow${on ? " on" : ""}">
+      <button class="dhead" data-act="desk-open" data-brief="${e(evId)}" aria-expanded="${on}">
+        <span class="dd" style="color:${leanInk}">${leanGlyph}</span>
+        <span class="dwhat wide">${e(row.event.headline)}</span>
+        <span class="dval">${row.clientCount} client${row.clientCount === 1 ? "" : "s"} · ${e(row.exposureText)}</span>
+        <span class="dcaret">${on ? "⌃" : "⌄"}</span>
+      </button>
+      ${
+        on
+          ? `<div class="dbody">
+              <p class="dsum">${e(row.event.summary)}</p>
+              <div class="dchiprow">
+                <span class="dchip">${e(row.event.source.name)} · ${e(new URL(row.event.source.url).hostname)}</span>
+                <span class="dchip dim">${e(row.agoText)}</span>
+              </div>
+              ${row.hits
+                .map((hit) => {
+                  const hitOn = state.deskHit === hit.id;
+                  return `
+                    <div class="dhit${hitOn ? " on" : ""}">
+                      <button class="dhithead" data-act="desk-hit" data-brief="${e(hit.id)}">
+                        <span class="dwho">${e(hit.clientName)}</span>
+                        <span class="dwhat">${e(hit.holding.name)}</span>
+                        <span class="dval">${e(hit.holding.value.toLocaleString("en-MY"))}</span>
+                        <span class="dcaret">${hitOn ? "⌃" : "⌄"}</span>
+                      </button>
+                      ${hitOn ? deskDraft(hit.id, hit.draft) : ""}
+                    </div>`;
+                })
+                .join("")}
+              ${row.hitsMore > 0 ? `<span class="dmore">+${row.hitsMore} more above the RM 25k floor</span>` : ""}
+            </div>`
+          : ""
+      }
+    </div>`;
+}
+
+function staleRow(row: StaleRow): string {
+  const on = state.desk === row.id;
+  return `
+    <div class="drow${on ? " on" : ""}">
+      <button class="dhead" data-act="desk-open" data-brief="${e(row.id)}" aria-expanded="${on}">
+        <span class="dd" style="color:var(--t4)">${row.days}d</span>
+        <span class="dwho">${e(row.clientName)}</span>
+        <span class="dwhat">${e(row.holding.name)} — no product update since ${row.days} days ago</span>
+        <span class="dcaret">${on ? "⌃" : "⌄"}</span>
+      </button>
+      ${
+        on
+          ? `<div class="dbody">
+              <div class="dfacts">
+                <span class="dspark" style="color:var(--foam)">${sparkline(row.report)}</span>
+                <span class="df"><i>stands at</i>${e(row.report.valueText)}</span>
+                <span class="df"><i>12 months</i>${row.report.yearPct >= 0 ? "+" : ""}${row.report.yearPct}%</span>
+              </div>
+              ${deskDraft(row.id, row.draft)}
+            </div>`
+          : ""
+      }
+    </div>`;
+}
+
+/**
+ * The section itself. Counts lead, rows follow, and the whole thing sits
+ * below the existing dashboard grid so nothing above it moved an inch —
+ * this is an experiment scrolled into, not a replacement.
+ */
+function deskSection(): string {
+  const d = deskView();
+  return `
+    <div class="desk">
+      <div class="deskhead">
+        <span class="hero-h d" style="font-size:21px">ChadBuddy · desk</span>
+        <span class="dstat">${d.needAction} need action ·
+          ${d.maturingTotal} maturing within ${60} days ·
+          ${d.marketClientTotal} client${d.marketClientTotal === 1 ? "" : "s"} touched by the market ·
+          checked ${e(d.checkedText)}</span>
+      </div>
+
+      ${
+        d.urgent.length || d.horizon.length
+          ? `<div class="dsec">
+              <span class="lbl">maturing soon</span>
+              ${d.urgent.map((r) => maturingRow(r, true)).join("")}
+              ${d.horizon.map((r) => maturingRow(r, false)).join("")}
+              ${d.horizonMore > 0 ? `<span class="dmore">+${d.horizonMore} more within 60 days</span>` : ""}
+            </div>`
+          : ""
+      }
+
+      ${
+        d.market.length
+          ? `<div class="dsec">
+              <span class="lbl">market watch</span>
+              ${d.market.map(marketRow).join("")}
+            </div>`
+          : ""
+      }
+
+      ${
+        d.stale.length
+          ? `<div class="dsec">
+              <span class="lbl">quiet holdings</span>
+              ${d.stale.map(staleRow).join("")}
+              ${d.staleMore > 0 ? `<span class="dmore">+${d.staleMore} more past ${90} days</span>` : ""}
+            </div>`
+          : ""
+      }
     </div>`;
 }
 
@@ -2352,6 +2548,36 @@ island.addEventListener("click", (ev) => {
        whole row is one hit target rather than a mix of live and dead pixels. */
     case "noop":
       return;
+
+    /* Desk rows expand in place, one at a time — the queue stays scannable
+       with a detail open, which matters more as the book grows. */
+    case "desk-open": {
+      const id = hit.dataset.brief ?? null;
+      state.desk = state.desk === id ? null : id;
+      state.deskHit = null;
+      render();
+      return;
+    }
+
+    case "desk-hit": {
+      const id = hit.dataset.brief ?? null;
+      state.deskHit = state.deskHit === id ? null : id;
+      render();
+      return;
+    }
+
+    case "desk-dismiss":
+    case "desk-snooze": {
+      const id = hit.dataset.brief;
+      if (id) {
+        if (act === "desk-dismiss") dismissBrief(id);
+        else snoozeBrief(id);
+        if (state.desk === id) state.desk = null;
+        if (state.deskHit === id) state.deskHit = null;
+      }
+      render();
+      return;
+    }
 
     case "running-over": {
       const id = hit.dataset.slot;

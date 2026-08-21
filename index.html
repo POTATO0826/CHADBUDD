@@ -890,6 +890,85 @@ html[data-shell="tauri"] #desk{ display: none; }
 
 .dayside .empty{ display: flex; flex-direction: column; gap: 5px; padding: 40px 0; }
 
+/* The first screen of the overview, pinned to viewport height so the desk
+   below changes nothing above it. Without this, adding content under .bento
+   turns its flex:1 into a no-op and the whole existing dashboard reflows —
+   the exact thing "experiment below, replace nothing" promised not to do.
+   152px ≈ header (40) + hdr padding (16) + page padding (14+20) + gaps;
+   drift here only moves where the desk starts, never how the grid lays out. */
+.ovfill{ display: flex; flex-direction: column; gap: 16px;
+  height: calc(100dvh - 152px); min-height: 540px; flex: none; }
+
+/* ── the desk ──────────────────────────────────────────────────────────────
+   ChadBuddy's own section, scrolled to below the dashboard grid. Rows are the
+   unit: a queue of collapsed one-liners, one open at a time. Urgency wears
+   gold, market pressure wears the alarm red sparingly, anything AI-drafted is
+   labelled in iris — same vocabulary as everywhere else in the app. */
+.desk{ display: flex; flex-direction: column; gap: 14px; padding: 18px 20px 22px;
+  border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); }
+.deskhead{ display: flex; flex-direction: column; gap: 4px; }
+.dstat{ font-family: var(--mono); font-size: 10px; color: var(--t3); letter-spacing: .02em; }
+
+.dsec{ display: flex; flex-direction: column; gap: 4px; }
+.dsec > .lbl{ margin-bottom: 3px; }
+
+.drow{ border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+.drow.on{ background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent); }
+
+.dhead{ display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  padding: 9px 12px; border-radius: var(--r-md); transition: background .16s var(--ease); }
+.dhead:hover{ background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.dhead .dd{ font-family: var(--mono); font-size: 11px; width: 30px; flex: none;
+  font-variant-numeric: tabular-nums; }
+.dhead .dwho{ font-size: 13px; color: var(--t1); flex: none; }
+.dhead .dwhat{ font-size: 12px; color: var(--t3); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0; }
+.dhead .dwhat.wide{ color: var(--t1); font-size: 13px; }
+.dhead .dval{ font-family: var(--mono); font-size: 10.5px; color: var(--t3); margin-left: auto;
+  flex: none; font-variant-numeric: tabular-nums; }
+.dhead .dcaret{ font-size: 10px; color: var(--t4); flex: none; }
+
+.dbody{ display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 12px; }
+.dsum{ font-size: 12.5px; line-height: 1.55; color: var(--t2); max-width: 68ch; margin: 0; }
+
+/* Chips carry provenance — outlet and age — the way citation chips do. */
+.dchiprow{ display: flex; gap: 6px; flex-wrap: wrap; }
+.dchip{ font-family: var(--mono); font-size: 9px; padding: 3px 8px; border-radius: 999px;
+  color: var(--t2); background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.dchip.dim{ color: var(--t4); }
+
+.dfacts{ display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.dspark{ flex: none; }
+.dspark .spark{ width: 120px; height: 30px; display: block; }
+.df{ display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; color: var(--t1);
+  font-variant-numeric: tabular-nums; }
+.df i{ font-family: var(--mono); font-style: normal; font-size: 9px; color: var(--t4);
+  letter-spacing: .05em; }
+
+/* The drafted message. Iris marks machine prose everywhere in this app. */
+.ddraft{ display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+  border-radius: var(--r-md); border: 1px dashed var(--iris-b);
+  background: color-mix(in oklab, var(--iris) 4%, transparent); }
+.dtext{ font-size: 12.5px; line-height: 1.6; color: var(--t1); margin: 0; max-width: 70ch; }
+.ddraft .btn[disabled]{ opacity: .45; cursor: not-allowed; }
+
+.dhit{ border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+.dhit.on{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 9%, transparent); }
+.dhithead{ display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  padding: 7px 10px; border-radius: var(--r-sm); }
+.dhithead:hover{ background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.dhithead .dwho{ font-size: 12px; color: var(--t1); }
+.dhithead .dwhat{ font-size: 11px; color: var(--t3); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0; }
+.dhithead .dval{ font-family: var(--mono); font-size: 10px; color: var(--t4); margin-left: auto; }
+.dhithead .dcaret{ font-size: 9px; color: var(--t4); }
+.dhit .ddraft{ margin: 0 10px 10px; }
+
+.dmore{ font-family: var(--mono); font-size: 9.5px; color: var(--t4); padding: 3px 12px 0; }
+
 /* A block nobody confirmed. Dashed rather than tinted: it has to read as
    provisional at a glance from across a desk, and a fill would make it look
    as settled as the meetings either side of it. */

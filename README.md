@@ -12,6 +12,21 @@ what to do about it.
 it isn't shown.** That isn't a guideline here, it's a function
 (`findVerbatim` in `src/ledger.ts`) that discards anything unquotable.
 
+## Who this is built for
+
+The primary user is the **investment-led advisor** — a relationship manager or
+financial analyst whose product is really the ongoing service on top of the
+product: portfolio updates, maturity conversations, "here's why your fund moved
+and what it means for you." That work is high-touch, per-client, and exactly
+what drops first when the book grows — which makes it the thing worth building
+an assistant for.
+
+Insurance advisors fit too and nothing here excludes them, but the demo leans
+investments deliberately: funds move, markets make news, and a tool that
+connects *today's* bond rout to *this* client's holdings shows its value in one
+glance, where a static policy cannot. Design decisions should assume a book in
+the hundreds — ranked queues and counts, never one-row-per-client.
+
 ## Running it
 
 ```bash
