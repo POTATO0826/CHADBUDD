@@ -36,6 +36,11 @@ Bun.serve({
     const { pathname } = new URL(req.url);
 
     if (pathname === "/app.js") return bundle();
+    if (pathname === "/fonts.css") {
+      return new Response(Bun.file("assets/fonts.css"), {
+        headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
     if (pathname === "/" || pathname === "/index.html") {
       return new Response(Bun.file("index.html"), {
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },

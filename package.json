@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "bun run server.ts",
     "build": "bun run build.ts",
+    "fonts": "bun run scripts/fetch-fonts.ts",
     "verify:seed": "bun run scripts/verify-seed.ts",
+    "verify:ui": "bun run scripts/verify-ui.ts",
     "check": "bunx tsc --noEmit",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

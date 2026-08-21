@@ -20,6 +20,8 @@ if (!built.success) {
 }
 
 await Bun.write("dist/index.html", Bun.file("index.html"));
+// The three design faces are inlined here so the Tauri shell needs no network.
+await Bun.write("dist/fonts.css", Bun.file("assets/fonts.css"));
 
 const bytes = (await Bun.file("dist/app.js").text()).length;
 console.log(`dist/app.js  ${bytes.toLocaleString("en-US")} bytes`);
