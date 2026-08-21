@@ -247,8 +247,23 @@ let notifIdx = 0;
 let dwellTimer: number | undefined;
 let current: Notif | null = null;
 
+/** When the notification on screen began, so its remaining dwell is knowable. */
+let shownAt = 0;
+
+/**
+ * A notification set aside while the pointer is on the island.
+ *
+ * Hovering expands to the summary card from any compact state, which means a
+ * hover can interrupt a notification that had seconds left to run. Discarding
+ * it there would make a passing cursor silently eat an alert. Parking it keeps
+ * the two behaviours from fighting: the hover wins while it lasts, and what
+ * was underneath comes back afterwards if it has not expired in the meantime.
+ */
+let parked: { notif: Notif; left: number | null } | null = null;
+
 function showNotif(n: Notif): void {
   current = n;
+  shownAt = Date.now();
   if (n.kind === "message") {
     need("l-alert").innerHTML = messageLayer(n);
     setState("alert");
@@ -258,11 +273,37 @@ function showNotif(n: Notif): void {
     setState("call");
   }
   window.clearTimeout(dwellTimer);
-  if (n.dwell !== null) {
-    dwellTimer = window.setTimeout(() => {
-      if (state.st === "alert" || state.st === "call") setState("idle");
-    }, n.dwell);
+  arm(n.dwell);
+}
+
+/** Start the retirement clock. `null` means this one waits to be acted on. */
+function arm(ms: number | null): void {
+  window.clearTimeout(dwellTimer);
+  if (ms === null) return;
+  dwellTimer = window.setTimeout(() => {
+    if (state.st === "alert" || state.st === "call") setState("idle");
+  }, ms);
+}
+
+/** Put a parked notification back with the time it had left. */
+function resumeParked(): boolean {
+  const p = parked;
+  parked = null;
+  if (!p) return false;
+
+  current = p.notif;
+  if (p.notif.kind === "message") {
+    need("l-alert").innerHTML = messageLayer(p.notif);
+    setState("alert");
+  } else {
+    need("l-call").innerHTML = reminderLayer(p.notif);
+    island.dataset.tone = p.notif.tone;
+    setState("call");
   }
+  // Resumed, not restarted: a notification interrupted with two seconds left
+  // gets two seconds, not a fresh nine.
+  arm(p.left);
+  return true;
 }
 
 function nextNotif(): void {
@@ -1383,6 +1424,11 @@ function setState(st: IslandState): void {
     window.clearTimeout(dwellTimer);
     current = null;
   }
+  /* Anything that is not the hover taking over discards the parked
+     notification. Resuming an alert minutes later, because it happened to be
+     interrupted before the dashboard was opened, would be a message arriving
+     out of nowhere. */
+  if (st === "open" || st === "idle") parked = null;
   if (st !== "open") state.lit = null;
   /* Focus is taken on open and never on the compact states: a pill that
      steals the caret from whatever is being typed behind it is a pill nobody
@@ -1444,26 +1490,117 @@ let hoverTimer: number | undefined;
 let leaveTimer: number | undefined;
 const LEAVE_GRACE = 140;
 
-island.addEventListener("pointerenter", () => {
-  // Back before the grace ran out: the leave never really happened.
-  window.clearTimeout(leaveTimer);
-  if (state.st === "alert" || state.st === "call") {
-    window.clearTimeout(dwellTimer);
-    return;
-  }
-  if (state.st !== "idle") return;
+/**
+ * Hover intent, measured in stillness rather than in elapsed time.
+ *
+ * A plain delay cannot tell a hover from a pass. The pill is 232px wide and a
+ * cursor crossing it on the way somewhere else is inside it for longer than any
+ * delay short enough to still feel responsive — so it expanded mid-sweep and
+ * collapsed again the moment the pointer left. From the outside that reads as
+ * the island flinching at passing traffic.
+ *
+ * Stillness separates the two cleanly. The timer restarts on every real
+ * movement, so it only ever elapses once the pointer has come to rest: a sweep
+ * never expands the island at all, and a deliberate hover — which always ends
+ * in stopping — still does.
+ */
+const HOVER_DWELL = 150;
+
+/**
+ * Movement below this is not movement.
+ *
+ * A hand resting on a mouse still emits pointermove; without a floor the timer
+ * would be restarted by tremor forever and the island would never open.
+ */
+const JITTER = 4;
+
+let lastPoint: { x: number; y: number } | null = null;
+
+/** The states a deliberate hover may expand out of. */
+const COMPACT = new Set<IslandState>(["idle", "alert", "call"]);
+
+/**
+ * Is the pointer genuinely on the island right now?
+ *
+ * Asked rather than assumed, because pointerleave cannot be relied on here.
+ * The shell flips this window between capturing the cursor and ignoring it on
+ * a 60ms timer, and when it flips to ignoring the page simply stops receiving
+ * pointer events — with no leave to mark the moment. A hover armed on the way
+ * in then fires after the cursor has already swept past and gone, expanding an
+ * island nobody is pointing at, with no matching leave to collapse it again.
+ * Sweeping across repeatedly is exactly the gesture that produces it.
+ *
+ * :hover is the browser's own answer to the same question, and it does not
+ * depend on an event having been delivered.
+ */
+function pointerIsOnIsland(): boolean {
+  return island.matches(":hover");
+}
+
+function armHover(): void {
   window.clearTimeout(hoverTimer);
   hoverTimer = window.setTimeout(() => {
-    if (state.st === "idle") setState("peek");
-  }, 160);
+    if (!COMPACT.has(state.st)) return;
+    // The gesture that armed this may have finished long ago.
+    if (!pointerIsOnIsland()) return;
+    setState("peek");
+  }, HOVER_DWELL);
+}
+
+/**
+ * Collapse a summary card the pointer has left without saying so.
+ *
+ * The same missing-leave problem, one step later: expanded correctly, then the
+ * cursor goes without the page hearing about it, and the card stays open. The
+ * poll is cheap and only ever acts when the DOM already disagrees with the
+ * state, so it corrects that case and does nothing the rest of the time.
+ */
+window.setInterval(() => {
+  if (state.st !== "peek") return;
+  if (pointerIsOnIsland()) return;
+  window.clearTimeout(leaveTimer);
+  if (!resumeParked()) setState("idle");
+}, 300);
+
+island.addEventListener("pointerenter", (ev) => {
+  // Back before the grace ran out: the leave never really happened.
+  window.clearTimeout(leaveTimer);
+  /* A notification pauses while the pointer is on it, so it can be read
+     rather than snatched away mid-sentence — and is set aside with whatever
+     time it had left, in case the hover expands past it. */
+  if ((state.st === "alert" || state.st === "call") && current) {
+    window.clearTimeout(dwellTimer);
+    const left = current.dwell === null ? null : Math.max(0, current.dwell - (Date.now() - shownAt));
+    parked = left === null || left > 0 ? { notif: current, left } : null;
+  }
+
+  // Resting expands from any compact state. Restricting this to idle meant a
+  // notification made the island stop responding to the pointer entirely.
+  if (!COMPACT.has(state.st)) return;
+  lastPoint = { x: ev.clientX, y: ev.clientY };
+  armHover();
+});
+
+/* Every real movement restarts the clock, so it can only elapse where the
+   pointer has stopped. This is what makes a sweep cost nothing. */
+island.addEventListener("pointermove", (ev) => {
+  if (!COMPACT.has(state.st)) return;
+  const p = { x: ev.clientX, y: ev.clientY };
+  if (lastPoint && Math.hypot(p.x - lastPoint.x, p.y - lastPoint.y) < JITTER) return;
+  lastPoint = p;
+  armHover();
 });
 
 island.addEventListener("pointerleave", () => {
   window.clearTimeout(hoverTimer);
+  lastPoint = null;
   if (state.st === "peek") {
     window.clearTimeout(leaveTimer);
     leaveTimer = window.setTimeout(() => {
-      if (state.st === "peek") setState("idle");
+      if (state.st !== "peek") return;
+      // Whatever the hover interrupted gets the rest of its time back; if it
+      // ran out while being read, the island simply returns to the pill.
+      if (!resumeParked()) setState("idle");
     }, LEAVE_GRACE);
   } else if (state.st === "alert" || state.st === "call") {
     if (current?.dwell !== null) {
@@ -1657,7 +1794,15 @@ document.addEventListener("pointerdown", (ev) => {
    Only the dashboard closes; the compact states never take focus, so they are
    never affected by this. */
 window.addEventListener("blur", () => {
-  if (state.st === "open") setState("idle");
+  if (state.st !== "open") return;
+  /* Confirmed a beat later rather than acted on immediately. Toggling
+     click-through restyles the window, and a restyle can produce a blur the
+     user never caused — closing the dashboard the moment the cursor wandered
+     over the taskbar. Re-checking means only a focus change that actually
+     stuck counts as walking away. */
+  window.setTimeout(() => {
+    if (state.st === "open" && !document.hasFocus()) setState("idle");
+  }, 180);
 });
 
 /* ── boot ────────────────────────────────────────────────────────── */

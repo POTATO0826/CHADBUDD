@@ -164,11 +164,35 @@ pub fn run() {
                     let Ok(cursor) = window.cursor_position() else { continue };
                     let Ok(origin) = window.inner_position() else { continue };
                     let Ok(scale) = window.scale_factor() else { continue };
+                    let Ok(size) = window.inner_size() else { continue };
 
                     // Cursor is in physical screen pixels; the page reported CSS
                     // pixels relative to its own top-left corner.
                     let x = (cursor.x - f64::from(origin.x)) / scale;
                     let y = (cursor.y - f64::from(origin.y)) / scale;
+
+                    /* Once the cursor has left the window entirely, leave the
+                       style alone.
+
+                       This window covers the work area, which stops short of the
+                       taskbar — so the taskbar is genuinely outside it, and
+                       moving down to the app icons crosses a real window edge
+                       rather than the island's. The old loop treated that as
+                       'not over the island' and flipped the window transparent,
+                       which restyles it, which the compositor shows as a flash.
+                       Do it on the way out and again on the way back and the
+                       island appears to stutter every time someone reaches for
+                       their taskbar.
+
+                       The flip is pointless there anyway: click-through decides
+                       what happens to clicks landing *on this window*, and none
+                       are. Whatever state it was left in is already correct, so
+                       the loop simply waits for the cursor to come back. */
+                    let w = f64::from(size.width) / scale;
+                    let h = f64::from(size.height) / scale;
+                    if x < 0.0 || y < 0.0 || x > w || y > h {
+                        continue;
+                    }
 
                     // A rectangle the page has stopped renewing is not trusted:
                     // `inside` goes false, the window ignores the cursor, and the
