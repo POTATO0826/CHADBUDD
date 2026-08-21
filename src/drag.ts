@@ -203,7 +203,7 @@ export function initDrag(
   });
 }
 
-/** Put the island back at top-centre. */
+
 export function resetIslandPosition(stage: HTMLElement, onMoved: () => void): void {
   save({ x: 0, y: 0 });
   stage.style.transform = "";

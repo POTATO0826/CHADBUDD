@@ -12,11 +12,11 @@
 
 import { NOW } from "../data/clock.ts";
 import type { ClientKey } from "../data/types.ts";
-import { approvals, ideas, queues, rules } from "./copy.ts";
+import { approvals, ideas, queues } from "./copy.ts";
 import type { Idea, QueueKind, QueueRow } from "./copy.ts";
-import type { Cell, ClientView, RecMessage, Tone, Week } from "./derive.ts";
+import type { ClientView, RecMessage, Tone } from "./derive.ts";
 import {
-  ADVISOR, INK, MARK, clientById, clients, dateShort, humanGap, replyClock,
+  ADVISOR, INK, MARK, clientById, clients, dateShort, humanGap, replyClock, stamp,
   totals, weekBars,
 } from "./derive.ts";
 import { openDays } from "./ledger.ts";
@@ -28,6 +28,10 @@ import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
 import { initScramble } from "./scramble.ts";
+import { POINT_GLYPH, POINT_LABEL, notesFor } from "./contact.ts";
+import type { TaskKind } from "./inbox.ts";
+import { TASK_GLYPH, TASK_LABEL, decisions, inboxTotals, tasksOfKind } from "./inbox.ts";
+import { GATE_REASON, TIER_ACTION } from "./gates.ts";
 import { initDrag } from "./drag.ts";
 import { focusWindow, isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
 
@@ -60,7 +64,7 @@ const tint = (colour: string, pct: number): string =>
 /* ── state ───────────────────────────────────────────────────────── */
 
 type IslandState = "idle" | "alert" | "call" | "peek" | "open";
-type Page = "home" | "clients" | "agenda" | QueueKind;
+type Page = "home" | "clients" | "agenda" | "assist" | QueueKind;
 type Mode = "profile" | "record";
 type Filter = "all" | "client" | "flagged";
 /** The clients page is a grid of cards until one of them is opened. */
@@ -78,7 +82,6 @@ interface State {
   st: IslandState;
   page: Page;
   sel: ClientKey;
-  rule: number;
   filter: Filter;
   /** Message the current citation is pointing at. */
   lit: string | null;
@@ -109,7 +112,6 @@ const state: State = {
   st: "idle",
   page: "home",
   sel: top.key,
-  rule: 0,
   filter: "all",
   lit: null,
   cview: "grid",
@@ -197,7 +199,15 @@ const notifs: Notif[] = (() => {
 
   const STYLE: Record<string, { tag: string; tone: "butter" | "critical"; dwell: number | null }> = {
     "→": { tag: "SEND", tone: "butter", dwell: 9000 },
-    "!": { tag: "OWED", tone: "critical", dwell: null },
+    /* Owed items used to sit here until acted on — dwell: null — on the
+       reasoning that a 104-day promise should not be dismissable by waiting.
+       In practice it meant the island parked over whatever the advisor was
+       working in and stayed there, which is not urgency, it is an obstruction:
+       the one notification you cannot dismiss is the one you learn to ignore.
+
+       Nine seconds like the rest. The urgency is not lost — the item stays in
+       the approval queue and the overview keeps counting it. */
+    "!": { tag: "OWED", tone: "critical", dwell: 9000 },
     "☏": { tag: "CALL", tone: "critical", dwell: 9000 },
     "◇": { tag: "HELD", tone: "butter", dwell: 9000 },
   };
@@ -375,9 +385,7 @@ const NAV: Array<{ page: Page; label: string; count: number }> = [
   { page: "home", label: "overview", count: 0 },
   { page: "agenda", label: "day", count: dayTotals.left },
   { page: "clients", label: "clients", count: totals.clients },
-  { page: "gifts", label: "gifts", count: queues.gifts.rows.filter((r) => r.btn !== "").length },
   { page: "calls", label: "calls", count: queues.calls.rows.filter((r) => r.btn !== "").length },
-  { page: "sources", label: "sources", count: 0 },
 ];
 
 /**
@@ -569,6 +577,8 @@ function slotRow(s: AgendaSlot, on: boolean): string {
     </button>`;
 }
 
+
+
 /**
  * The context panel.
  *
@@ -685,6 +695,139 @@ function stageFunnel(): string {
     </div>`;
 }
 
+/**
+ * What is waiting, and how much of it never needed you.
+ *
+ * This replaced the rules accordion, which was four lines of static policy text
+ * that never changed and never told anyone to do anything.
+ *
+ * ── the headline is the ratio, not the count ─────────────────────────
+ * Every inbox can tell you eight things are waiting. The number that argues for
+ * the product is the second one: seventeen arrived and nine were dealt with
+ * without you. Leading with "8" alone would make the assistant look like a
+ * source of work rather than a filter on it.
+ *
+ * ── ordered by what it costs to ignore ───────────────────────────────
+ * By age, oldest first, because a 104-day promise does not become less urgent
+ * for sitting under a fresh draft. The approval rows carry no timestamp — they
+ * are authored — so they sort last rather than being given an age they do not
+ * have.
+ *
+ * ── the cell is 250px ────────────────────────────────────────────────
+ * Too narrow to carry the evidence inline, so each row shows the count and the
+ * single worst instance, and the click opens the client where the citations
+ * already live. A summary that tries to be the detail ends up being neither.
+ */
+function needsYouTile(): string {
+  const kinds: TaskKind[] = ["call-back", "follow-up", "answer", "approve"];
+
+  const rows = kinds
+    .map((kind) => {
+      const of = tasksOfKind(kind);
+      if (of.length === 0) return "";
+
+      // Worst first, and the list is already sorted, so this is the head.
+      const worst = of[0]!;
+      const c = clientById(worst.client.toLowerCase());
+      const age = worst.days > 0 ? `${worst.days} days` : "ready";
+
+      return `
+        <button class="nrow" data-act="open-client" data-client="${e(worst.client)}"
+          aria-label="${of.length} to ${e(TASK_LABEL[kind])}. Oldest: ${e(c.name)}, ${e(age)}.">
+          <span class="g" data-kind="${e(kind)}">${e(TASK_GLYPH[kind])}</span>
+          <span class="col">
+            <span class="k">${e(TASK_LABEL[kind])}</span>
+            <span class="m">${e(c.name.split(" ")[0]!)} · ${e(age)}</span>
+          </span>
+          <span class="n">${of.length}</span>
+        </button>`;
+    })
+    .join("");
+
+  return `
+    <div class="needs">
+      <div class="nhead">
+        <span class="lbl">needs you</span>
+        <span class="fig">${inboxTotals.needsYou}</span>
+      </div>
+      <span class="sub">of ${inboxTotals.arrived} that arrived today</span>
+
+      <div class="nlist">${rows || `<p class="nempty">Nothing waiting. Everything that came in was answered.</p>`}</div>
+
+      <button class="done" data-act="page" data-page="assist"
+        aria-label="${inboxTotals.handled} answered automatically. Review them.">
+        <span class="g">✓</span>
+        <span class="col">
+          <span class="k">${inboxTotals.handled} sent · ${inboxTotals.held + inboxTotals.refused} stopped</span>
+          <span class="m">see what the gates decided</span>
+        </span>
+      </button>
+    </div>`;
+}
+
+/**
+ * The decision log.
+ *
+ * Every message the assistant considered, what it did, and which rule made it
+ * do that. With no outbox and no recall, this is the only recourse after the
+ * fact — so it records the gates by name rather than a verdict, and it records
+ * the ones that fired on messages that still went out.
+ *
+ * The refusals are the part worth reading. A T4 is not the assistant failing to
+ * produce something; it is the assistant declining to write a message that
+ * would have cost more than silence, and handing over a question instead.
+ */
+function assistPage(): string {
+  const rows = decisions
+    .map((a) => {
+      const c = clientById(a.reply.client.toLowerCase());
+      const d = a.decision;
+
+      const gates = d.gates.length
+        ? `<div class="gates">${d.gates
+            .map((g) => `<span class="gate" title="${e(GATE_REASON[g])}">${e(g)}</span>`)
+            .join("")}</div>`
+        : "";
+
+      const prompt = a.prompt
+        ? `<div class="ask">
+             <span class="lbl">ask her instead</span>
+             <span class="tx">${e(a.prompt.text)}</span>
+             <span class="from">from her meeting notes · ${e(a.prompt.cite)}</span>
+           </div>`
+        : "";
+
+      return `
+        <div class="drow" data-outcome="${e(d.outcome)}">
+          <div class="dhd">
+            <span class="tier" data-tier="${e(d.tier)}">${e(d.tier)}</span>
+            <button class="who" data-act="open-client" data-client="${e(a.reply.client)}">${e(c.name)}</button>
+            <span class="act">${e(TIER_ACTION[d.tier])}</span>
+            <span class="when">${e(stamp.format(Date.parse(a.reply.at)))}</span>
+          </div>
+          <span class="q">“${e(a.reply.asked)}”</span>
+          <span class="rz">${e(d.reason)}</span>
+          ${gates}
+          ${d.outcome === "refused" ? "" : `<p class="body">${e(a.reply.sent)}</p>`}
+          ${a.reply.source ? `<span class="src">source · ${e(a.reply.source.ref)}</span>` : ""}
+          ${prompt}
+        </div>`;
+    })
+    .join("");
+
+  return `
+    <div class="page fixed">
+      <div class="qhead">
+        <span class="hero-h d">What the assistant decided</span>
+        <span class="mt">${inboxTotals.handled} sent · ${inboxTotals.held} held for you ·
+          ${inboxTotals.refused} it would not write. Nine gates run before anything goes out, and
+          any one of them forces a person. Every decision below records which fired — with no
+          recall on a sent message, the log is the only recourse there is.</span>
+      </div>
+      <div class="dlist sc" id="dlist">${rows}</div>
+    </div>`;
+}
+
 function overviewPage(): string {
 
   const bars = weekBars.days
@@ -733,25 +876,6 @@ function overviewPage(): string {
     )
     .join("");
 
-  const ruleRows = rules
-    .map(
-      (r, i) => `
-      <div class="rule" aria-expanded="${state.rule === i}">
-        <button class="hd" data-act="rule" data-i="${i}">
-          <span>${e(r.label)}</span>
-          <span class="car">${state.rule === i ? "⌃" : "⌄"}</span>
-        </button>
-        <div class="det">
-          <span class="thumb" aria-hidden="true"></span>
-          <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
-            <span style="font-size:11.5px">${e(r.detailTitle)}</span>
-            <span class="m" style="font-size:9px;color:var(--t4)">${e(r.detailMeta)}</span>
-          </span>
-          <span class="m" style="margin-left:auto;font-size:11px;color:var(--t4)">⋮</span>
-        </div>
-      </div>`,
-    )
-    .join("");
 
   return `
     <div class="page">
@@ -842,67 +966,12 @@ function overviewPage(): string {
           </div>
         </div>
 
-        <div class="rules">${ruleRows}</div>
+        ${needsYouTile()}
 
         ${stageFunnel()}
         </div>
       </div>
     </div>`;
-}
-
-/* ── clients: the shared pieces ──────────────────────────────────── */
-
-function cellStyle(cell: Cell): string {
-  switch (cell.kind) {
-    case "cited":
-      return "background:var(--butter);color:var(--butter-d)";
-    case "you":
-      return "background:color-mix(in oklab, var(--primary) 13%, transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--primary) 28%, transparent)";
-    case "them":
-      return "background:color-mix(in oklab, var(--foreground) 7%, transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent)";
-    case "outside":
-      return "background:transparent;box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 5%, transparent);background-image:var(--hatch)";
-    default:
-      return `background:transparent;box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--foreground) 5.5%, transparent)${cell.weekend ? ";background-image:var(--hatch)" : ""}`;
-  }
-}
-
-function cellInk(cell: Cell): string {
-  // Opaque for the same reason the --t ramp is: see the note above it.
-  if (cell.kind === "cited") return "color-mix(in oklab, var(--background) 78%, var(--primary))";
-  if (cell.kind === "outside") return "color-mix(in oklab, var(--foreground) 42%, var(--card))";
-  if (cell.kind === "you") return "var(--butter)";
-  if (cell.kind === "them") return "var(--t3)";
-  return "var(--t4)";
-}
-
-function weekGrid(weeks: Week[]): string {
-  return weeks
-    .map((w) => {
-      const cells = w.cells
-        .map(
-          (cell) => `
-        <div class="cell" style="${cellStyle(cell)}" title="${e(cell.a11y)}">
-          <span class="top">
-            <span class="n" style="color:${cell.kind === "cited" ? "var(--butter-d)" : cell.kind === "outside" ? "var(--t5)" : "var(--t1)"}">${e(cell.num)}</span>
-            ${cell.kind === "cited" ? `<span class="lk" style="color:color-mix(in oklab, var(--background) 60%, var(--primary))">◆</span>` : ""}
-          </span>
-          ${cell.label ? `<span class="lb" style="color:${cellInk(cell)}">${e(cell.label)}</span>` : ""}
-        </div>`,
-        )
-        .join("");
-
-      const band = w.band
-        ? `<div class="band" style="background:${tint(markOf(w.band.tone), 10)};box-shadow:inset 0 0 0 1px ${tint(markOf(w.band.tone), 30)}">
-             <i style="background:${markOf(w.band.tone)}"></i>
-             <span style="color:${inkOf(w.band.tone)}">${e(w.band.label)}</span>
-             <span class="rg">${e(w.band.range)}</span>
-           </div>`
-        : "";
-
-      return `<div class="week"><div class="cells">${cells}</div>${band}</div>`;
-    })
-    .join("");
 }
 
 /* ── page: clients ───────────────────────────────────────────────── */
@@ -1189,6 +1258,84 @@ function searchKeeps(m: RecMessage): boolean {
   return m.text.toLowerCase().includes(q) || m.id.toLowerCase().includes(q) || m.time.toLowerCase().includes(q);
 }
 
+/**
+ * What was actually said, and when.
+ *
+ * This replaces the activity heatmap that used to sit here. The heatmap showed
+ * *that* there had been contact — thirty-five squares, darker where there were
+ * more messages — which is a shape the four signals already measure, and
+ * measure better. What no view showed was the thing an advisor with three
+ * hundred clients genuinely cannot hold: what this particular person said about
+ * their own life, in a meeting, four months ago.
+ *
+ * That is what personalised retention is made of. Michelle turned down the
+ * Singapore role because of the travel, not the money; her brother lost money
+ * on a Johor property in 2019 and she will not touch a five-year lock-in. Ask
+ * her the wrong question and the relationship costs nothing to lose. Neither
+ * sentence appears anywhere in her chat export.
+ *
+ * ── every note carries its moment ────────────────────────────────────
+ * Date and time to the minute, and a relative age beside it. The timestamp is
+ * not decoration: it is what lets someone find the passage again in a
+ * recording, and what makes a note from June read differently from one from
+ * last week.
+ *
+ * ── silence is shown, not hidden ─────────────────────────────────────
+ * A meeting that produced no notes still appears, with the reason. "He declined
+ * recording" is a fact about the relationship; "nobody asked" is a fact about
+ * the advisor, and collapsing both into an empty list would conceal the second
+ * — which is the one that can be fixed.
+ */
+function keyInfoTile(c: ClientView): string {
+  const notes = notesFor(c.key);
+
+  const rows = notes.moments
+    .map(
+      (m) => `
+      <div class="kp" data-kind="${e(m.kind)}">
+        <span class="g" title="${e(POINT_LABEL[m.kind])}">${e(POINT_GLYPH[m.kind])}</span>
+        <span class="col">
+          <span class="tx">${e(m.text)}</span>
+          <span class="mt">${e(stamp.format(Date.parse(m.at)))} · ${m.daysAgo}d ago · ${e(m.where)}</span>
+        </span>
+      </div>`,
+    )
+    .join("");
+
+  const quiet = notes.silent
+    .map(
+      (s) => `
+      <div class="kp quiet">
+        <span class="g">○</span>
+        <span class="col">
+          <span class="tx">${e(s.meeting.where)} · ${s.meeting.minutes} min</span>
+          <span class="mt">${e(dateShort.format(Date.parse(s.meeting.at)))} · ${
+            s.reason === "declined"
+              ? "no notes — they declined recording"
+              : "no notes — consent was never asked for"
+          }</span>
+        </span>
+      </div>`,
+    )
+    .join("");
+
+  const empty = !rows && !quiet;
+
+  return `
+    <div class="tile keyinfo" style="gap:9px">
+      <div class="kihead">
+        <span class="t" style="font-size:14px;font-weight:500">Key information</span>
+        <span class="lbl">${notes.moments.length} noted</span>
+      </div>
+      ${
+        empty
+          ? `<p class="kempty">No meetings recorded with this client yet. Notes appear here once a
+             conversation is captured with their consent.</p>`
+          : `<div class="klist sc" id="keynotes">${rows}${quiet}</div>`
+      }
+    </div>`;
+}
+
 function clientDetail(c: ClientView): string {
   const shown = c.messages.filter(searchKeeps);
   const filters: Array<[Filter, string]> = [["all", "all"], ["client", "theirs"], ["flagged", "flagged"]];
@@ -1215,13 +1362,7 @@ function clientDetail(c: ClientView): string {
             </div>
           </div>
 
-          <div class="tile" style="gap:9px">
-            <span class="t" style="font-size:14px;font-weight:500">Activity</span>
-            <div class="dow7">
-              <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span class="we">S</span><span class="we">S</span>
-            </div>
-            <div class="weeks sm">${weekGrid(c.weeks)}</div>
-          </div>
+          ${keyInfoTile(c)}
 
           ${c.open.length ? openLedgerTile(c) : ""}
         </div>
@@ -1364,6 +1505,7 @@ function openStage(stage: Stage): void {
 function body(): string {
   if (state.page === "home") return overviewPage();
   if (state.page === "agenda") return agendaPage();
+  if (state.page === "assist") return assistPage();
   if (state.page === "clients") {
     if (state.cview === "grid") return clientsGrid();
     return clientDetail(clientById(state.sel.toLowerCase()));
@@ -1390,7 +1532,7 @@ function render(): void {
   }
   if (state.st === "open") {
     const keep = new Map<string, number>();
-    for (const id of ["msgs", "asklog", "daylist", "dayctx"]) {
+    for (const id of ["msgs", "asklog", "daylist", "dayctx", "keynotes", "dlist"]) {
       const el = document.getElementById(id);
       if (el) keep.set(id, el.scrollTop);
     }
@@ -1516,11 +1658,12 @@ function focusCite(id: string): void {
   });
 }
 
-/* ── events ──────────────────────────────────────────────────────── */
+
 
 /* Bound once to the island rather than to the names themselves, because
    render() replaces those on every state change. */
 initScramble(island);
+
 
 /* Hover-with-intent. A deliberate hover expands to the summary card; a
    cursor merely passing through does not — the 160ms delay filters the
@@ -1737,10 +1880,6 @@ island.addEventListener("click", (ev) => {
       return;
     case "clients-back":
       state.cview = "grid";
-      render();
-      return;
-    case "rule":
-      state.rule = state.rule === Number(hit.dataset.i) ? -1 : Number(hit.dataset.i);
       render();
       return;
     case "filter":
