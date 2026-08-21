@@ -21,7 +21,7 @@ import {
 } from "./derive.ts";
 import { openDays } from "./ledger.ts";
 import type { LedgerEntry } from "./ledger.ts";
-import { isTauri, quit, reportHotRect, watchHotRect } from "./shell.ts";
+import { isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
 
 /* ── tiny helpers ────────────────────────────────────────────────── */
 
@@ -82,6 +82,11 @@ interface State {
   ask: Partial<Record<ClientKey, AskTurn[]>>;
   /** Draft in the ask composer. */
   draft: string;
+  /**
+   * Whether the shell reports the window as hidden from screen capture.
+   * Set from Rust's answer, never from the request — see setContentProtected.
+   */
+  hidden: boolean;
 }
 
 const top = clients[0]!;
@@ -97,6 +102,9 @@ const state: State = {
   q: "",
   ask: {},
   draft: "",
+  // Off by default: the island should be visible in a screen recording made
+  // deliberately, and hidden only when the advisor says so.
+  hidden: false,
 };
 
 const island = need("island");
@@ -328,6 +336,15 @@ function header(): string {
       <nav class="nav" aria-label="Sections">${nav}</nav>
       <div class="orbs">
         ${isTauri ? `<button class="orb" data-act="quit" title="Quit ChadBuddy" aria-label="Quit">⏻</button>` : ""}
+        ${isTauri
+          ? `<button class="orb${state.hidden ? " on" : ""}" data-act="protect"
+                     aria-pressed="${state.hidden}"
+                     aria-label="${state.hidden ? "Show during screen sharing" : "Hide during screen sharing"}"
+                     title="${state.hidden
+                       ? "Hidden from screen capture — Zoom, Teams, OBS and PrintScreen see the desktop behind. Not proof against a camera pointed at the screen."
+                       : "Visible to screen capture. Click to hide the island while sharing your screen."}"
+             >${state.hidden ? "⊘" : "◉"}</button>`
+          : ""}
         <button class="orb" title="Settings" aria-label="Settings">⚙</button>
         <button class="orb" title="${totals.openItems} open items" aria-label="Open items">◔<span class="pip"></span></button>
         <span class="orb me" title="${e(ADVISOR)}">${e(ADVISOR.split(" ").map((w) => w[0]).join(""))}</span>
@@ -1215,6 +1232,21 @@ island.addEventListener("click", (ev) => {
     case "quit":
       quit();
       return;
+    /* The toggle waits for the shell's answer before it moves. If the OS
+       declines — the capture-exclusion flag needs Windows 10 2004 or newer —
+       the control stays off rather than telling the advisor they are hidden
+       when they are not. */
+    case "protect": {
+      const want = !state.hidden;
+      void setContentProtected(want).then((applied) => {
+        state.hidden = applied;
+        if (want && !applied) {
+          console.warn("[chadbuddy] the shell declined to hide the window from capture");
+        }
+        render();
+      });
+      return;
+    }
     case "page":
       state.page = (hit.dataset.page ?? "home") as Page;
       // A section tab goes to the section, so clicking "clients" from inside a

@@ -156,6 +156,18 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
   --iris-b:   color-mix(in oklab, var(--iris) 32%, transparent);
   --foam:     oklch(0.5200 0.0720 196);
 
+  /* ── bridge: the lit frame ──
+     Notification hues, and the one place the palette steps outside itself.
+     --primary is near-black on this ramp, which is right for a chip and useless
+     for a light: a frame has to glow, so gold and red are named directly rather
+     than derived. --*-hi is the hot centre of the travelling band, a lighter
+     step of the same hue so the sweep reads as a highlight rather than as a
+     second colour crossing the first. */
+  --gold:     oklch(0.7800 0.1480 84);
+  --gold-hi:  oklch(0.9300 0.0850 95);
+  --alarm:    oklch(0.6200 0.2150 27);
+  --alarm-hi: oklch(0.7700 0.1650 30);
+
   /* ── bridge: status ──
      MARK fills a shape, INK sets type — so on a light ramp INK is the darker
      of the pair, since it has to hold against a light surface. Four bands:
@@ -236,6 +248,29 @@ button{ font: inherit; color: inherit; background: none; border: 0; padding: 0; 
 @keyframes sweep{ 0%{ transform: translateX(-100%); } 100%{ transform: translateX(320%); } }
 @keyframes breathe{ 0%,100%{ opacity:.4 } 50%{ opacity:1 } }
 
+/* A custom property has no type by default, so the browser can only swap it at
+   the halfway mark — the frame would jump rather than travel. Registering it as
+   an <angle> makes it interpolable and the sweep becomes continuous. */
+@property --spin{ syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes spin{ to{ --spin: 360deg; } }
+
+/* The halo breathes half as fast as the light travels, so the two never land
+   on the same beat and the pill reads as lit rather than as blinking. */
+@keyframes halo{
+  0%, 100%{
+    box-shadow: var(--isl-edge),
+                0 0 0 3px color-mix(in oklab, var(--frame) 16%, transparent),
+                0 0 14px 0 color-mix(in oklab, var(--frame) 22%, transparent),
+                var(--lift-3);
+  }
+  50%{
+    box-shadow: var(--isl-edge),
+                0 0 0 5px color-mix(in oklab, var(--frame) 26%, transparent),
+                0 0 26px 3px color-mix(in oklab, var(--frame) 38%, transparent),
+                var(--lift-3);
+  }
+}
+
 /* ══ simulated desktop ════════════════════════════════════════════
    Half white document, half terminal — the two backdrops the island has to
    stay legible over, since there is no blur to hide behind. Gone in Tauri. */
@@ -303,23 +338,67 @@ html[data-shell="tauri"] #desk{ display: none; }
 .island[data-state="idle"]:hover{
   --isl-edge: inset 0 0 0 1px color-mix(in oklab, var(--primary) 45%, transparent);
 }
+/* ── the lit frame ────────────────────────────────────────────────
+   Both notification states wear a light travelling around their own border:
+   gold when something arrived, red when something is owed. The hue is the
+   only thing that differs, so it is a single variable — --frame — and every
+   rule below reads it rather than repeating a colour.
+
+   The frame is not a border. A real border would change the box model mid
+   morph, and border-image cannot be animated. This is a conic gradient
+   painted across the whole element and then masked down to a 1.6px ring, so
+   the lit band travels the rounded path exactly and the geometry never moves. */
 .island[data-state="alert"]{
   width: 360px; height: 44px; border-radius: var(--r-2xl);
-  --isl-edge: inset 0 0 0 1px color-mix(in oklab, var(--primary) 55%, transparent);
-  box-shadow: var(--isl-edge), 0 0 0 4px var(--butter-a), var(--lift-3);
+  --frame: var(--gold);
+  --frame-hi: var(--gold-hi);
 }
 .island[data-state="call"]{
   width: 376px; height: 44px; border-radius: var(--r-2xl);
-  --isl-edge: inset 0 0 0 1px color-mix(in oklab, var(--destructive) 60%, transparent);
-  box-shadow: var(--isl-edge),
-              0 0 0 4px color-mix(in oklab, var(--destructive) 15%, transparent),
-              var(--lift-3);
+  --frame: var(--alarm);
+  --frame-hi: var(--alarm-hi);
 }
-/* non-urgent reminders ring in the accent, not the destructive hue — that one
-   is reserved for something actually owed */
+/* non-urgent reminders light gold, not red — red is reserved for something
+   actually owed, and spending it on a nudge would spend it for good */
 .island[data-state="call"][data-tone="butter"]{
-  --isl-edge: inset 0 0 0 1px color-mix(in oklab, var(--primary) 55%, transparent);
-  box-shadow: var(--isl-edge), 0 0 0 4px var(--butter-a), var(--lift-3);
+  --frame: var(--gold);
+  --frame-hi: var(--gold-hi);
+}
+
+.island[data-state="alert"],
+.island[data-state="call"]{
+  --isl-edge: inset 0 0 0 1px color-mix(in oklab, var(--frame) 55%, transparent);
+  animation: halo 2.1s ease-in-out infinite;
+}
+
+/* The ring itself. Masked with two stacked fills — one clipped to the content
+   box, one to the border box — composited to leave only the difference, which
+   is the padding band. That band is the frame. */
+.island::after{
+  content: ""; position: absolute; inset: 0; z-index: 3;
+  border-radius: inherit; padding: 1.6px;
+  pointer-events: none; opacity: 0;
+  transition: opacity .3s var(--ease);
+  background: conic-gradient(from var(--spin),
+    transparent 0deg,
+    color-mix(in oklab, var(--frame) 60%, transparent) 22deg,
+    var(--frame) 38deg, var(--frame-hi) 48deg, var(--frame) 58deg,
+    color-mix(in oklab, var(--frame) 60%, transparent) 74deg,
+    transparent 104deg,
+    transparent 180deg,
+    color-mix(in oklab, var(--frame) 50%, transparent) 202deg,
+    var(--frame) 218deg, var(--frame-hi) 228deg, var(--frame) 238deg,
+    color-mix(in oklab, var(--frame) 50%, transparent) 254deg,
+    transparent 284deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+}
+.island[data-state="alert"]::after,
+.island[data-state="call"]::after{
+  opacity: 1;
+  animation: spin 2.1s linear infinite;
 }
 .island[data-state="peek"]{ width: 428px; height: 104px; border-radius: var(--r-2xl); }
 .island[data-state="open"]{
@@ -452,6 +531,9 @@ html[data-shell="tauri"] #desk{ display: none; }
   transition: background .16s var(--ease);
 }
 .orb:hover{ background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+/* An orb that is doing something, not merely available to be clicked. */
+.orb.on{ background: var(--butter); color: var(--butter-d); box-shadow: none; }
+.orb.on:hover{ background: color-mix(in oklab, var(--butter) 85%, var(--foreground)); }
 /* The advisor's own initials sit in iris, not gold: gold means "the product
    wants something from you", and you are not one of your own action items. */
 .orb.me{ background: color-mix(in oklab, var(--iris) 15%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--iris) 30%, transparent); color: var(--iris); font-size: 10px; }
@@ -1012,6 +1094,17 @@ html[data-shell="tauri"] #desk{ display: none; }
 }
 @media (prefers-reduced-motion: reduce){
   *, *::before, *::after{ transition-duration: 1ms !important; animation: none !important; }
+  /* Killing the animation also kills the halo, which lives in its keyframes.
+     The notification states are the one place that matters — the frame is
+     carrying meaning, not decoration — so they get it back as a static ring.
+     The masked conic still paints, just without travelling. */
+  .island[data-state="alert"],
+  .island[data-state="call"]{
+    box-shadow: var(--isl-edge),
+                0 0 0 4px color-mix(in oklab, var(--frame) 22%, transparent),
+                0 0 20px 1px color-mix(in oklab, var(--frame) 30%, transparent),
+                var(--lift-3);
+  }
 }
 </style>
 </head>

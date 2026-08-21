@@ -93,3 +93,24 @@ export function watchHotRect(island: HTMLElement): void {
 export function quit(): void {
   invoke("quit");
 }
+
+/**
+ * Ask the shell to hide the window from screen capture.
+ *
+ * Unlike the other calls this one waits for its answer. The OS can decline —
+ * the capture-exclusion flag needs Windows 10 2004 or newer and is silently
+ * ignored below that — so the page reflects what Rust reports rather than what
+ * it asked for. A control that claims to be hiding you when it isn't is worse
+ * than no control at all.
+ *
+ * Outside Tauri there is no window to protect, so this resolves false.
+ */
+export async function setContentProtected(on: boolean): Promise<boolean> {
+  if (!rawInvoke) return false;
+  try {
+    return (await rawInvoke("set_content_protected", { protected: on })) === true;
+  } catch (err) {
+    console.error("[chadbuddy] set_content_protected failed", err);
+    return false;
+  }
+}
