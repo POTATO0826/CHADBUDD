@@ -28,11 +28,15 @@ import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
 import { initLive, queueSend } from "./live.ts";
+import { connectCalendar } from "./convexCalendar.ts";
 import { initScramble } from "./scramble.ts";
 import { POINT_GLYPH, POINT_LABEL, notesFor } from "./contact.ts";
 import type { TaskKind } from "./inbox.ts";
 import { TASK_GLYPH, TASK_LABEL, decisions, inboxTotals, tasksOfKind } from "./inbox.ts";
 import { GATE_REASON, TIER_ACTION } from "./gates.ts";
+import { NOTIFY_THRESHOLD_MIN, conflictsFrom, delayText, laterToday, markRunningOver, overrunFor } from "./presence.ts";
+import { calendarDay, calendarMonth, calendarSource, nowMs, refreshCalendar, refreshMonth } from "./daysource.ts";
+import type { CalendarEvent } from "./calendar.ts";
 import { initDrag } from "./drag.ts";
 import { focusWindow, isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
 
@@ -68,7 +72,7 @@ const tint = (colour: string, pct: number): string =>
 /* ── state ───────────────────────────────────────────────────────── */
 
 type IslandState = "idle" | "alert" | "call" | "peek" | "open";
-type Page = "home" | "clients" | "agenda" | "assist" | QueueKind;
+type Page = "home" | "clients" | "agenda" | "calendar" | "assist" | QueueKind;
 type Mode = "profile" | "record";
 type Filter = "all" | "client" | "flagged";
 /** The clients page is a grid of cards until one of them is opened. */
@@ -97,6 +101,10 @@ interface State {
   up: number | null;
   /** Agenda page: which slot's context is open. Defaults to the next one. */
   slot: string | null;
+  /** Calendar page: first-of-month being shown. Null follows the clock. */
+  month: number | null;
+  /** Calendar page: the day whose blocks are open. Null follows the clock. */
+  pick: number | null;
   /** Live text in the chat-history search box. */
   q: string;
   /** Ask-the-agent transcript, per client — switching clients keeps yours. */
@@ -133,6 +141,8 @@ const state: State = {
   stage: null,
   up: null,
   slot: null,
+  month: null,
+  pick: null,
   q: "",
   ask: {},
   draft: "",
@@ -401,6 +411,7 @@ function citeChips(ids: string[], client: ClientKey): string {
 const NAV: Array<{ page: Page; label: string; count: number }> = [
   { page: "home", label: "overview", count: 0 },
   { page: "agenda", label: "day", count: dayTotals.left },
+  { page: "calendar", label: "calendar", count: 0 },
   { page: "clients", label: "clients", count: totals.clients },
   { page: "calls", label: "calls", count: queues.calls.rows.filter((r) => r.btn !== "").length },
 ];
@@ -497,6 +508,7 @@ const SLOT_GLYPH: Record<string, string> = {
 
 const hhmmFmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kuala_Lumpur" });
 const hhmmOf = (ms: number): string => hhmmFmt.format(ms);
+
 
 /** A slot borrows its client's status colour; the advisor's own time stays quiet. */
 function slotTone(s: AgendaSlot): Tone {
@@ -604,6 +616,91 @@ function slotRow(s: AgendaSlot, on: boolean): string {
  * uses, and "where the purpose stands" is that client's measured state rather
  * than a sentence about how the relationship feels.
  */
+/**
+ * Running over, and who that lands on.
+ *
+ * A calendar records intentions; it has no idea whether the 13:15 actually
+ * finished. The advisor does, and one tap here is the only signal that is
+ * never wrong — the assistant's own two routes (somebody mentioning a delay,
+ * a check that goes unanswered for ten minutes) exist because this tap will
+ * often not happen, not because they are better.
+ *
+ * The consequences are shown before the tap rather than after. Anyone about
+ * to tell three clients they are late should see which three first.
+ */
+function overrunBlock(s: AgendaSlot): string {
+  const event = calendarDay().find((x) => x.id === s.id);
+  if (!event) return "";
+
+  const over = overrunFor(s.id);
+  const now = nowMs();
+  const ended = Date.parse(event.at) + event.minutes * 60_000;
+  // Nothing to say about a block that has not started.
+  if (now < Date.parse(event.at)) return "";
+
+  const affected = over ? conflictsFrom(over, laterToday(calendarDay(), now), now) : [];
+
+  const who = affected.length
+    ? `<div class="told">${affected
+        .map((x) => {
+          const cc = clientById(x.client.toLowerCase());
+          return `<span class="t1">${e(cc.name)}<em>${e(delayText(x))}</em></span>`;
+        })
+        .join("")}</div>`
+    : over
+      ? `<span class="none">Under ${NOTIFY_THRESHOLD_MIN} minutes, or nobody close enough to affect — no messages sent.</span>`
+      : "";
+
+  return `
+    <div class="sect over" data-on="${over ? "yes" : "no"}">
+      <span class="lbl">running over</span>
+      ${over
+        ? `<span class="state">${over.minutes} minutes past ${e(
+             over.by === "tapped"
+               ? "— you said so"
+               : over.by === "mentioned"
+                 ? "— someone mentioned it in a thread"
+                 : "— the check went unanswered for ten minutes",
+           )}</span>`
+        : now > ended
+          ? `<span class="state">Scheduled to end at ${e(hhmmOf(ended))}. Did it?</span>`
+          : `<span class="state">Ends at ${e(hhmmOf(ended))}.</span>`}
+      ${who}
+      <div class="ctxacts">
+        <button class="btn${over ? "" : " acc"}" data-act="running-over" data-slot="${e(s.id)}">
+          ${over ? "Still running" : "Running over"}</button>
+      </div>
+    </div>`;
+}
+
+/**
+ * A block this app booked from something it read.
+ *
+ * The whole reason inferring a time from a message is safe is that the result
+ * arrives here rather than in the client's inbox: pencilled in, attributed to
+ * the message it came from, and one tap from gone. A tentative block with no
+ * way to resolve it would be worse than not booking at all — it would leave the
+ * advisor with a diary they cannot trust and no way to fix it.
+ */
+function tentativeBlock(s: AgendaSlot): string {
+  const event = calendarDay().find((x) => x.id === s.id);
+  if (!event || event.booking !== "tentative") return "";
+
+  const from = event.inferredFrom;
+  return `
+    <div class="sect tent">
+      <span class="lbl">pencilled in</span>
+      <span class="state">Nobody confirmed this to you — it was read out of a ${e(
+        from?.source ?? "message",
+      )} thread, so check it before you rely on it.</span>
+      ${from && s.withClient ? `<div class="citerow">${citeChips([from.cite], s.withClient)}</div>` : ""}
+      <div class="ctxacts">
+        <button class="btn acc" data-act="confirm-slot" data-slot="${e(s.id)}">That is right</button>
+        <button class="btn" data-act="drop-slot" data-slot="${e(s.id)}">Remove it</button>
+      </div>
+    </div>`;
+}
+
 function slotContext(s: AgendaSlot): string {
   const c = s.withClient ? clientById(s.withClient.toLowerCase()) : null;
   const tone = slotTone(s);
@@ -644,6 +741,10 @@ function slotContext(s: AgendaSlot): string {
       ${s.prep.length ? `<div class="sect"><span class="lbl">have ready</span>
         ${s.prep.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>` : ""}
 
+      ${tentativeBlock(s)}
+
+      ${overrunBlock(s)}
+
       ${c ? `<div class="ctxacts"><button class="btn acc" data-act="open-client" data-client="${c.key}">Open ${e(c.name.split(" ")[0]!)}</button></div>` : ""}
     </div>`;
 }
@@ -660,6 +761,276 @@ function agendaPage(): string {
       <div class="daycols">
         <div class="daylist sc" id="daylist">${agenda.map((x) => slotRow(x, x.id === sel.id)).join("")}</div>
         <div class="dayctx sc" id="dayctx">${slotContext(sel)}</div>
+      </div>
+    </div>`;
+}
+
+/* ── the month ───────────────────────────────────────────────────
+   A calendar the advisor can step through, shaded by how committed each day
+   is. The day tab answers "where am I going next"; this answers the question
+   that comes before booking anything — "what does that week already look
+   like". */
+
+/**
+ * What counts as load.
+ *
+ * Time in front of people, and the driving between it. Focus and admin blocks
+ * are work but they are the advisor's own to move, and breaks are the opposite
+ * of load — shading a day darker because it has a protected lunch in it would
+ * punish exactly the habit the assistant is trying to defend.
+ */
+const LOAD_KINDS: ReadonlySet<string> = new Set(["meeting", "call", "travel"]);
+
+function loadMinutes(events: CalendarEvent[]): number {
+  return events.reduce((n, x) => (LOAD_KINDS.has(x.kind) ? n + x.minutes : n), 0);
+}
+
+/**
+ * Hours of committed time at which a day moves up a step.
+ *
+ * Four steps, and it stops. A ten-hour day and a six-hour day are drawn
+ * identically on purpose: past a point the difference is not something the
+ * advisor can act on, and a scale that keeps deepening turns a working diary
+ * into a chart of how bad things are. The ramp exists to help someone find a
+ * gap, not to grade their week.
+ */
+const LOAD_STEPS = [2, 4, 6];
+
+function loadStep(minutes: number): number {
+  if (minutes <= 0) return 0;
+  const hours = minutes / 60;
+  return 1 + LOAD_STEPS.filter((h) => hours >= h).length;
+}
+
+/**
+ * The ramp: one hue, deepening.
+ *
+ * A single calm hue rather than green-to-red, and foam rather than love or
+ * gold, because the busiest day of someone's week should not be coloured like
+ * an error. Sequential data gets one hue by rule; which hue is the part that
+ * decides whether the page reads as a plan or as an alarm.
+ *
+ * On a dark surface "darker" has to mean more ink, not lower lightness — a
+ * genuinely darker fill on #232136 disappears into the background, so a packed
+ * day would recede exactly where it should stand out. Density does the work.
+ */
+const LOAD_FILL = ["transparent", "12%", "24%", "38%", "54%"];
+
+const loadTint = (step: number): string =>
+  step === 0 ? "transparent" : `color-mix(in oklab, var(--foam) ${LOAD_FILL[step]}, transparent)`;
+
+const monthFmt = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" });
+
+/** Monday-first, which is how a working week is read here. */
+const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const startOfDay = (ms: number): number => {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+
+/**
+ * The grid, including the days either side that complete the first and last
+ * weeks. Those are drawn faint and are not clickable: they belong to another
+ * month, and the events for them were never fetched, so a count on them would
+ * be a zero that means "not asked" rather than "nothing booked".
+ */
+function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
+  const first = new Date(anchorMs);
+  first.setDate(1);
+  first.setHours(0, 0, 0, 0);
+
+  const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  // getDay() is Sunday-first; shift so Monday is column 0.
+  const lead = (first.getDay() + 6) % 7;
+
+  const today = startOfDay(nowMs());
+  const picked = state.pick === null ? today : startOfDay(state.pick);
+
+  const byDay = new Map<number, CalendarEvent[]>();
+  for (const ev of events) {
+    const k = startOfDay(Date.parse(ev.at));
+    const list = byDay.get(k);
+    if (list) list.push(ev);
+    else byDay.set(k, [ev]);
+  }
+
+  const cells: string[] = [];
+
+  for (let i = 0; i < lead; i++) cells.push(`<span class="cell out" aria-hidden="true"></span>`);
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const at = new Date(first.getFullYear(), first.getMonth(), d).getTime();
+    const list = byDay.get(at) ?? [];
+    const step = loadStep(loadMinutes(list));
+    const isToday = at === today;
+    const isPicked = at === picked;
+    const weekend = [5, 6].includes((new Date(at).getDay() + 6) % 7);
+
+    /* The count is the honest label. Dots read nicely at four events and turn
+       into a smear at nine, and the number is what someone is actually asking
+       for when they look at a shaded square. */
+    const n = list.length;
+    const tentative = list.some((x) => x.booking === "tentative");
+
+    cells.push(`
+      <button class="cell${isToday ? " today" : ""}${isPicked ? " on" : ""}${weekend ? " wk" : ""}"
+        data-act="pick-day" data-day="${at}" data-step="${step}"
+        style="--fill:${loadTint(step)}"
+        aria-current="${isToday ? "date" : "false"}"
+        aria-label="${e(new Date(at).toDateString())}, ${n} ${n === 1 ? "entry" : "entries"}">
+        <span class="dn">${d}</span>
+        ${n ? `<span class="cn">${n}</span>` : ""}
+        ${tentative ? `<span class="tq" title="Something pencilled in">·</span>` : ""}
+      </button>`);
+  }
+
+  const tail = (7 - ((lead + daysInMonth) % 7)) % 7;
+  for (let i = 0; i < tail; i++) cells.push(`<span class="cell out" aria-hidden="true"></span>`);
+
+  return `
+    <div class="dow">${DOW.map((x) => `<span>${x}</span>`).join("")}</div>
+    <div class="grid">${cells.join("")}</div>`;
+}
+
+/**
+ * One day, drawn to scale.
+ *
+ * Blocks are positioned and sized by real time rather than listed, because the
+ * thing worth seeing is the shape of the day — where the gaps are, and whether
+ * two commitments are back to back. A list of five rows makes an hour and a
+ * ten-minute call look the same size.
+ */
+function dayBlocks(dayMs: number, events: CalendarEvent[]): string {
+  const day = startOfDay(dayMs);
+  const list = events
+    .filter((x) => startOfDay(Date.parse(x.at)) === day)
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+
+  if (list.length === 0) {
+    return `
+      <div class="empty">
+        <span class="hero-h d" style="font-size:19px">Nothing booked</span>
+        <span class="mt">No commitments on this day. Worth keeping some of it.</span>
+      </div>`;
+  }
+
+  /* The window fits the day rather than assuming office hours: a 07:00 airport
+     run and a 20:00 call both have to be inside it, and a fixed 09–18 scale
+     would quietly clip them off the top or bottom of the column. */
+  const starts = list.map((x) => Date.parse(x.at));
+  const ends = list.map((x, i) => starts[i]! + x.minutes * 60_000);
+  const from = Math.min(...starts, day + 8 * 3_600_000);
+  const to = Math.max(...ends, day + 18 * 3_600_000);
+  const span = to - from;
+
+  const hours: string[] = [];
+  for (let h = new Date(from).getHours(); h * 3_600_000 + day <= to; h++) {
+    const at = day + h * 3_600_000;
+    if (at < from) continue;
+    hours.push(`<span class="hr" style="top:${((at - from) / span) * 100}%">${String(h).padStart(2, "0")}</span>`);
+  }
+
+  /**
+   * Side by side when they overlap.
+   *
+   * A real calendar has a call inside a travel block and a meeting that runs
+   * into the next one; drawn full width they cover each other and the one
+   * underneath simply is not there. Lanes are assigned greedily in start order
+   * — the first lane whose last block has already ended — which is what every
+   * calendar does and is right for the handful of overlaps a day can hold.
+   */
+  const laneEnds: number[] = [];
+  const lane = starts.map((start, i) => {
+    const free = laneEnds.findIndex((endsAt) => endsAt <= start);
+    const at = free === -1 ? laneEnds.length : free;
+    laneEnds[at] = ends[i]!;
+    return at;
+  });
+  const lanes = Math.max(1, laneEnds.length);
+
+  const blocks = list
+    .map((x, i) => {
+      const top = ((starts[i]! - from) / span) * 100;
+      const height = ((ends[i]! - starts[i]!) / span) * 100;
+      const width = 100 / lanes;
+      const left = lane[i]! * width;
+      const c = x.withClient ? clientById(x.withClient.toLowerCase()) : null;
+      const heavy = x.kind === "meeting" || x.kind === "call";
+
+      return `
+        <button class="blk${heavy ? " hv" : ""}${x.booking === "tentative" ? " tent" : ""}"
+          style="top:${top}%;height:${Math.max(height, 4)}%;left:${left}%;width:calc(${width}% - 3px)"
+          ${c ? `data-act="open-client" data-client="${c.key}"` : `data-act="noop"`}
+          aria-label="${e(x.title)} at ${e(hhmmOf(starts[i]!))}">
+          <span class="bt">${e(hhmmOf(starts[i]!))}</span>
+          <span class="bn">${e(SLOT_GLYPH[x.kind] ?? "◍")} ${e(x.title)}</span>
+          ${x.where ? `<span class="bw">${e(x.where)}</span>` : ""}
+        </button>`;
+    })
+    .join("");
+
+  return `<div class="track">${hours.join("")}<div class="blocks">${blocks}</div></div>`;
+}
+
+function calendarPage(): string {
+  const anchor = state.month ?? nowMs();
+  const events = calendarMonth();
+  const picked = state.pick ?? nowMs();
+
+  const busiest = (() => {
+    let worst = 0;
+    const byDay = new Map<number, CalendarEvent[]>();
+    for (const ev of events) {
+      const k = startOfDay(Date.parse(ev.at));
+      byDay.set(k, [...(byDay.get(k) ?? []), ev]);
+    }
+    for (const list of byDay.values()) worst = Math.max(worst, loadMinutes(list));
+    return worst;
+  })();
+
+  const committed = loadMinutes(events);
+
+  return `
+    <div class="page fixed">
+      <div class="qhead">
+        <span class="hero-h d">${e(monthFmt.format(anchor))}</span>
+        <span class="mt">${events.length} ${events.length === 1 ? "entry" : "entries"} ·
+          ${Math.round(committed / 60)}h committed · busiest day
+          ${busiest === 0 ? "—" : `${Math.round((busiest / 60) * 10) / 10}h`}. Shading is time in
+          front of people and the driving between it, not everything on the diary.</span>
+      </div>
+
+      <div class="calcols">
+        <div class="month">
+          <div class="mnav">
+            <button class="ico" data-act="month-step" data-by="-1" aria-label="Previous month">‹</button>
+            <button class="btn" data-act="month-step" data-by="0">Today</button>
+            <button class="ico" data-act="month-step" data-by="1" aria-label="Next month">›</button>
+          </div>
+
+          ${monthGrid(anchor, events)}
+
+          <div class="ramp">
+            <span class="lbl">committed time</span>
+            <span class="sw" style="--fill:${loadTint(0)}"></span>
+            <span class="sw" style="--fill:${loadTint(1)}"></span>
+            <span class="sw" style="--fill:${loadTint(2)}"></span>
+            <span class="sw" style="--fill:${loadTint(3)}"></span>
+            <span class="sw" style="--fill:${loadTint(4)}"></span>
+            <span class="rt">clear · under 2h · 4h · 6h and beyond</span>
+          </div>
+        </div>
+
+        <div class="dayside sc">
+          <div class="dhead">
+            <span class="hero-h d" style="font-size:21px">${e(
+              new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(picked),
+            )}</span>
+          </div>
+          ${dayBlocks(picked, events)}
+        </div>
       </div>
     </div>`;
 }
@@ -1544,6 +1915,7 @@ function openStage(stage: Stage): void {
 function body(): string {
   if (state.page === "home") return overviewPage();
   if (state.page === "agenda") return agendaPage();
+  if (state.page === "calendar") return calendarPage();
   if (state.page === "assist") return assistPage();
   if (state.page === "clients") {
     if (state.cview === "grid") return clientsGrid();
@@ -1908,6 +2280,69 @@ island.addEventListener("click", (ev) => {
       if (want) openStage(want);
       return;
     }
+    /* The advisor saying the meeting has not finished. Everything downstream
+       — who is told, and how late they are told they are — follows from this
+       one fact, which is why it is a tap and not an inference. */
+    /* Resolving a pencilled-in block. Both write to the real calendar, which
+       is the point: a block the advisor confirmed here has to be confirmed on
+       the phone they will actually check. */
+    case "confirm-slot":
+    case "drop-slot": {
+      const id = hit.dataset.slot;
+      if (id) {
+        void calendarSource()
+          .settle(id, act === "confirm-slot" ? "confirmed" : "cancelled")
+          .then(refreshCalendar)
+          .then(render)
+          .catch((err) => console.error("[chadbuddy] could not settle", id, err));
+      }
+      return;
+    }
+    /* Stepping months. `0` is Today, which returns both the grid and the
+       open day to now rather than only one of them — landing on this month
+       with a day from three months ago still selected reads as a bug. */
+    case "month-step": {
+      const by = Number(hit.dataset.by ?? "0");
+      const base = new Date(state.month ?? nowMs());
+      base.setDate(1);
+      base.setHours(0, 0, 0, 0);
+
+      if (by === 0) {
+        state.month = null;
+        state.pick = null;
+      } else {
+        base.setMonth(base.getMonth() + by);
+        state.month = base.getTime();
+        /* The open day moves with the grid. Landing on November with a day in
+           August still selected leaves the right-hand panel showing a date
+           that is not on screen, which reads as the arrows being broken. */
+        state.pick = base.getTime();
+      }
+
+      void refreshMonth(state.month ?? nowMs()).then(render);
+      render();
+      return;
+    }
+
+    case "pick-day": {
+      const at = Number(hit.dataset.day ?? "");
+      if (Number.isFinite(at)) state.pick = at;
+      render();
+      return;
+    }
+
+    /* A block with nobody on the other side. The button still exists so the
+       whole row is one hit target rather than a mix of live and dead pixels. */
+    case "noop":
+      return;
+
+    case "running-over": {
+      const id = hit.dataset.slot;
+      const ev = id ? calendarDay().find((x) => x.id === id) : undefined;
+      if (ev) markRunningOver(ev, nowMs());
+      render();
+      return;
+    }
     case "open-slot":
       state.slot = hit.dataset.slot ?? null;
       state.page = "agenda";
@@ -2134,6 +2569,16 @@ window.addEventListener("error", () => {
   reportHotRect(island);
 });
 
+/* The calendar is async by design — a Google-backed source cannot be
+   anything else — so the day is fetched once here and re-read after
+   anything that changes it. render() stays synchronous. */
+void refreshCalendar().then(render);
+
+/* The month the calendar page opens on. Fetched at boot rather than on first
+   visit, so stepping onto the tab shows a filled grid rather than an empty one
+   that populates a frame later — an empty calendar reads as a free month. */
+void refreshMonth(nowMs()).then(render);
+
 render();
 watchHotRect(island);
 
@@ -2196,10 +2641,24 @@ const live = initLive(
       mode: "record",
       dwell: 9000,
     });
+
+    /* Reading this message for an agreed time is the backend's job now —
+       convex/scheduling.ts runs on ingest, so it works when the app is shut.
+       Doing it here as well would put two writers on the same sentence. The
+       block it creates arrives back through the calendar subscription. */
   },
 );
 
 if (live) {
+  /* The day, from Google rather than the seed file.
+     After initLive because it needs the connected client, and re-fetching
+     immediately because the seeded day is on screen by now and the live one
+     replaces it wholesale. Nothing below the swap knows which source answered
+     — see src/daysource.ts. */
+  if (connectCalendar(() => void refreshCalendar().then(render))) {
+    void refreshCalendar().then(render);
+  }
+
   /* The seed replay loop is a stand-in for events that have not happened yet.
      Once real ones do, it stops — two sources competing for the same island
      would show a months-old seed message over a live one. */

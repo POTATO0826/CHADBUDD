@@ -81,8 +81,23 @@ export interface Source {
   validUntil: string;
 }
 
+/**
+ * What kind of message this is, which decides which gates even apply.
+ *
+ *   answer   a reply to what they asked — the content gates all apply
+ *   status   where the advisor is and when they are free — availability only
+ *
+ * The distinction is not cosmetic. Michelle is refused an *answer*, because a
+ * silently churning relationship needs a person. She should still be told he
+ * is in a meeting until 3:15 — leaving her waiting with no word is the same
+ * neglect the product exists to catch, performed by the tool itself.
+ */
+export type MessageClass = "answer" | "status";
+
 export interface Ask {
   client: ClientKey;
+  /** Defaults to `answer`, which is the stricter path. */
+  kind?: MessageClass;
   /** What kind of thing is being answered. Used for first-of-kind. */
   intent: string;
   /** The client's words, scanned for the complaint and human gates. */
@@ -175,6 +190,23 @@ function daysValid(src: Source | undefined): number | null {
 export function gatesFor(ask: Ask): GateId[] {
   const out: GateId[] = [];
   const c = clientById(ask.client.toLowerCase());
+
+  /* A status message says only where the advisor is. It carries no figure, no
+     recommendation and nothing about their money, so the gates that exist to
+     stop those do not apply to it — and applying them anyway would mean the
+     clients most at risk of being neglected are the ones told nothing while
+     they wait.
+
+     Three still apply, and they are the ones that are about the person rather
+     than the content: a complaint, an explicit request for a human, and the
+     rate limit. Somebody who has said they want to talk to you does not want
+     an automated note about your calendar. */
+  if (ask.kind === "status") {
+    if (has(ask.asked, COMPLAINT_MARKERS)) out.push("complaint");
+    if (has(ask.asked, HUMAN_MARKERS)) out.push("asked-human");
+    if (ask.sentToday >= DAILY_CAP) out.push("rate-limit");
+    return out;
+  }
 
   /* The gates no generic assistant has, and the reason this product can make
      the call at all: both come free from the engine already running.

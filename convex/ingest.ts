@@ -18,6 +18,7 @@
 
 import { v } from "convex/values";
 import { mutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
@@ -153,14 +154,31 @@ export const ingestBatch = mutation({
         .unique();
       if (dupe) continue;
 
+      const externalId = `${client.key}-${String(seq).padStart(3, "0")}`;
+
       await ctx.db.insert("messages", {
         clientId: client._id,
-        externalId: `${client.key}-${String(seq).padStart(3, "0")}`,
+        externalId,
         sourceId: m.sourceId,
         sender: m.from,
         ts: m.ts,
         text: m.text,
       });
+
+      /* Read for a schedule change. Scheduled rather than called: writing to
+         Google is a network round trip and a mutation gets one second, so
+         doing it inline would make a backfill of a thousand messages die on
+         the first one that mentioned a Tuesday.
+
+         Both senders, not just the client. "Thursday 4pm works" is an
+         agreement whichever end of the thread types it. */
+      await ctx.scheduler.runAfter(0, internal.scheduling.consider, {
+        clientId: client._id,
+        cite: externalId,
+        text: m.text,
+        ts: m.ts,
+      });
+
       seq++;
       inserted++;
     }
