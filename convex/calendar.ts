@@ -201,9 +201,52 @@ interface GoogleEvent {
   summary?: string;
   location?: string;
   hangoutLink?: string;
+  /** Google's own classification. "focusTime" and "outOfOffice" are exact. */
+  eventType?: string;
+  /** "transparent" means the advisor marked it Free — not a commitment. */
+  transparency?: string;
+  attendees?: Array<{ email?: string; self?: boolean; responseStatus?: string }>;
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
   extendedProperties?: { private?: Record<string, string> };
+}
+
+/**
+ * What kind of block this is, when nobody told us.
+ *
+ * This used to default everything without our private property to "meeting",
+ * on the reasoning that a meeting is treated most carefully downstream. A real
+ * calendar showed that to be exactly backwards: a diary of recurring "Focus
+ * time" and "Lunch" blocks came back as five hours of client-facing load every
+ * weekday, so the density map shaded a whole month identically and said
+ * nothing. A wrong label does not fail safe here — it drowns the signal.
+ *
+ * Google carries enough to do better. `eventType` is authoritative for focus
+ * and out-of-office; an attendee who is not the advisor is what actually makes
+ * something a meeting; and an event the advisor marked Free is, by their own
+ * declaration, not a commitment. Own time is the default now, because most of
+ * a calendar is.
+ */
+function inferKind(e: GoogleEvent): string {
+  if (e.eventType === "focusTime") return "focus";
+  if (e.eventType === "outOfOffice") return "break";
+
+  /* Word boundaries matter more than they look. Without them "rest" matches
+     "Restructuring review" and a client meeting is filed as a break — which
+     then drops out of the load count entirely, so the day reads free. */
+  const title = (e.summary ?? "").toLowerCase();
+  if (/\blunch\b|\bbreak\b|\bdinner\b|\bgym\b|\brest\b/.test(title)) return "break";
+  if (/\bflight\b|\bdrive\b|\btravel\b|\btrain\b|\btransit\b/.test(title)) return "travel";
+
+  // Someone else is expected to be there. That is what a meeting is.
+  const others = (e.attendees ?? []).filter((a) => a.self !== true);
+  if (others.length > 0) return e.hangoutLink ? "call" : "meeting";
+
+  // A conferencing link with nobody invited is usually a standing personal
+  // room, not a call anyone is waiting in.
+  if (e.transparency === "transparent") return "admin";
+
+  return /\bfocus\b|\bdeep work\b|\bprep\b|\bwrite\b/.test(title) ? "focus" : "admin";
 }
 
 /**
@@ -230,7 +273,7 @@ function shape(e: GoogleEvent, calendarId: string) {
     minutes: Number.isFinite(ends) && Number.isFinite(startsAt)
       ? Math.max(5, Math.round((ends - startsAt) / 60_000))
       : 30,
-    kind: priv["chadbuddyKind"] ?? (e.hangoutLink ? "call" : "meeting"),
+    kind: priv["chadbuddyKind"] ?? inferKind(e),
     where: e.location ?? (e.hangoutLink ? "Online" : ""),
     booking:
       e.status === "cancelled"
