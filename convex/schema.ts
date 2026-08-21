@@ -1,0 +1,145 @@
+/**
+ * The tables data/types.ts has been describing in a comment since the seed was
+ * written. `messages` mirrors SeedMessage one-for-one, and `by_client_ts` is
+ * the index that comment names, deliberately unchanged.
+ *
+ * Two things this schema is careful about, both of them citation integrity:
+ *
+ *   · `externalId` is minted here and never anywhere else. It is the key every
+ *     ledger entry, evidence link and scroll-to-source target in the UI points
+ *     at, so it has to be unique and stable for the life of the message. An
+ *     adapter cannot guarantee that — it has no transaction — so the mutation
+ *     mints it and the adapter never sees one.
+ *
+ *   · `rejected` is a first-class table, not a debug log. The agent will
+ *     fabricate quotes; that is a property of language models, not a bug to be
+ *     fixed. What makes the product honest is that fabrications are caught,
+ *     counted and visible. derive.ts already renders a discarded count, and a
+ *     rejection rate you cannot see is a rejection rate you will stop believing.
+ */
+
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  /**
+   * Every conversation the account can see, tracked or not — this is what the
+   * advisor's chat picker reads. Groups and channels are stored so they can be
+   * *shown and declined*, rather than hidden by a rule the advisor can't audit.
+   */
+  chats: defineTable({
+    /** Platform-native id: a Telegram peer id today. */
+    sourceId: v.string(),
+    name: v.string(),
+    handle: v.string(),
+    isGroup: v.boolean(),
+    /** Bots and service accounts are not relationships. Surfaced, never tracked. */
+    isBot: v.boolean(),
+    lastTs: v.number(),
+    msgCount: v.number(),
+    /** Age in days of the oldest message. Below ~120 there is no baseline to decay from. */
+    spanDays: v.number(),
+  })
+    .index("by_source", ["sourceId"])
+    .index("by_last", ["lastTs"]),
+
+  /** A chat the advisor has explicitly promoted to a tracked client. */
+  clients: defineTable({
+    /** Citation prefix — "A". Assigned in pick order, stable for life. */
+    key: v.string(),
+    sourceId: v.string(),
+    name: v.string(),
+    handle: v.string(),
+    /**
+     * Next externalId number. Read-modify-written inside the ingest mutation,
+     * which Convex runs transactionally, so concurrent batches cannot collide
+     * on a number the way a file-based store would.
+     */
+    seq: v.number(),
+    /** Last Hermes pass, epoch ms. Debounce lives here, not in the bridge. */
+    analyzedTs: v.optional(v.number()),
+  })
+    .index("by_key", ["key"])
+    .index("by_source", ["sourceId"]),
+
+  messages: defineTable({
+    clientId: v.id("clients"),
+    /** "D-012". The citation key. Minted once, never renumbered. */
+    externalId: v.string(),
+    /** The platform's own id, for dedupe on re-sync. */
+    sourceId: v.string(),
+    sender: v.union(v.literal("advisor"), v.literal("client")),
+    ts: v.number(),
+    text: v.string(),
+  })
+    // The index data/types.ts:13 specifies, kept verbatim.
+    .index("by_client_ts", ["clientId", "ts"])
+    .index("by_client_source", ["clientId", "sourceId"])
+    .index("by_external", ["externalId"]),
+
+  /** Agent output that survived the verbatim gate. Mirrors Idea at src/copy.ts:33. */
+  ideas: defineTable({
+    clientId: v.id("clients"),
+    rank: v.string(),
+    title: v.string(),
+    why: v.string(),
+    draftLabel: v.string(),
+    draft: v.string(),
+    btn: v.string(),
+    meta: v.string(),
+    intent: v.union(
+      v.literal("send"),
+      v.literal("hold"),
+      v.literal("blocked"),
+      v.literal("note"),
+    ),
+    /** externalIds, every one already verified against real message text. */
+    cites: v.array(v.string()),
+    generatedTs: v.number(),
+    model: v.string(),
+  }).index("by_client", ["clientId"]),
+
+  /**
+   * Agent output that did NOT survive the gate. Kept, not discarded.
+   *
+   * Note `reason`: the gate can only prove a quote exists, not that the quote
+   * supports the claim built on it. Measured this directly — a model answered
+   * an unanswerable question by stretching a real quote, and passed. So this
+   * table is a rate to watch, not a certificate of safety.
+   */
+  rejected: defineTable({
+    clientId: v.id("clients"),
+    claim: v.string(),
+    sourceId: v.string(),
+    quote: v.string(),
+    reason: v.union(
+      v.literal("no-such-message"),
+      v.literal("quote-not-verbatim"),
+      v.literal("no-surviving-cites"),
+    ),
+    ts: v.number(),
+    model: v.string(),
+  }).index("by_client", ["clientId"]),
+
+  /**
+   * Connection state, single row. The bridge writes it; the island subscribes.
+   *
+   * `qr` exists because GramJS can pair by QR as well as by phone code, and the
+   * frontend contract was written around a QR image. Optional because the
+   * phone-code path never populates it.
+   */
+  pairing: defineTable({
+    platform: v.string(),
+    state: v.union(
+      v.literal("connecting"),
+      v.literal("needs-login"),
+      v.literal("qr"),
+      v.literal("open"),
+      v.literal("closed"),
+      v.literal("logged-out"),
+    ),
+    qr: v.optional(v.string()),
+    detail: v.optional(v.string()),
+    updatedAt: v.number(),
+  }),
+});

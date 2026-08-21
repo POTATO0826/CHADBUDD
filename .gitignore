@@ -25,3 +25,11 @@ src-tauri/gen/schemas
 
 # debug screenshots
 _shot*.png
+
+# message bridges. Both of these are FULL account sessions in plaintext —
+# anyone holding them is logged in as you. Never commit either.
+.wa/
+.tg/
+
+# throwaway backend probes
+scripts-local/

@@ -12,8 +12,7 @@
  */
 
 import { threads } from "../data/threads/index.ts";
-import { handled } from "../data/handled.ts";
-import { approvals, ideas, queues } from "../src/copy.ts";
+import { approvals, ideas, queues, rules } from "../src/copy.ts";
 import { clients, replyClock, totals, weekBars } from "../src/derive.ts";
 import { ledgerFor } from "../src/ledger.ts";
 
@@ -75,10 +74,7 @@ console.log("\nids mentioned in prose (not just in cites arrays)");
     scan(`queues.${kind}.foot`, q.foot);
   }
   approvals.forEach((a, n) => { scan(`approvals[${n}].title`, a.title); scan(`approvals[${n}].meta`, a.meta); });
-  handled.forEach((h, n) => {
-    scan(`handled[${n}].asked`, h.asked);
-    scan(`handled[${n}].sent`, h.sent);
-  });
+  rules.forEach((r, n) => { scan(`rules[${n}]`, `${r.detailTitle} ${r.detailMeta}`); });
   if (checked > 0) pass(`${checked} ids mentioned in prose all resolve`);
 }
 

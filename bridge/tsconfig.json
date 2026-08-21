@@ -1,0 +1,22 @@
+{
+  "//": "The bridge is a Bun process, not part of the page. The root tsconfig includes only data/src/scripts, so this directory typechecks on its own via `bun run check:backend` — and the root config needs no edit, which keeps the frontend work conflict-free.",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "types": ["bun-types"],
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true
+  },
+  "include": ["."]
+}
