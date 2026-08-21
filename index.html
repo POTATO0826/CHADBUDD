@@ -906,6 +906,72 @@ html[data-shell="tauri"] #desk{ display: none; }
 .dslot .dst{ font-size: 14px; color: var(--t1); }
 .dslot .dsw{ font-family: var(--mono); font-size: 9.5px; color: var(--t3); }
 
+/* ── tasks on the calendar ─────────────────────────────────────────────────
+   Deadline urgency is the chip's own colour: gold deepening toward the due
+   day, alarm red only for overdue — the one place that red is allowed on the
+   calendar. Day fills keep meaning importance; the two signals never share a
+   surface. */
+.tchip{ display: flex; align-items: center; gap: 5px; padding: 3px 7px 3px 4px;
+  border-radius: 5px; cursor: grab; font-size: 0; min-width: 0;
+  background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.tchip:active{ cursor: grabbing; }
+.tchip .tk{ width: 15px; height: 15px; flex: none; border-radius: 50%; font-size: 9px;
+  display: flex; align-items: center; justify-content: center; color: var(--t3); }
+.tchip .tk:hover{ background: color-mix(in oklab, var(--foreground) 14%, transparent); color: var(--t1); }
+.tchip .tt{ font-size: 10.5px; line-height: 1.3; color: var(--t1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tchip .tlate{ font-family: var(--mono); font-size: 10px; color: var(--alarm); flex: none; }
+
+.tchip.urg-week{ background: color-mix(in oklab, var(--gold) 12%, transparent); }
+.tchip.urg-soon{ background: color-mix(in oklab, var(--gold) 22%, transparent); }
+.tchip.urg-today{ background: color-mix(in oklab, var(--gold) 36%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--gold) 45%, transparent); }
+.tchip.urg-over{ background: color-mix(in oklab, var(--alarm) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--alarm) 45%, transparent); }
+.tchip.tdone{ opacity: .4; }
+.tchip.tdone .tt{ text-decoration: line-through; }
+
+.wtasks{ display: flex; flex-direction: column; gap: 3px; margin-bottom: 5px; min-height: 4px; }
+.whead .wtc{ font-family: var(--mono); font-size: 8.5px; color: var(--gold);
+  align-self: flex-start; }
+
+/* Where a drag may land. The ring is feedback, not decoration — it must be
+   unmistakable from across the arc of a drag. */
+.dropok{ box-shadow: inset 0 0 0 2px var(--foam) !important; }
+
+/* The today contract. */
+.contract{ display: flex; align-items: baseline; gap: 10px; padding: 8px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--gold) 7%, transparent); }
+.contract.clear{ background: color-mix(in oklab, var(--foam) 7%, transparent); }
+.contract .clabel{ font-family: var(--mono); font-size: 9px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--t3); }
+.contract .cbody{ font-size: 12.5px; color: var(--t1); }
+.contract .cbody .odue{ color: var(--alarm); font-weight: 500; }
+.contract .cnote{ font-family: var(--mono); font-size: 9px; color: var(--t4); margin-left: auto; }
+
+/* The day page plan. */
+.dtasks{ display: flex; flex-direction: column; gap: 5px; padding: 11px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+.trow{ display: flex; align-items: center; gap: 7px; min-width: 0; }
+.trow .tchip{ flex: 1; min-width: 0; }
+.trow .thard{ font-family: var(--mono); font-size: 8.5px; color: var(--t4); flex: none; }
+.trow .trm{ width: 18px; height: 18px; border-radius: var(--r-sm); font-size: 9px;
+  color: var(--t4); flex: none; display: flex; align-items: center; justify-content: center; }
+.trow .trm:hover{ color: var(--alarm); background: color-mix(in oklab, var(--foreground) 8%, transparent); }
+.taddrow{ display: flex; gap: 6px; margin-top: 3px; }
+.tadd{ flex: 1; font: inherit; font-size: 11.5px; color: var(--t1);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--r-sm); padding: 5px 9px; }
+.tadd:focus{ outline: none; border-color: color-mix(in oklab, var(--foam) 40%, transparent); }
+.tadd::placeholder{ color: var(--t4); }
+.tdate{ font: inherit; font-size: 10.5px; color: var(--t2);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--r-sm); padding: 4px 7px; color-scheme: dark; }
+
 /* ── the composer: replying without leaving ── */
 .composer{ display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px;
   border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent); }

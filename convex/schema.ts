@@ -250,6 +250,28 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_client", ["clientId"]),
 
+  /**
+   * Dated work. See convex/tasks.ts for the rule that keeps this from
+   * becoming a todo list: no date by which it stops being optional, no row.
+   */
+  tasks: defineTable({
+    title: v.string(),
+    /** The deadline, and the plan. Dragging a task moves this. */
+    dueMs: v.number(),
+    clientKey: v.optional(v.string()),
+    /** The immovable fact underneath, where there is one. Drags warn past it. */
+    hardMs: v.optional(v.number()),
+    source: v.union(v.literal("advisor"), v.literal("chadbuddy")),
+    /** Dedupe key: prep:<eventId>, mature:<holdingId>. One task per fact. */
+    ref: v.optional(v.string()),
+    cite: v.optional(v.string()),
+    done: v.boolean(),
+    doneTs: v.optional(v.number()),
+    createdTs: v.number(),
+  })
+    .index("by_due", ["dueMs"])
+    .index("by_ref", ["ref"]),
+
   pairing: defineTable({
     platform: v.string(),
     state: v.union(

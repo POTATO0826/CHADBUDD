@@ -28,6 +28,8 @@ import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
 import { clientMeta, initLive, liveNotes, queueSend, sendEmail, setClientEmail } from "./live.ts";
+import type { Task } from "./tasks.ts";
+import { initTasks, taskCreate, taskDone, taskMove, taskRemove, tasks, tasksOn, urgencyOf } from "./tasks.ts";
 import { connectCalendar } from "./convexCalendar.ts";
 import { initScramble } from "./scramble.ts";
 import { POINT_GLYPH, POINT_LABEL, notesFor } from "./contact.ts";
@@ -963,18 +965,24 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
 
     const over = n - CHIPS_PER_CELL;
 
+    const cellTasks = tasksOn(at).filter((t) => !t.done);
+
     cells.push(`
       <button class="cell${isToday ? " today" : ""}${state.calDay === at ? " on" : ""}${weekend ? " wk" : ""}"
-        data-act="cal-day" data-day="${at}"
+        data-act="cal-day" data-day="${at}" data-drop-day="${at}"
         style="--fill:${impTint(imp)}"
         aria-current="${isToday ? "date" : "false"}"
-        aria-label="${e(new Date(at).toDateString())}, ${n} ${n === 1 ? "entry" : "entries"}">
+        aria-label="${e(new Date(at).toDateString())}, ${n} ${n === 1 ? "entry" : "entries"}, ${cellTasks.length} task${cellTasks.length === 1 ? "" : "s"}">
         <span class="top">
           <span class="dn">${d}</span>
           ${unrated ? `<span class="unm" title="Has unrated meetings">?</span>` : ""}
           ${n ? `<span class="cn">${n}</span>` : ""}
         </span>
-        <span class="chips">${chips}${over > 0 ? `<span class="more">+${over} more</span>` : ""}</span>
+        <span class="chips">
+          ${cellTasks.slice(0, 2).map(taskChip).join("")}
+          ${cellTasks.length > 2 ? `<span class="more">+${cellTasks.length - 2} tasks</span>` : ""}
+          ${chips}${over > 0 ? `<span class="more">+${over} more</span>` : ""}
+        </span>
       </button>`);
   }
 
@@ -1077,6 +1085,30 @@ function dayBlocks(dayMs: number, events: CalendarEvent[]): string {
 
 const DAY_MS = 86_400_000;
 
+/**
+ * "Prepare a day before", made mechanical.
+ *
+ * Rating a meeting key is the advisor saying this one deserves preparation —
+ * so the preparation appears as a dated task the day before, with the meeting
+ * itself as the hard deadline underneath. One per meeting, ref-deduped; done
+ * or dragged, it is theirs from then on.
+ */
+function prepTaskFor(eventId: string): void {
+  const ev = findCalEvent(eventId);
+  if (!ev || !BIG.has(ev.kind)) return;
+  const start = Date.parse(ev.at);
+  if (start <= nowMs()) return;
+  const dayBefore = Math.max(startOfDay(nowMs()), startOfDay(start) - 86_400_000);
+  void taskCreate({
+    title: `Prep — ${ev.title}`,
+    dueMs: dayBefore + 12 * 3_600_000,
+    hardMs: start,
+    ...(ev.withClient ? { clientKey: ev.withClient } : {}),
+    ref: `prep:${ev.id}`,
+    source: "chadbuddy",
+  }).then(() => render());
+}
+
 function findCalEvent(id: string): CalendarEvent | undefined {
   return (
     calendarWeek().find((x) => x.id === id) ??
@@ -1095,6 +1127,68 @@ const railWhenFmt = new Intl.DateTimeFormat("en-GB", {
   weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   hour12: false, timeZone: "Asia/Kuala_Lumpur",
 });
+
+/**
+ * A task, wherever the calendar draws one.
+ *
+ * The chip is the drag handle; the circle is the done toggle. Urgency is the
+ * chip's own colour — closer to the deadline, darker gold; overdue wears the
+ * alarm red nothing else on the calendar is allowed to. Day fills keep
+ * meaning importance: two signals, two surfaces, no fight.
+ */
+function taskChip(t: Task): string {
+  const late = t.hardMs !== undefined && startOfDay(t.dueMs) > startOfDay(t.hardMs);
+  return `
+    <div class="tchip urg-${urgencyOf(t)}${t.done ? " tdone" : ""}" draggable="true"
+      data-task="${e(t.id)}"
+      title="${e(t.title)}${late ? " — planned AFTER the hard deadline" : ""}">
+      <button class="tk" data-act="task-done" data-task="${e(t.id)}"
+        aria-label="${t.done ? "Reopen" : "Mark done"}">${t.done ? "✓" : "○"}</button>
+      <span class="tt">${e(t.title)}</span>
+      ${late ? `<span class="tlate" title="Past the hard deadline underneath">!</span>` : ""}
+    </div>`;
+}
+
+/**
+ * The today contract — the reason the table exists.
+ *
+ * What is due today is finite and countable: finish it and you are genuinely
+ * free, not "free until you remember something". Thirty things can be in
+ * flight; only these are load.
+ */
+function todayContract(): string {
+  const today = startOfDay(nowMs());
+  const meets = [...calendarWeek(), ...calendarDay()]
+    .filter(
+      (ev, i, arr) =>
+        arr.findIndex((x) => x.id === ev.id) === i &&
+        BIG.has(ev.kind) &&
+        ev.booking !== "cancelled" &&
+        startOfDay(Date.parse(ev.at)) === today,
+    );
+  const due = tasksOn(today);
+  const open = due.filter((t) => !t.done).length;
+  const doneN = due.length - open;
+  const overdue = tasks().filter((t) => !t.done && startOfDay(t.dueMs) < today).length;
+
+  const parts = [
+    `${meets.length} meeting${meets.length === 1 ? "" : "s"}`,
+    `${open} task${open === 1 ? "" : "s"} due`,
+    ...(doneN > 0 ? [`${doneN} done`] : []),
+    ...(overdue > 0 ? [`<b class="odue">${overdue} overdue</b>`] : []),
+  ];
+
+  return `
+    <div class="contract${open === 0 && overdue === 0 ? " clear" : ""}">
+      <span class="clabel">today</span>
+      <span class="cbody">${parts.join(" · ")}</span>
+      <span class="cnote">${
+        open === 0 && overdue === 0
+          ? "clear — finish the meetings and nothing slips today"
+          : "finish these and you are genuinely free"
+      }</span>
+    </div>`;
+}
 
 function weekTitle(anchor: number): string {
   return `${shortDayFmt.format(anchor)} – ${shortDayFmt.format(anchor + 6 * DAY_MS)}`;
@@ -1172,11 +1266,14 @@ function weekGrid(anchor: number): string {
       })
       .join("");
 
+    const dayTasks = tasksOn(day);
     return `
-      <div class="wcol${day === today ? " today" : ""}">
+      <div class="wcol${day === today ? " today" : ""}" data-drop-day="${day}">
         <button class="whead" data-act="cal-day" data-day="${day}">
           <span class="wd">${DOW[i]}</span><span class="wn">${new Date(day).getDate()}</span>
+          ${dayTasks.filter((t) => !t.done).length ? `<span class="wtc">${dayTasks.filter((t) => !t.done).length}</span>` : ""}
         </button>
+        <div class="wtasks">${dayTasks.map(taskChip).join("")}</div>
         <div class="wtrack">${blocks}</div>
       </div>`;
   }).join("");
@@ -1198,6 +1295,7 @@ function weekMain(): string {
       <button class="ico" data-act="wk-step" data-by="1" aria-label="Next week">›</button>
       <button class="btn" data-act="cal-over" style="margin-left:auto">Month ⌗</button>
     </div>
+    ${todayContract()}
     ${weekGrid(anchor)}
     ${IMP_LEGEND}`;
 }
@@ -1388,7 +1486,38 @@ function dayPage(dayMs: number): string {
       </div>
       <div class="daycols2">
         <div class="dayside sc">${dayBlocks(dayMs, events)}</div>
-        <div class="dayslots sc">${slots || `<div class="empty"><span class="hero-h d" style="font-size:19px">No meetings</span><span class="mt">Own time only. Worth protecting.</span></div>`}</div>
+        <div class="dayslots sc">
+          ${dayPlan(dayMs)}
+          ${slots || `<div class="empty"><span class="hero-h d" style="font-size:19px">No meetings</span><span class="mt">Own time only. Worth protecting.</span></div>`}
+        </div>
+      </div>
+    </div>`;
+}
+
+/**
+ * The day's dated work, checkable and extendable in place.
+ *
+ * The quick-add asks for exactly two things — what, and by when — because a
+ * task here is only legal with a date. Anything undated belongs on the desk,
+ * and the desk already has it.
+ */
+function dayPlan(dayMs: number): string {
+  const list = tasksOn(dayMs);
+  const iso = new Date(startOfDay(dayMs) + 12 * 3_600_000).toISOString().slice(0, 10);
+  return `
+    <div class="dtasks" data-drop-day="${startOfDay(dayMs)}">
+      <span class="lbl">the plan — finish these and the day is clear</span>
+      ${list.map((t) => `
+        <div class="trow${t.done ? " tdone" : ""}">
+          ${taskChip(t)}
+          ${t.hardMs !== undefined ? `<span class="thard">hard: ${e(shortDayFmt.format(t.hardMs))}</span>` : ""}
+          ${t.clientKey ? `<button class="btn sm" data-act="open-client" data-client="${t.clientKey}">${e(clientById(t.clientKey.toLowerCase()).name.split(" ")[0]!)}</button>` : ""}
+          <button class="trm" data-act="task-remove" data-task="${e(t.id)}" title="Remove">✕</button>
+        </div>`).join("")}
+      <div class="taddrow">
+        <input class="tadd" id="taskbox" type="text" placeholder="Add dated work — what must be done…">
+        <input class="tdate" id="taskdate" type="date" value="${iso}">
+        <button class="btn acc sm" data-act="task-add">Add</button>
       </div>
     </div>`;
 }
@@ -1797,7 +1926,14 @@ function maturingRow(row: MaturingRow, urgent: boolean): string {
                   : `<div class="dfacts"><span class="df"><i>renews</i>${e(row.matureText)}</span></div>`
               }
               ${deskDraft(row.id, row.draft)}
-              <div class="ctxacts"><button class="btn acc" data-act="open-client" data-client="${row.client}">Open ${e(row.clientName.split(" ")[0]!)}</button></div>
+              <div class="ctxacts">
+                <button class="btn acc" data-act="open-client" data-client="${row.client}">Open ${e(row.clientName.split(" ")[0]!)}</button>
+                <button class="btn" data-act="task-plan"
+                  data-title="Reach out to ${e(row.clientName.split(" ")[0]!)} — ${e(row.holding.name)} matures"
+                  data-due="${startOfDay(nowMs() + (row.daysLeft - 1) * 86_400_000) + 12 * 3_600_000}"
+                  data-hard="${startOfDay(nowMs() + row.daysLeft * 86_400_000)}"
+                  data-client="${row.client}" data-ref="mature:${e(row.holding.id)}">Plan it → calendar</button>
+              </div>
             </div>`
           : ""
       }
@@ -3031,7 +3167,10 @@ island.addEventListener("click", (ev) => {
         void calendarSource()
           .annotate(id, { importance: next })
           .then(refreshCalendar)
-          .then(render)
+          .then(() => {
+            if (next === "key") prepTaskFor(id);
+            render();
+          })
           .catch((err) => console.error("[chadbuddy] could not rate", id, err));
       }
       return;
@@ -3045,7 +3184,10 @@ island.addEventListener("click", (ev) => {
         void calendarSource()
           .annotate(id, { importance: imp })
           .then(refreshCalendar)
-          .then(render)
+          .then(() => {
+            if (imp === "key") prepTaskFor(id);
+            render();
+          })
           .catch((err) => console.error("[chadbuddy] could not rate", id, err));
       }
       return;
@@ -3072,7 +3214,10 @@ island.addEventListener("click", (ev) => {
             importance: ev?.importance ?? (ev ? suggestImportance(ev) : "routine"),
             ...(prepUser !== "" || ev?.prepUser ? { prepUser } : {}),
           });
-          if (act === "rail-confirm") await calendarSource().settle(id, "confirmed");
+          if (act === "rail-confirm") {
+            await calendarSource().settle(id, "confirmed");
+            if ((ev?.importance ?? (ev ? suggestImportance(ev) : "routine")) === "key") prepTaskFor(id);
+          }
         }
         await refreshCalendar();
         render();
@@ -3141,6 +3286,50 @@ island.addEventListener("click", (ev) => {
           })
           .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       }
+      return;
+    }
+
+    case "task-done": {
+      const id = hit.dataset.task;
+      const t = id ? tasks().find((x) => x.id === id) : undefined;
+      if (id && t) void taskDone(id, !t.done).then(() => render());
+      return;
+    }
+
+    case "task-remove": {
+      const id = hit.dataset.task;
+      if (id) void taskRemove(id).then(() => render());
+      return;
+    }
+
+    /* The quick-add: what, and by when. Undated work is refused by shape —
+       the date input always has a value. */
+    case "task-add": {
+      const box = document.getElementById("taskbox") as HTMLInputElement | null;
+      const date = document.getElementById("taskdate") as HTMLInputElement | null;
+      const title = box?.value.trim() ?? "";
+      const when = date?.value ? Date.parse(`${date.value}T12:00:00`) : NaN;
+      if (title === "" || !Number.isFinite(when)) return;
+      void taskCreate({ title, dueMs: when, source: "advisor" }).then(() => render());
+      return;
+    }
+
+    /* The desk handing dated work to the calendar. */
+    case "task-plan": {
+      const title = hit.dataset.title ?? "";
+      const due = Number(hit.dataset.due ?? "");
+      if (title === "" || !Number.isFinite(due)) return;
+      void taskCreate({
+        title,
+        dueMs: due,
+        ...(hit.dataset.client ? { clientKey: hit.dataset.client as ClientKey } : {}),
+        ...(hit.dataset.hard ? { hardMs: Number(hit.dataset.hard) } : {}),
+        ...(hit.dataset.ref ? { ref: hit.dataset.ref } : {}),
+        source: "chadbuddy",
+      }).then(() => {
+        showNotif({ kind: "reminder", client: (hit.dataset.client as ClientKey) ?? null, title: "Planned", body: title.slice(0, 50), meta: "on the calendar", tag: "TASK", tone: "butter", dwell: 5000 });
+        render();
+      });
       return;
     }
 
@@ -3301,6 +3490,54 @@ island.addEventListener("click", (ev) => {
    it filters as you type, the composer because the send button enables on the
    first non-space character — and both name themselves for refocus so the
    caret survives the swap. */
+/* ── drag and drop for tasks ─────────────────────────────────────────
+   Native HTML5 DnD, delegated from the island so it survives every render.
+   No render fires during a drag — hover feedback is a class toggled on the
+   real DOM, and the one render happens after the drop commits. */
+let dragTaskId: string | null = null;
+let dropHover: Element | null = null;
+
+island.addEventListener("dragstart", (ev) => {
+  const chip = (ev.target as HTMLElement).closest?.("[data-task]");
+  if (!chip) return;
+  dragTaskId = (chip as HTMLElement).dataset["task"] ?? null;
+  if (ev.dataTransfer) {
+    ev.dataTransfer.setData("text/plain", dragTaskId ?? "");
+    ev.dataTransfer.effectAllowed = "move";
+  }
+});
+
+island.addEventListener("dragover", (ev) => {
+  if (dragTaskId === null) return;
+  const zone = (ev.target as HTMLElement).closest?.("[data-drop-day]");
+  if (!zone) return;
+  ev.preventDefault();
+  if (dropHover !== zone) {
+    dropHover?.classList.remove("dropok");
+    zone.classList.add("dropok");
+    dropHover = zone;
+  }
+});
+
+island.addEventListener("drop", (ev) => {
+  const zone = (ev.target as HTMLElement).closest?.("[data-drop-day]");
+  dropHover?.classList.remove("dropok");
+  dropHover = null;
+  if (!zone || dragTaskId === null) return;
+  ev.preventDefault();
+  const day = Number((zone as HTMLElement).dataset["dropDay"]);
+  const id = dragTaskId;
+  dragTaskId = null;
+  // Noon, not midnight: day-granular, and immune to timezone edges.
+  if (Number.isFinite(day)) void taskMove(id, day + 12 * 3_600_000).then(() => render());
+});
+
+island.addEventListener("dragend", () => {
+  dropHover?.classList.remove("dropok");
+  dropHover = null;
+  dragTaskId = null;
+});
+
 island.addEventListener("input", (ev) => {
   const el = ev.target as HTMLInputElement;
   const act = el.dataset.act;
@@ -3497,6 +3734,11 @@ const live = initLive(
        block it creates arrives back through the calendar subscription. */
   },
 );
+
+/* Tasks after live is decided: the seam subscribes to Convex when there is
+   a client to subscribe to, and falls back to localStorage when there is not
+   — the browser demo needs no backend. */
+initTasks(render);
 
 if (live) {
   /* The day, from Google rather than the seed file.
