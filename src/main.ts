@@ -2156,12 +2156,16 @@ function render(): void {
   }
   if (state.st === "open") {
     const keep = new Map<string, number>();
-    for (const id of ["msgs", "asklog", "daylist", "dayctx", "keynotes", "dlist"]) {
+    /* dashbody is the page scroll itself. It joined this list with the desk —
+       the first page that scrolls — because a full innerHTML swap resets
+       scrollTop to 0, and expanding a row three screens down must not
+       teleport anyone back to the greeting. */
+    for (const id of ["dashbody", "msgs", "asklog", "daylist", "dayctx", "keynotes", "dlist"]) {
       const el = document.getElementById(id);
       if (el) keep.set(id, el.scrollTop);
     }
 
-    need("l-open").innerHTML = `<div class="dash">${header()}<div class="body sc">${body()}</div>${footer()}</div>`;
+    need("l-open").innerHTML = `<div class="dash">${header()}<div id="dashbody" class="body sc">${body()}</div>${footer()}</div>`;
 
     /* The funnel is React and this render just replaced the subtree it was in.
        Re-parenting the same node rather than recreating it is what keeps the
