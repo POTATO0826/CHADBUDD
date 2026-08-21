@@ -17,7 +17,7 @@
 //! what separates it from whatever is behind.
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 
@@ -31,18 +31,23 @@ struct HotRect {
 }
 
 impl HotRect {
-    fn contains(&self, x: f64, y: f64) -> bool {
-        x >= self.x && x <= self.x + self.w && y >= self.y && y <= self.y + self.h
+    /// Whether the cursor is inside, with the edges pushed out by `slack`.
+    fn contains_within(&self, x: f64, y: f64, slack: f64) -> bool {
+        x >= self.x - slack
+            && x <= self.x + self.w + slack
+            && y >= self.y - slack
+            && y <= self.y + self.h + slack
     }
 }
 
-struct Hot(Arc<Mutex<HotRect>>);
+/// The live rectangle, plus when the page last vouched for it.
+struct Hot(Arc<Mutex<(HotRect, Instant)>>);
 
 /// Called by the page whenever the island changes size or state.
 #[tauri::command]
 fn set_hot_rect(x: f64, y: f64, w: f64, h: f64, hot: tauri::State<'_, Hot>) {
     if let Ok(mut r) = hot.0.lock() {
-        *r = HotRect { x, y, w, h };
+        *r = (HotRect { x, y, w, h }, Instant::now());
     }
 }
 
@@ -86,20 +91,60 @@ fn set_content_protected(protected: bool, app: AppHandle) -> Result<bool, String
     Ok(protected)
 }
 
+/// Take keyboard focus.
+///
+/// The window is created with `focus: false` so the island never steals the
+/// caret from whatever the advisor is typing in. That is right for a pill
+/// sitting quietly at the top of the screen and wrong the moment it becomes a
+/// full dashboard: Escape has to close it, and a window without focus never
+/// receives the keystroke — it goes to the editor behind instead.
+///
+/// So focus is taken on open and never on idle, alert or peek.
+#[tauri::command]
+fn focus_window(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "no window labelled `main`".to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
+}
+
+/// How long a rectangle stays trusted without the page renewing it.
+///
+/// The page re-sends every two seconds. If three of those go missing the page
+/// has crashed, reloaded, or wedged — and whatever it last claimed is still
+/// being enforced. On a transparent, always-on-top, full-screen window that
+/// means every click on the machine disappearing into a window the user cannot
+/// see and cannot dismiss. Treating silence as a fault and letting the cursor
+/// through costs a moment of hover responsiveness and buys back the desktop.
+const STALE_AFTER: Duration = Duration::from_secs(6);
+
+/// Deadband on the capture boundary, in CSS pixels.
+///
+/// Entering is decided on the true edge; leaving needs this much further. That
+/// asymmetry is the whole point. Without it a cursor resting on the boundary
+/// crosses it on its own — hand tremor is larger than the 60ms sample grid —
+/// and every crossing restyles the window between capturing and transparent,
+/// which the compositor shows as a flicker. It is worst along the bottom edge,
+/// where the window stops and the taskbar begins, because that is a boundary
+/// people deliberately move the pointer across.
+const EDGE_SLACK: f64 = 8.0;
+
 /// How often to check where the cursor is. 60ms is under one frame of hover
 /// latency at 16ms/frame — imperceptible when entering the island, and cheap.
 const POLL: Duration = Duration::from_millis(60);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let shared: Arc<Mutex<HotRect>> = Arc::new(Mutex::new(HotRect::default()));
+    let shared: Arc<Mutex<(HotRect, Instant)>> =
+        Arc::new(Mutex::new((HotRect::default(), Instant::now())));
 
     tauri::Builder::default()
         .manage(Hot(shared.clone()))
         .invoke_handler(tauri::generate_handler![
             set_hot_rect,
             quit,
-            set_content_protected
+            set_content_protected,
+            focus_window
         ])
         .setup(move |app| {
             let window = app
@@ -125,7 +170,19 @@ pub fn run() {
                     let x = (cursor.x - f64::from(origin.x)) / scale;
                     let y = (cursor.y - f64::from(origin.y)) / scale;
 
-                    let inside = rect.lock().map(|r| r.contains(x, y)).unwrap_or(false);
+                    // A rectangle the page has stopped renewing is not trusted:
+                    // `inside` goes false, the window ignores the cursor, and the
+                    // desktop keeps working whatever went wrong upstairs.
+                    // Sticky once captured: leaving costs EDGE_SLACK more travel
+                    // than entering did.
+                    let slack = if ignoring { 0.0 } else { EDGE_SLACK };
+                    let inside = rect
+                        .lock()
+                        .map(|guard| {
+                            let (r, at) = *guard;
+                            at.elapsed() < STALE_AFTER && r.contains_within(x, y, slack)
+                        })
+                        .unwrap_or(false);
 
                     // `inside == ignoring` is exactly the two cases that need a
                     // flip: over the island while ignoring, or off it while not.

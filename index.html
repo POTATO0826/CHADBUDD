@@ -344,7 +344,23 @@ html[data-shell="tauri"] #desk{ display: none; }
   position: fixed; z-index: 10; top: 10px; left: 0; right: 0;
   display: flex; justify-content: center;
   pointer-events: none;
+  /* Moved by a translate rather than by left/top, so the flex centring above
+     stays the origin the pill is offset from — see src/drag.ts. */
+  will-change: transform;
 }
+/* The drag offset belongs to the compact states only.
+
+   The open dashboard is full-screen, and a full-screen element carrying a
+   translate is a full-screen element partly off the screen — while the shell
+   is told the whole viewport is interactive. That combination is an invisible
+   sheet that captures every click on the machine including the ones that would
+   dismiss it. Declared here rather than in the drag code so it cannot
+   desynchronise: there is no state change to remember to handle. */
+#stage:has(> .island[data-state="open"]){ transform: none !important; }
+/* No transition while a pointer is holding it: the island would lag behind the
+   cursor by the length of the easing curve, which reads as the drag slipping. */
+.island[data-dragging="on"]{ cursor: grabbing; }
+.island[data-dragging="on"] *{ pointer-events: none; }
 /* The shell is one box-shadow expression in every state, assembled from three
    named parts so a state only has to say which edge it wants:
 
@@ -669,6 +685,93 @@ html[data-shell="tauri"] #desk{ display: none; }
 .urgent .nm{ font-family: var(--display); font-size: 19px; font-weight: 500; letter-spacing: -.022em; }
 .urgent .sub{ font-family: var(--mono); font-size: 10px; color: var(--t3); }
 .urgent .sc-n{ margin-left: auto; font-family: var(--mono); font-size: 11px; padding: 7px 12px; border-radius: 999px; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 22%, transparent); flex: none; }
+
+/* ── next up ──────────────────────────────────────────────────────
+   Same footprint and same furniture as .urgent, which it replaces in the
+   bento's first cell — grain, a corner glow, a flag, a bottom row. What
+   changed is what earns the slot: the countdown is the largest thing in the
+   tile, because at noon on a Monday the useful number is how long until you
+   have to be somewhere, not a composite score the clients page already sorts
+   by. */
+/* A wrapper, so the stepper can be a sibling of the clickable face rather
+   than a button nested inside one. */
+.upnext{ position: relative; display: flex; min-height: 0; }
+.upnext .face{ border-radius: var(--r-xl); overflow: hidden; position: relative;
+  background: var(--tile); box-shadow: var(--edge); padding: 16px;
+  display: flex; flex-direction: column; text-align: left; width: 100%;
+  transition: background .16s var(--ease), box-shadow .16s var(--ease); }
+.upnext .face:hover{ background: var(--tile-2); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 30%, transparent), var(--lift-2); }
+.upnext .face .grain{ position: absolute; inset: 0; background-image: repeating-linear-gradient(135deg,color-mix(in oklab, var(--foreground) 4.5%, transparent) 0 1px,transparent 1px 8px); }
+.upnext .face .glow{ position: absolute; right: -40px; top: -40px; width: 200px; height: 200px; }
+.upnext .face .flag{ position: relative; padding-right: 96px; font-family: var(--label); font-weight: 500; font-size: 9px; letter-spacing: .3em;
+  text-transform: uppercase; color: var(--t4); }
+/* The number the tile exists for. Tabular so it cannot reflow between states. */
+.upnext .face .cd{ position: relative; font-family: var(--display); font-size: 27px; font-weight: 500;
+  letter-spacing: -.03em; line-height: 1.05; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.upnext .face .btm{ position: relative; margin: auto 0 0; display: flex; align-items: flex-end; gap: 10px; }
+.upnext .face .nm{ font-family: var(--display); font-size: 16px; font-weight: 500; letter-spacing: -.02em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.upnext .face .sub{ font-family: var(--mono); font-size: 9.5px; color: var(--t3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+/* The stepper. Sat top-right where the flag has room beside it, rather than
+   bottom-right over the name — a long client name would have had to be
+   truncated to make space for a control that is only occasionally used. */
+.upnext .step{ position: absolute; top: 12px; right: 12px; z-index: 1;
+  display: flex; align-items: center; gap: 2px; padding: 3px;
+  border-radius: 999px; background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 12%, transparent); }
+.upnext .ar{ width: 22px; height: 22px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1; color: var(--t2);
+  transition: background .16s var(--ease), color .16s var(--ease); }
+.upnext .ar:hover:not(:disabled){ background: color-mix(in oklab, var(--primary) 26%, transparent); color: var(--t1); }
+/* Disabled rather than hidden: the control keeps its width, so the tile does
+   not resize as you reach either end of the day. */
+.upnext .ar:disabled{ opacity: .3; cursor: default; }
+.upnext .pos{ font-family: var(--mono); font-size: 9px; color: var(--t4);
+  padding: 0 3px; font-variant-numeric: tabular-nums; }
+/* What you are inside right now — the other half of knowing the next one is close. */
+.upnext .face .nowline{ position: relative; margin-top: 9px; padding-top: 8px; font-family: var(--mono); font-size: 9px;
+  color: var(--t4); border-top: 1px solid var(--hair); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── the day page ─────────────────────────────────────────────────
+   Two columns: the plan on the left at a fixed width so the times form a
+   column the eye can run down, the context for one slot on the right. */
+.daycols{ display: grid; grid-template-columns: 330px 1fr; gap: 12px; flex: 1; min-height: 0; }
+.daylist{ display: flex; flex-direction: column; gap: 3px; overflow-y: auto; min-height: 0;
+  border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); padding: 10px; }
+.slot{ display: flex; align-items: center; gap: 10px; padding: 9px 8px; width: 100%; text-align: left;
+  border-radius: var(--r-md); transition: background .16s var(--ease); }
+.slot:hover{ background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.slot.on{ background: color-mix(in oklab, var(--primary) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 34%, transparent); }
+/* Done is not deleted: the shape of the day so far is why the next one matters. */
+.slot.past{ opacity: .45; }
+.slot .tm{ font-family: var(--mono); font-size: 10px; color: var(--t4); width: 34px; flex: none; font-variant-numeric: tabular-nums; }
+.slot .gl{ width: 24px; height: 24px; border-radius: var(--r-sm); flex: none;
+  display: flex; align-items: center; justify-content: center; font-size: 11px; }
+.slot .col{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.slot .ttl{ font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slot .mt{ font-family: var(--mono); font-size: 9px; color: var(--t4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.dayctx{ overflow-y: auto; min-height: 0; border-radius: var(--r-xl);
+  background: var(--tile); box-shadow: var(--edge); padding: 22px 24px; }
+.ctx{ display: flex; flex-direction: column; gap: 14px; }
+.ctxhead{ display: flex; align-items: center; gap: 10px; }
+.ctx .kind{ font-family: var(--mono); font-size: 9px; letter-spacing: .09em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 999px; }
+.ctx .when{ margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--t4); }
+.ctx .whereline{ font-family: var(--mono); font-size: 10px; color: var(--t3); margin-top: -8px; }
+.ctx .prose{ font-size: 13px; line-height: 1.55; color: var(--t2); max-width: 62ch; }
+.ctx .citerow{ display: flex; flex-wrap: wrap; gap: 5px; }
+.ctx .prep{ font-family: var(--mono); font-size: 10.5px; color: var(--t2); }
+/* Obligations get the dashed treatment the rest of the app gives an absence. */
+.ctx .owe{ display: flex; flex-direction: column; gap: 6px; padding: 11px 13px; border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent); }
+.ctx .ow{ font-size: 11.5px; color: var(--t2); line-height: 1.45; }
+.ctx .ow em{ font-family: var(--mono); font-size: 9.5px; font-style: normal; color: var(--t4); }
+.ctx .ctxacts{ display: flex; gap: 8px; margin-top: 2px; }
 
 .bars{ flex: 1; display: flex; align-items: flex-end; gap: 9px; padding-top: 4px; }
 .bars .col{ flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; justify-content: flex-end; position: relative; }

@@ -21,8 +21,11 @@ import {
 } from "./derive.ts";
 import { openDays } from "./ledger.ts";
 import type { LedgerEntry } from "./ledger.ts";
+import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
+import type { AgendaSlot } from "./agenda.ts";
 import { initScramble } from "./scramble.ts";
-import { isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
+import { initDrag } from "./drag.ts";
+import { focusWindow, isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
 
 /* ── tiny helpers ────────────────────────────────────────────────── */
 
@@ -53,7 +56,7 @@ const tint = (colour: string, pct: number): string =>
 /* ── state ───────────────────────────────────────────────────────── */
 
 type IslandState = "idle" | "alert" | "call" | "peek" | "open";
-type Page = "home" | "clients" | QueueKind;
+type Page = "home" | "clients" | "agenda" | QueueKind;
 type Mode = "profile" | "record";
 type Filter = "all" | "client" | "flagged";
 /** The clients page is a grid of cards until one of them is opened. */
@@ -77,6 +80,10 @@ interface State {
   lit: string | null;
   /** Clients page: the grid of cards, or one client opened. */
   cview: ClientView2;
+  /** Dashboard tile: index into bigSlots being shown. Null follows nextUp. */
+  up: number | null;
+  /** Agenda page: which slot's context is open. Defaults to the next one. */
+  slot: string | null;
   /** Live text in the chat-history search box. */
   q: string;
   /** Ask-the-agent transcript, per client — switching clients keeps yours. */
@@ -100,6 +107,8 @@ const state: State = {
   filter: "all",
   lit: null,
   cview: "grid",
+  up: null,
+  slot: null,
   q: "",
   ask: {},
   draft: "",
@@ -316,6 +325,7 @@ function citeChips(ids: string[], client: ClientKey): string {
 
 const NAV: Array<{ page: Page; label: string; count: number }> = [
   { page: "home", label: "overview", count: 0 },
+  { page: "agenda", label: "day", count: dayTotals.left },
   { page: "clients", label: "clients", count: totals.clients },
   { page: "gifts", label: "gifts", count: queues.gifts.rows.filter((r) => r.btn !== "").length },
   { page: "calls", label: "calls", count: queues.calls.rows.filter((r) => r.btn !== "").length },
@@ -399,6 +409,185 @@ const onHold = byIntent("hold");
 const blocked = byIntent("blocked");
 
 const pending = approvals.filter((a) => !a.done);
+
+/* ── the day ─────────────────────────────────────────────────────
+   The top-left tile used to name the most urgent client. That is a fact the
+   clients page already leads with — it sorts silent churn first — so the most
+   valuable slot on the dashboard was spending itself on a repeat. What it did
+   not answer is the question actually being asked at noon on a Monday: where
+   do I have to be next, and what do I need to know when I walk in. */
+
+/** A glyph per kind, so a row is never colour alone. */
+const SLOT_GLYPH: Record<string, string> = {
+  meeting: "◍", call: "☏", travel: "→", break: "◔", focus: "✦", admin: "▤",
+};
+
+const hhmmFmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kuala_Lumpur" });
+const hhmmOf = (ms: number): string => hhmmFmt.format(ms);
+
+/** A slot borrows its client's status colour; the advisor's own time stays quiet. */
+function slotTone(s: AgendaSlot): Tone {
+  if (s.kind === "break" || s.kind === "travel") return "good";
+  const c = s.withClient ? clientById(s.withClient.toLowerCase()) : null;
+  return c ? c.tone : "butter";
+}
+
+/**
+ * The next commitment, counted down — and steppable.
+ *
+ * Travel and breaks are left out on purpose: "next up: drive to Bangsar" is
+ * true and useless. What is wanted from across the room is the next thing a
+ * person is waiting for you at, which is why the arrows walk `bigSlots` rather
+ * than the whole day.
+ *
+ * The arrows are siblings of the face rather than children of it, because a
+ * button inside a button is invalid and the delegated click handler would have
+ * had to guess which one was meant. `closest("[data-act]")` then resolves an
+ * arrow to the arrow and everything else to the face, with no stopPropagation
+ * anywhere.
+ *
+ * Whatever the face is showing is what the face opens — `data-slot` is written
+ * from the same slot the countdown describes, so stepping to Ms Tan and
+ * clicking lands on Ms Tan.
+ */
+function upNextTile(): string {
+  const list = bigSlots;
+  const now = happeningNow;
+
+  if (!list.length) {
+    return `
+      <div class="upnext"><button class="face" data-act="page" data-page="agenda">
+        <span class="grain" aria-hidden="true"></span>
+        <span class="flag">the day</span>
+        <span class="btm"><span style="display:flex;flex-direction:column;gap:3px;min-width:0">
+          <span class="nm">Nothing scheduled</span>
+          <span class="sub">no commitments on the book today</span>
+        </span></span>
+      </button></div>`;
+  }
+
+  const at = Math.min(list.length - 1, Math.max(0, state.up ?? nextUpIndex));
+  const s = list[at]!;
+  const who = s.withClient ? clientById(s.withClient.toLowerCase()).name : (s.withName ?? s.where);
+  const tone = slotTone(s);
+
+  // The flag has to say which way you have stepped, or a past meeting reads as
+  // the next one with a strange countdown attached to it.
+  const flag = at === nextUpIndex ? "next up" : s.past ? "earlier today" : "later today";
+
+  const arrow = (dir: number, glyph: string, label: string): string => {
+    const to = at + dir;
+    const off = to < 0 || to > list.length - 1;
+    return `<button class="ar" data-act="up-step" data-dir="${dir}"${off ? " disabled" : ""}
+      aria-label="${e(label)}">${glyph}</button>`;
+  };
+
+  return `
+    <div class="upnext">
+      <button class="face" data-act="open-slot" data-slot="${e(s.id)}"
+        aria-label="${e(flag)}: ${e(s.title)}, ${e(untilText(s.inMinutes))}. Open its context.">
+        <span class="grain" aria-hidden="true"></span>
+        <span class="glow" aria-hidden="true" style="background:radial-gradient(closest-side, ${tint(markOf(tone), 20)}, transparent)"></span>
+        <span class="flag">${e(flag)}</span>
+        <span class="cd" style="color:${inkOf(tone)}">${e(untilText(s.inMinutes))}</span>
+        <span class="btm">
+          <span style="display:flex;flex-direction:column;gap:3px;min-width:0">
+            <span class="nm">${e(who)}</span>
+            <span class="sub">${e(s.clock)} · ${e(s.title)}</span>
+          </span>
+        </span>
+        ${now ? `<span class="nowline">now · ${e(now.title.toLowerCase())} until ${e(hhmmOf(now.end))}</span>` : ""}
+      </button>
+      <span class="step">
+        ${arrow(-1, "‹", "Earlier commitment")}
+        <span class="pos">${at + 1}/${list.length}</span>
+        ${arrow(1, "›", "Later commitment")}
+      </span>
+    </div>`;
+}
+
+/** One row in the day list. */
+function slotRow(s: AgendaSlot, on: boolean): string {
+  const tone = slotTone(s);
+  const who = s.withClient ? clientById(s.withClient.toLowerCase()).name : s.withName;
+  return `
+    <button class="slot${on ? " on" : ""}${s.past ? " past" : ""}" data-act="open-slot" data-slot="${e(s.id)}">
+      <span class="tm">${e(s.clock)}</span>
+      <span class="gl" style="color:${inkOf(tone)};background:${tint(markOf(tone), 14)}">${e(SLOT_GLYPH[s.kind] ?? "◍")}</span>
+      <span class="col">
+        <span class="ttl">${e(s.title)}</span>
+        <span class="mt">${who ? `${e(who)} · ` : ""}${s.minutes} min${s.live ? " · now" : ""}</span>
+      </span>
+    </button>`;
+}
+
+/**
+ * The context panel.
+ *
+ * Purpose is the advisor's own framing, so it is allowed to be prose. Nothing
+ * under it is: the citations came through the same verbatim gate the ledger
+ * uses, and "where the purpose stands" is that client's measured state rather
+ * than a sentence about how the relationship feels.
+ */
+function slotContext(s: AgendaSlot): string {
+  const c = s.withClient ? clientById(s.withClient.toLowerCase()) : null;
+  const tone = slotTone(s);
+  const lat = c?.score.signals.find((x) => x.name === "latency");
+  const qs = c?.score.signals.find((x) => x.name === "questions");
+
+  const progress = c
+    ? `
+      <div class="sect">
+        <span class="lbl">where the purpose stands</span>
+        <div class="fact"><span class="g">◆</span><span class="k">Open items</span><span class="d"></span>
+          <span class="v" style="color:${c.open.length ? inkOf(c.ledgerTone) : "var(--t1)"}">${e(c.ledgerLabel)}</span></div>
+        <div class="fact"><span class="g">◷</span><span class="k">Median reply</span><span class="d"></span>
+          <span class="v">${e(lat ? lat.recent : "—")}</span></div>
+        <div class="fact"><span class="g">?</span><span class="k">Questions, 30d</span><span class="d"></span>
+          <span class="v">${e(qs ? qs.recent : "—")}</span></div>
+        <div class="fact"><span class="g">✦</span><span class="k">Status</span><span class="d"></span>
+          <span class="v" style="color:${inkOf(c.tone)}">${e(c.statusWord)}</span></div>
+      </div>
+      ${c.open.length ? `<div class="owe">${c.open.map((x) => `<span class="ow">${e(x.text)}<em> · ${openDays(x)} days, owed by ${e(x.owedBy)}</em></span>`).join("")}</div>` : ""}`
+    : "";
+
+  return `
+    <div class="ctx">
+      <div class="ctxhead">
+        <span class="kind" style="color:${inkOf(tone)};background:${tint(markOf(tone), 16)}">${e(SLOT_GLYPH[s.kind] ?? "◍")} ${e(s.kind)}</span>
+        <span class="when">${e(s.clock)} · ${s.minutes} min · ${e(untilText(s.inMinutes))}</span>
+      </div>
+      <span class="hero-h d" style="font-size:25px">${e(s.title)}</span>
+      <span class="whereline">${e(s.where)}${s.withName ? ` · ${e(s.withName)}` : ""}</span>
+
+      ${s.purpose ? `<div class="sect"><span class="lbl">why this is in the diary</span>
+        <p class="prose">${e(s.purpose)}</p>
+        ${s.cites.length && s.withClient ? `<div class="citerow">${citeChips(s.cites, s.withClient)}</div>` : ""}</div>` : ""}
+
+      ${progress}
+
+      ${s.prep.length ? `<div class="sect"><span class="lbl">have ready</span>
+        ${s.prep.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>` : ""}
+
+      ${c ? `<div class="ctxacts"><button class="btn acc" data-act="open-client" data-client="${c.key}">Open ${e(c.name.split(" ")[0]!)}</button></div>` : ""}
+    </div>`;
+}
+
+function agendaPage(): string {
+  const sel = slotById(state.slot ?? "") ?? nextUp ?? agenda[0]!;
+  return `
+    <div class="page fixed">
+      <div class="qhead">
+        <span class="hero-h d">Monday</span>
+        <span class="mt">${dayTotals.meetings} commitments · ${dayTotals.travelMinutes} min on the road ·
+          ${dayTotals.breakMinutes} min of break the assistant is protecting. These are the plan, not a guess.</span>
+      </div>
+      <div class="daycols">
+        <div class="daylist sc" id="daylist">${agenda.map((x) => slotRow(x, x.id === sel.id)).join("")}</div>
+        <div class="dayctx sc" id="dayctx">${slotContext(sel)}</div>
+      </div>
+    </div>`;
+}
 
 function overviewPage(): string {
   const urgent = clients.find((c) => !c.score.silent && c.score.status === "decaying") ?? clients[0]!;
@@ -518,18 +707,7 @@ function overviewPage(): string {
       </div>
 
       <div class="bento">
-        <button class="urgent" data-act="open-profile" data-client="${urgent.key}">
-          <span class="grain" aria-hidden="true"></span>
-          <span class="glow" aria-hidden="true"></span>
-          <span class="flag">most urgent</span>
-          <span class="btm">
-            <span style="display:flex;flex-direction:column;gap:3px;min-width:0">
-              <span class="nm">${e(urgent.name)}</span>
-              <span class="sub">${oldest ? `promise open ${openDays(oldest)} days` : e(urgent.statusWord)}</span>
-            </span>
-            <span class="sc-n">${urgent.score.composite}</span>
-          </span>
-        </button>
+        ${upNextTile()}
 
         <div class="tile">
           <div class="tile-h">
@@ -1098,6 +1276,7 @@ function queuePage(kind: QueueKind): string {
 
 function body(): string {
   if (state.page === "home") return overviewPage();
+  if (state.page === "agenda") return agendaPage();
   if (state.page === "clients") {
     if (state.cview === "grid") return clientsGrid();
     return clientDetail(clientById(state.sel.toLowerCase()));
@@ -1124,7 +1303,7 @@ function render(): void {
   }
   if (state.st === "open") {
     const keep = new Map<string, number>();
-    for (const id of ["msgs", "asklog"]) {
+    for (const id of ["msgs", "asklog", "daylist", "dayctx"]) {
       const el = document.getElementById(id);
       if (el) keep.set(id, el.scrollTop);
     }
@@ -1183,6 +1362,19 @@ function ask(c: ClientView, q: string): void {
   });
 }
 
+/**
+ * Move the island to a state, and render it.
+ *
+ * Wrapped because of what the failure looks like otherwise. `data-state` is
+ * set before render() runs, and the shell reads that attribute to decide how
+ * much of the screen to make interactive — so a render that throws on the way
+ * to `open` leaves a full-screen, fully transparent, always-on-top window that
+ * captures every click and draws nothing. That is not a broken dashboard, it
+ * is a laptop that has stopped responding.
+ *
+ * On a throw the island is put back to idle, which is always renderable, and
+ * the shell is told the small rectangle rather than the whole screen.
+ */
 function setState(st: IslandState): void {
   state.st = st;
   island.dataset.state = st;
@@ -1192,7 +1384,27 @@ function setState(st: IslandState): void {
     current = null;
   }
   if (st !== "open") state.lit = null;
-  render();
+  /* Focus is taken on open and never on the compact states: a pill that
+     steals the caret from whatever is being typed behind it is a pill nobody
+     keeps running, but a dashboard that cannot be closed with Escape because
+     the keystroke went to the editor behind is just as bad. */
+  if (st === "open") focusWindow();
+
+  try {
+    render();
+  } catch (err) {
+    console.error("[chadbuddy] render failed — falling back to idle", err);
+    if (st !== "idle") {
+      state.st = "idle";
+      island.dataset.state = "idle";
+      try {
+        render();
+      } catch (fatal) {
+        console.error("[chadbuddy] idle render failed too", fatal);
+      }
+    }
+    reportHotRect(island);
+  }
 }
 
 /** Scroll the cited message into view and light it up. */
@@ -1218,8 +1430,23 @@ initScramble(island);
    slides. Hovering a visible notification pauses its dwell so it can
    actually be read; leaving gives it 2.5s more, then it retires. */
 let hoverTimer: number | undefined;
+/**
+ * Grace before a hover is believed to be over.
+ *
+ * The shell can hand the page a spurious pointerleave: it samples the cursor
+ * on a 60ms timer and flips the window between capturing and ignoring, so a
+ * pointer resting near the edge produces leave/enter pairs it never asked for.
+ * Collapsing on the first of those is what made the island flutter. Waiting a
+ * beat and cancelling on re-entry absorbs the noise while still feeling
+ * immediate — 140ms is under the threshold where a deliberate exit starts to
+ * feel sticky.
+ */
+let leaveTimer: number | undefined;
+const LEAVE_GRACE = 140;
 
 island.addEventListener("pointerenter", () => {
+  // Back before the grace ran out: the leave never really happened.
+  window.clearTimeout(leaveTimer);
   if (state.st === "alert" || state.st === "call") {
     window.clearTimeout(dwellTimer);
     return;
@@ -1233,8 +1460,12 @@ island.addEventListener("pointerenter", () => {
 
 island.addEventListener("pointerleave", () => {
   window.clearTimeout(hoverTimer);
-  if (state.st === "peek") setState("idle");
-  else if (state.st === "alert" || state.st === "call") {
+  if (state.st === "peek") {
+    window.clearTimeout(leaveTimer);
+    leaveTimer = window.setTimeout(() => {
+      if (state.st === "peek") setState("idle");
+    }, LEAVE_GRACE);
+  } else if (state.st === "alert" || state.st === "call") {
     if (current?.dwell !== null) {
       window.clearTimeout(dwellTimer);
       dwellTimer = window.setTimeout(() => {
@@ -1286,6 +1517,20 @@ island.addEventListener("click", (ev) => {
     case "open-profile":
     case "open-record":
       if (key) openClient(key);
+      setState("open");
+      return;
+    /* Stepping only changes what the tile is describing, so it re-renders
+       where it stands rather than routing anywhere. */
+    case "up-step": {
+      const dir = Number(hit.dataset.dir ?? 0);
+      const at = state.up ?? nextUpIndex;
+      state.up = Math.min(bigSlots.length - 1, Math.max(0, at + dir));
+      render();
+      return;
+    }
+    case "open-slot":
+      state.slot = hit.dataset.slot ?? null;
+      state.page = "agenda";
       setState("open");
       return;
     case "clients-back":
@@ -1379,12 +1624,19 @@ document.addEventListener("keydown", (ev) => {
     setState("idle");
     return;
   }
+  /* One press, one exit. Clearing a lit citation used to come first, which
+     meant Escape did nothing visible the first time you pressed it whenever a
+     citation happened to be open — so the dashboard now closes on the first
+     press and takes the highlight with it. */
+  if (state.st === "open") {
+    state.lit = null;
+    setState("idle");
+    return;
+  }
   if (state.lit !== null) {
     state.lit = null;
     render();
-    return;
   }
-  if (state.st === "open") setState("idle");
 });
 
 document.addEventListener("pointerdown", (ev) => {
@@ -1392,10 +1644,48 @@ document.addEventListener("pointerdown", (ev) => {
   if (!island.contains(ev.target as Node)) setState("idle");
 });
 
+/* Clicking the taskbar closes the dashboard too.
+
+   The window covers the work area, which stops short of the taskbar — so a
+   click down there never reaches the page and the handler above cannot see it.
+   The dashboard stayed open, and because focus had gone with the click, it had
+   also stopped receiving Escape: open, unclosable from the keyboard, and only
+   dismissable by clicking back into it first.
+
+   Losing focus is the one signal that does arrive, and treating it as dismissal
+   is what an overlay should do anyway — it is how Spotlight and Alfred behave.
+   Only the dashboard closes; the compact states never take focus, so they are
+   never affected by this. */
+window.addEventListener("blur", () => {
+  if (state.st === "open") setState("idle");
+});
+
 /* ── boot ────────────────────────────────────────────────────────── */
+
+/* Last resort, and deliberately a light touch.
+
+   This used to force the island back to idle on any error, which turned every
+   stray warning into the dashboard closing itself under the user — and one of
+   those warnings, 'ResizeObserver loop completed with undelivered
+   notifications', is raised as a window error on ordinary frames of the morph.
+   The dashboard collapsed while being hovered, repeatedly, for no reason the
+   user could see.
+
+   Re-reporting the rectangle is enough on its own. reportHotRect already
+   refuses to claim the screen for an open state that has not drawn, so the
+   dangerous case is covered without touching what is on screen. */
+window.addEventListener("error", () => {
+  reportHotRect(island);
+});
 
 render();
 watchHotRect(island);
+
+/* The island parks where the browser keeps its tabs, so it has to be movable.
+   Reporting on every move rather than on drop: the shell polls the cursor at
+   60ms and a stale rectangle mid-drag drops the pill out from under the
+   pointer holding it. */
+initDrag(need("stage"), island, () => reportHotRect(island));
 
 /**
  * Demo hooks. `?state=alert` fires the new-message island with the 7s dwell the
