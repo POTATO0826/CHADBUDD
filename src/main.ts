@@ -43,6 +43,9 @@ function need<T extends HTMLElement>(id: string): T {
   return el;
 }
 
+/** Is this specific recommendation's draft currently open for editing? */
+const isEditing = (key: ClientKey, rank: string): boolean => state.editing === `${key}:${rank}`;
+
 const inkOf = (t: Tone): string => (t === "butter" ? "var(--butter)" : INK[t]);
 const markOf = (t: Tone): string => (t === "butter" ? "var(--butter)" : MARK[t]);
 
@@ -98,6 +101,17 @@ interface State {
   /** Draft in the ask composer. */
   draft: string;
   /**
+   * Which recommendation's draft is open for editing, as "key:rank".
+   *
+   * The agent writes a message in the advisor's name, and the advisor is the
+   * one who has to stand behind it. Editing before sending is the difference
+   * between a tool that suggests and a tool that dictates — and what actually
+   * goes out is what was approved, not what the model originally wrote.
+   */
+  editing: string | null;
+  /** The edited text, held apart so cancelling restores the agent's original. */
+  editText: string;
+  /**
    * Whether the shell reports the window as hidden from screen capture.
    * Set from Rust's answer, never from the request — see setContentProtected.
    */
@@ -120,6 +134,8 @@ const state: State = {
   q: "",
   ask: {},
   draft: "",
+  editing: null,
+  editText: "",
   // Off by default: the island should be visible in a screen recording made
   // deliberately, and hidden only when the advisor says so.
   hidden: false,
@@ -1124,8 +1140,21 @@ function askTurn(t: AskTurn, c: ClientView): string {
           </div>
           <span class="why">${e(i.why)}</span>
           <div class="draft">
-            <span class="lb">${e(i.draftLabel)}</span>
-            <span class="tx">${e(i.draft)}</span>
+            <span class="lb">${e(i.draftLabel)}${isEditing(c.key, i.rank) ? " · editing" : ""}</span>
+            ${
+              isEditing(c.key, i.rank)
+                ? /* Styled inline rather than in index.html: that file is being
+                     edited in parallel and a textarea is one element. Tokens,
+                     not literals, so it tracks the palette either way. */
+                  `<textarea class="tx edit" data-act="edit-draft" rows="4"
+                     aria-label="Edit the draft before sending"
+                     style="width:100%;resize:vertical;font:inherit;color:var(--t1);
+                            background:color-mix(in oklab, var(--background) 55%, transparent);
+                            border:1px solid color-mix(in oklab, var(--primary) 45%, transparent);
+                            border-radius:.5rem;padding:.5rem .6rem;outline:none"
+                   >${e(state.editText)}</textarea>`
+                : `<span class="tx">${e(i.draft)}</span>`
+            }
           </div>
           <div class="acts">
             <button class="btn${i.primary ? " acc" : ""}" data-act="send-idea"
@@ -1133,7 +1162,12 @@ function askTurn(t: AskTurn, c: ClientView): string {
               ${i.intent === "send" ? "" : "disabled"}
               title="${i.intent === "send" ? "Send this draft to the client as you" : "Not a send — this recommendation is to " + e(i.intent)}"
             >${e(i.btn)}</button>
-            <button class="btn ghost">Edit</button>
+            ${
+              isEditing(c.key, i.rank)
+                ? `<button class="btn ghost" data-act="edit-cancel">Revert</button>`
+                : `<button class="btn ghost" data-act="edit-idea"
+                     data-key="${e(c.key)}" data-rank="${e(i.rank)}">Edit</button>`
+            }
             ${i.cites.length ? citeChips(i.cites, c.key) : ""}
           </div>
         </div>`;
@@ -1774,6 +1808,27 @@ island.addEventListener("click", (ev) => {
     /* Sending is the only irreversible thing the dashboard can do, so it
        confirms, names the recipient, and reports what actually happened.
        The agent cannot reach this path: it queues nothing and clicks nothing. */
+    case "edit-idea": {
+      const k = hit.dataset.key;
+      const r = hit.dataset.rank;
+      if (!k || !r) break;
+      const target = (ideas[k] ?? []).find((x) => x.rank === r);
+      if (!target) break;
+      state.editing = `${k}:${r}`;
+      state.editText = target.draft;
+      refocus = '[data-act="edit-draft"]';
+      render();
+      break;
+    }
+
+    /* "Revert", not "Cancel": what the advisor is choosing between is their
+       edit and the agent's original, and the label should say so. */
+    case "edit-cancel":
+      state.editing = null;
+      state.editText = "";
+      render();
+      break;
+
     case "send-idea": {
       const btn = hit as HTMLButtonElement;
       const sendKey = hit.dataset.key;
@@ -1783,18 +1838,23 @@ island.addEventListener("click", (ev) => {
       const who = clients.find((c) => c.key === sendKey);
       if (!idea || !who) break;
 
+      /* What was edited is what gets sent. queueSend takes the text as given
+         rather than re-reading the idea, for exactly this reason: the advisor
+         signs their name to what is on screen, not to what the model wrote. */
+      const outgoing = isEditing(sendKey, rank) ? state.editText.trim() : idea.draft;
+      if (outgoing === "") {
+        window.alert("Nothing to send — the draft is empty.");
+        break;
+      }
+
       const ok = window.confirm(
-        `Send this to ${who.name} as you?
-
-${idea.draft}
-
-This cannot be undone.`,
+        `Send this to ${who.name} as you?\n\n${outgoing}\n\nThis cannot be undone.`,
       );
       if (!ok) break;
 
       btn.disabled = true;
       btn.textContent = "Sending…";
-      queueSend(sendKey, idea.draft, rank)
+      queueSend(sendKey, outgoing, rank)
         .then((to) => {
           btn.textContent = `Sent to ${to}`;
         })
@@ -1830,6 +1890,13 @@ island.addEventListener("input", (ev) => {
   if (act === "search") {
     state.q = el.value;
     refocus = ".qbox";
+    render();
+  } else if (act === "edit-draft") {
+    /* Held in state rather than read off the DOM at send time, because the
+       island re-renders by swapping innerHTML — the textarea the advisor typed
+       into is gone by then. `refocus` puts the caret back afterwards. */
+    state.editText = el.value;
+    refocus = '[data-act="edit-draft"]';
     render();
   } else if (act === "draft") {
     state.draft = el.value;

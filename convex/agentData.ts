@@ -69,6 +69,67 @@ export const clientKeys = internalQuery({
 });
 
 /**
+ * Queue a message the agent decided to send, with nobody reading it first.
+ *
+ * This is the autonomous path, and every guard in it exists because the normal
+ * path has a human in it and this one does not:
+ *
+ *   · seed clients are refused — a fictional client has no real chat, and the
+ *     failure mode is delivering to the wrong person rather than erroring
+ *   · a cooldown per client, so a re-analysis loop cannot turn into a stream of
+ *     messages to someone who has not replied yet
+ *   · identical text is never sent twice, because "the model produced the same
+ *     recommendation again" is not the same as "the client should hear it again"
+ *
+ * Returns why it declined rather than throwing, so a refusal is visible in the
+ * pass result instead of failing the whole analysis.
+ */
+export const autoQueue = internalMutation({
+  args: {
+    clientId: v.id("clients"),
+    text: v.string(),
+    ideaRank: v.string(),
+    cooldownMs: v.number(),
+  },
+  handler: async (ctx, { clientId, text, ideaRank, cooldownMs }) => {
+    const trimmed = text.trim();
+    if (trimmed === "") return { queued: false, reason: "empty draft" };
+
+    const client = await ctx.db.get(clientId);
+    if (!client) return { queued: false, reason: "no such client" };
+    if (client.sourceId.startsWith("seed:")) {
+      return { queued: false, reason: "seed client has no real chat" };
+    }
+
+    const prior = await ctx.db
+      .query("outbox")
+      .withIndex("by_client", (q) => q.eq("clientId", clientId))
+      .collect();
+
+    if (prior.some((r) => r.text.trim() === trimmed)) {
+      return { queued: false, reason: "already sent this exact message" };
+    }
+
+    const last = prior.reduce((m, r) => Math.max(m, r.queuedTs), 0);
+    const since = Date.now() - last;
+    if (last > 0 && since < cooldownMs) {
+      return { queued: false, reason: `cooldown, ${Math.round((cooldownMs - since) / 60000)}m left` };
+    }
+
+    await ctx.db.insert("outbox", {
+      clientId,
+      sourceId: client.sourceId,
+      text: trimmed,
+      ideaRank,
+      state: "queued",
+      queuedTs: Date.now(),
+    });
+
+    return { queued: true, reason: `auto-sent to ${client.name}` };
+  },
+});
+
+/**
  * Write one pass's results.
  *
  * Ideas are replaced wholesale rather than appended: they are a view of the

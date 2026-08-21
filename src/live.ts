@@ -26,6 +26,7 @@ import type { FunctionReference } from "convex/server";
 import { setNow } from "../data/clock.ts";
 import type { ClientKey, SeedThread } from "../data/types.ts";
 import { initialsOf, rebuild } from "./derive.ts";
+import { rebuildAgenda, shiftAgendaToDay } from "./agenda.ts";
 import { setIdeas } from "./copy.ts";
 import { isTauri } from "./shell.ts";
 import type { Idea } from "./copy.ts";
@@ -145,11 +146,32 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
      */
     if (!clockMoved) {
       setNow(Date.now());
+      shiftAgendaToDay(Date.now());
       clockMoved = true;
+      startDayTicker();
     }
 
     rebuild(threads);
     onRender();
+  };
+
+  /**
+   * Keep the day moving.
+   *
+   * The Day page's countdowns are computed against NOW, and NOW no longer
+   * stands still in live mode — so "in 1h 15m" would be however stale the tab
+   * is. A minute is the right cadence: the page shows whole minutes, so
+   * anything finer redraws without changing a character.
+   *
+   * The seed path never starts this. Its clock is frozen deliberately, and a
+   * ticking countdown there would make the demo unreproducible.
+   */
+  const startDayTicker = (): void => {
+    window.setInterval(() => {
+      setNow(Date.now());
+      rebuildAgenda();
+      onRender();
+    }, 60_000);
   };
 
   /**

@@ -44,6 +44,25 @@ const API_KEY = process.env["AGENT_API_KEY"] ?? process.env["OPENAI_API_KEY"] ??
 const DEBOUNCE_MS = 10 * 60_000;
 
 /**
+ * Autonomous sending. Off unless explicitly switched on.
+ *
+ *   bunx convex env set AUTO_SEND 1
+ *
+ * With it on, the agent's rank-1 "send" recommendation goes to the client
+ * without anyone reading it first. That is a different product from the one
+ * this file otherwise implements: the gate proves the agent quoted a real
+ * message, and proves nothing about whether the advice built on that quote is
+ * sound — a distinction this codebase measured rather than assumed.
+ *
+ * Only rank 1, and only intent "send". A "hold" recommendation is advice to
+ * stay quiet; firing a message off the back of one would invert its meaning.
+ */
+const AUTO_SEND = process.env["AUTO_SEND"] === "1";
+
+/** Minimum gap between autonomous messages to the same client. */
+const AUTO_COOLDOWN_MS = Number(process.env["AUTO_SEND_COOLDOWN_MS"] ?? 6 * 60 * 60_000);
+
+/**
  * Below this there is nothing to reason about at all.
  *
  * Was 8, which was a number picked without much thought and turned out to
@@ -151,6 +170,8 @@ interface PassResult {
   messages?: number;
   ideasKept?: number;
   claimsRejected?: number;
+  /** What the autonomous path did, or why it declined. Absent when AUTO_SEND is off. */
+  autoSend?: string;
 }
 
 /**
@@ -249,12 +270,36 @@ async function runPass(
       rejected: rejections,
     });
 
+    /**
+     * The autonomous send, if it has been switched on.
+     *
+     * After recordAnalysis on purpose: the recommendation is written down
+     * before it is acted on, so there is a record of what went out and what it
+     * was based on even if delivery fails afterwards.
+     */
+    let autoSend: string | undefined;
+    if (AUTO_SEND) {
+      const top = keptIdeas.find((i) => i.rank === "1" && i.intent === "send");
+      if (!top) {
+        autoSend = "nothing sent — no rank-1 send recommendation";
+      } else {
+        const res = (await ctx.runMutation(internal.agentData.autoQueue, {
+          clientId: thread.clientId,
+          text: top.draft,
+          ideaRank: top.rank,
+          cooldownMs: AUTO_COOLDOWN_MS,
+        })) as { queued: boolean; reason: string };
+        autoSend = res.reason;
+      }
+    }
+
     return {
       key,
       name: thread.name,
       messages: thread.messages.length,
       ideasKept: keptIdeas.length,
       claimsRejected: rejections.length,
+      ...(autoSend === undefined ? {} : { autoSend }),
     };
   }
 }
