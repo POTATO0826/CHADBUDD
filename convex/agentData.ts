@@ -139,6 +139,15 @@ export const autoQueue = internalMutation({
  * Rejections accumulate. They are the record of how often the model fabricated
  * a citation, and a rate you reset every run is a rate you cannot read.
  */
+/** Clients with an email on file, for the inbound mail poll. */
+export const clientEmails = internalQuery({
+  args: {},
+  handler: async (ctx) =>
+    (await ctx.db.query("clients").collect())
+      .filter((c) => (c.email ?? "") !== "")
+      .map((c) => ({ key: c.key, email: c.email! })),
+});
+
 export const recordAnalysis = internalMutation({
   args: {
     clientId: v.id("clients"),

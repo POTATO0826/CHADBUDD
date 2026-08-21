@@ -17,7 +17,7 @@
  */
 
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
@@ -186,6 +186,58 @@ export const ingestBatch = mutation({
     if (seq !== client.seq) await ctx.db.patch(client._id, { seq });
 
     return { inserted, skipped: messages.length - inserted, nextSeq: seq };
+  },
+});
+
+/**
+ * One email into the record, with the same guarantees as a chat message:
+ * externalId minted transactionally, deduped on (client, sourceId), text only.
+ * Everything downstream — ledger, agent, schedule reader — reads messages,
+ * not channels, which is the whole point of ingesting email here rather than
+ * building an email pipeline beside the chat one.
+ */
+export const ingestEmail = internalMutation({
+  args: {
+    key: v.string(),
+    sourceId: v.string(),
+    ts: v.number(),
+    text: v.string(),
+  },
+  handler: async (ctx, { key, sourceId, ts, text }) => {
+    if (text.trim() === "") return { inserted: 0 };
+    const client = await ctx.db
+      .query("clients")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .unique();
+    if (!client) return { inserted: 0 };
+
+    const dupe = await ctx.db
+      .query("messages")
+      .withIndex("by_client_source", (q) => q.eq("clientId", client._id).eq("sourceId", sourceId))
+      .unique();
+    if (dupe) return { inserted: 0 };
+
+    const externalId = `${client.key}-${String(client.seq).padStart(3, "0")}`;
+    await ctx.db.insert("messages", {
+      clientId: client._id,
+      externalId,
+      sourceId,
+      sender: "client",
+      ts,
+      text,
+    });
+    await ctx.db.patch(client._id, { seq: client.seq + 1 });
+
+    // Email gets the same second reader chat gets: "Thursday 4pm works" in an
+    // email is the same agreement it is in a chat.
+    await ctx.scheduler.runAfter(0, internal.scheduling.consider, {
+      clientId: client._id,
+      cite: externalId,
+      text,
+      ts,
+    });
+
+    return { inserted: 1 };
   },
 });
 

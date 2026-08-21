@@ -34,4 +34,27 @@ crons.interval("calendar sync", { minutes: 5 }, internal.calendar.tick, {});
  */
 crons.interval("agent pass", { minutes: 15 }, api.agent.analyzeAll, {});
 
+/**
+ * The status dispatcher. Once a minute because the grace period is three:
+ * any slower and a client could wait five minutes for a three-minute promise.
+ * The sweep is cheap — it exits on the first check unless the calendar says
+ * the advisor is actually inside something.
+ */
+crons.interval("presence status", { minutes: 1 }, internal.presenceLive.tick, {});
+crons.interval("presence cleanup", { hours: 24 }, internal.presenceLive.clearOld, {});
+
+/**
+ * The news sweep. Hourly is the honest cadence for a desk someone glances at
+ * a few times a day — and a failed sweep keeps the previous crop, so the
+ * section can never be emptied by an outage.
+ */
+crons.interval("market news", { hours: 1 }, api.news.refresh, {});
+
+/**
+ * Inbound email. Ten minutes, because nobody expects an email answered
+ * faster and IMAP IDLE would mean holding a socket — the bridge problem
+ * again. No credentials configured, the action no-ops silently.
+ */
+crons.interval("email ingest", { minutes: 10 }, internal.emailIngest.pull, {});
+
 export default crons;

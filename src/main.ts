@@ -27,7 +27,8 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
-import { clientMeta, initLive, liveNotes, queueSend, sendEmail, setClientEmail } from "./live.ts";
+import { askAgent, clientMeta, initLive, liveNotes, queueSend, sendEmail, setClientEmail } from "./live.ts";
+import { aiText, initDeskAi } from "./deskAi.ts";
 import type { Task } from "./tasks.ts";
 import { initTasks, taskCreate, taskDone, taskMove, taskRemove, tasks, tasksOn, urgencyOf } from "./tasks.ts";
 import { connectCalendar } from "./convexCalendar.ts";
@@ -1401,12 +1402,7 @@ function railCard(ev: CalendarEvent): string {
           ? `<span class="sughint">suggested from their book — tap to change</span>`
           : ""
       }
-      ${
-        ai.length
-          ? `<div class="aiprep"><span class="lbl" style="color:var(--iris)">chadbuddy suggests</span>
-              ${ai.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>`
-          : ""
-      }
+      ${railPrep(ev, ai)}
       <textarea class="prepin" id="prep-${e(ev.id)}" rows="2"
         placeholder="Your prep note — what to have ready">${e(ev.prepUser ?? "")}</textarea>
       <div class="ctxacts">
@@ -1418,6 +1414,32 @@ function railCard(ev: CalendarEvent): string {
         }
       </div>
     </div>`;
+}
+
+/**
+ * The prep bullets on a rail card: the model's, when live — it reads the
+ * client's actual recent messages server-side — with whatever the event
+ * already carried as the instant fallback.
+ */
+function railPrep(ev: CalendarEvent, carried: string[]): string {
+  let lines = carried;
+  let label = "chadbuddy suggests";
+  const req = {
+    kind: "prep",
+    facts: `Meeting: ${ev.title}, ${new Date(Date.parse(ev.at)).toString().slice(0, 21)}, ${ev.minutes} minutes.`,
+    ask: "2-3 prep bullets for this meeting, one short line each, grounded in what the client has actually said recently.",
+    ...(ev.withClient ? { key: ev.withClient } : {}),
+  };
+  const aiRes = aiText(`prep:${ev.id}`, req);
+  if (aiRes.status === "ready" && aiRes.text) {
+    lines = aiRes.text.split("\n").map((x) => x.replace(/^[-•▢\s]+/, "").trim()).filter(Boolean).slice(0, 3);
+    label = "chadbuddy suggests · from their messages";
+  } else if (aiRes.status === "pending" && lines.length === 0) {
+    return `<div class="aiprep"><span class="lbl" style="color:var(--iris)">chadbuddy is reading the thread…</span></div>`;
+  }
+  if (lines.length === 0) return "";
+  return `<div class="aiprep"><span class="lbl" style="color:var(--iris)">${e(label)}</span>
+    ${lines.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>`;
 }
 
 function calRail(): string {
@@ -1884,12 +1906,32 @@ function sparkline(r: Report): string {
     </svg>`;
 }
 
-/** The draft, its provenance label, and what can be done with it. */
-function deskDraft(id: string, draft: string): string {
+/**
+ * The draft, its provenance label, and what can be done with it.
+ *
+ * With a brief request attached and live mode on, the model writes the prose
+ * — digit-guarded server-side, cached forever after one call — and the label
+ * says so. While it writes, the template shows with a label admitting it is
+ * one. In seed mode the template is all there is, also said plainly.
+ */
+function deskDraft(id: string, draft: string, req?: { kind: string; facts: string; ask: string; key?: string }): string {
+  let text = draft;
+  let label = "template — check before sending";
+  if (req) {
+    const ai = aiText(`draft:${id}`, req);
+    if (ai.status === "ready" && ai.text) {
+      text = ai.text;
+      label = "drafted by chadbuddy · model, figures table-checked";
+    } else if (ai.status === "pending") {
+      label = "template — chadbuddy is rewriting…";
+    } else if (ai.status === "failed") {
+      label = "template — the model's draft was refused";
+    }
+  }
   return `
     <div class="ddraft">
-      <span class="lbl" style="color:var(--iris)">drafted by chadbuddy — check before sending</span>
-      <p class="dtext">${e(draft)}</p>
+      <span class="lbl" style="color:var(--iris)">${e(label)}</span>
+      <p class="dtext">${e(text)}</p>
       <div class="ctxacts">
         <button class="btn" disabled title="Sending connects in phase 3">Send Telegram</button>
         <button class="btn" disabled title="Sending connects in phase 3">Send Email</button>
@@ -1925,7 +1967,12 @@ function maturingRow(row: MaturingRow, urgent: boolean): string {
                     </div>`
                   : `<div class="dfacts"><span class="df"><i>renews</i>${e(row.matureText)}</span></div>`
               }
-              ${deskDraft(row.id, row.draft)}
+              ${deskDraft(row.id, row.draft, {
+                kind: "maturity-draft",
+                facts: `Client: ${row.clientName}. Product: ${row.holding.name}. Current value: ${row.report.valueText}. Change over 12 months: ${row.report.yearPct}%. ${row.report.gainText}. Matures: ${row.matureText}.`,
+                ask: "Draft a short Telegram message: their plan matures soon; suggest 15 minutes on what the money does next.",
+                key: row.client,
+              })}
               <div class="ctxacts">
                 <button class="btn acc" data-act="open-client" data-client="${row.client}">Open ${e(row.clientName.split(" ")[0]!)}</button>
                 <button class="btn" data-act="task-plan"
@@ -1973,7 +2020,12 @@ function marketRow(row: MarketRow): string {
                         <span class="dval">${e(hit.holding.value.toLocaleString("en-MY"))}</span>
                         <span class="dcaret">${hitOn ? "⌃" : "⌄"}</span>
                       </button>
-                      ${hitOn ? deskDraft(hit.id, hit.draft) : ""}
+                      ${hitOn ? deskDraft(hit.id, hit.draft, {
+                        kind: "market-draft",
+                        facts: `Client: ${hit.clientName}. Holding: ${hit.holding.name}, value ${hit.holding.value.toLocaleString("en-MY")} RM. News headline: ${row.event.headline}. What it means: ${row.event.impactNote}`,
+                        ask: "A short reassurance note about this news for this holding. No action needed from them, no figures beyond the facts.",
+                        key: hit.client,
+                      }) : ""}
                     </div>`;
                 })
                 .join("")}
@@ -2002,7 +2054,12 @@ function staleRow(row: StaleRow): string {
                 <span class="df"><i>stands at</i>${e(row.report.valueText)}</span>
                 <span class="df"><i>12 months</i>${row.report.yearPct >= 0 ? "+" : ""}${row.report.yearPct}%</span>
               </div>
-              ${deskDraft(row.id, row.draft)}
+              ${deskDraft(row.id, row.draft, {
+                kind: "stale-draft",
+                facts: `Client: ${row.clientName}. Holding: ${row.holding.name}, standing at ${row.report.valueText}, ${row.report.yearPct}% over 12 months. Days since last product update: ${row.days}.`,
+                ask: "A warm quarterly check-in about this holding, offering 15 minutes this week.",
+                key: row.client,
+              })}
             </div>`
           : ""
       }
@@ -2789,6 +2846,34 @@ function ask(c: ClientView, q: string): void {
   if (!text) return;
   const log = (state.ask[c.key] ??= []);
   log.push({ from: "you", text: e(text) });
+
+  /* Live mode asks the actual model, which reads the actual thread — the
+     canned classifier below is only the seed demo's stand-in now. The reply
+     lands as a placeholder that swaps when the answer arrives, claims
+     verbatim-gated server-side; an answer whose evidence all died says so to
+     the advisor's face instead of dressing up. */
+  if (clientMeta(c.key) !== null) {
+    const turn: AskTurn = { from: "agent", text: "Reading the thread…" };
+    log.push(turn);
+    void askAgent(c.key, text)
+      .then((r) => {
+        turn.text = e(r.uncited ? `${r.answer}\n\n(No verbatim evidence survived the gate — treat this one as the model's guess.)` : r.answer);
+        turn.cites = r.cites;
+        render();
+      })
+      .catch((err) => {
+        turn.text = e(`The model is unreachable: ${err instanceof Error ? err.message : String(err)}`);
+        render();
+      });
+    state.draft = "";
+    render();
+    requestAnimationFrame(() => {
+      const el = document.getElementById("asklog");
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return;
+  }
+
   log.push(answer(c, classify(text)));
   state.draft = "";
   render();
@@ -3371,7 +3456,20 @@ island.addEventListener("click", (ev) => {
     case "running-over": {
       const id = hit.dataset.slot;
       const ev = id ? calendarDay().find((x) => x.id === id) : undefined;
-      if (ev) markRunningOver(ev, nowMs());
+      if (ev) {
+        markRunningOver(ev, nowMs());
+        /* The consequences were on screen before the tap — that is the
+           consent. Each affected client with a real chat behind them now
+           actually hears; seeded ones are refused by the outbox and logged. */
+        const over = overrunFor(ev.id);
+        if (over) {
+          for (const c of conflictsFrom(over, laterToday(calendarDay(), nowMs()), nowMs())) {
+            void queueSend(c.client, delayText(c)).catch((err) =>
+              console.warn(`[chadbuddy] delay note to ${c.client} not sent: ${err instanceof Error ? err.message : err}`),
+            );
+          }
+        }
+      }
       render();
       return;
     }
@@ -3739,6 +3837,7 @@ const live = initLive(
    a client to subscribe to, and falls back to localStorage when there is not
    — the browser demo needs no backend. */
 initTasks(render);
+initDeskAi(render);
 
 if (live) {
   /* The day, from Google rather than the seed file.

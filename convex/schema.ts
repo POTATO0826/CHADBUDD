@@ -272,6 +272,31 @@ export default defineSchema({
     .index("by_due", ["dueMs"])
     .index("by_ref", ["ref"]),
 
+  /**
+   * The live market feed: Google News, filtered and tagged by the model
+   * hourly. Headlines and links are the outlet's own, verbatim — the model
+   * chooses and annotates, it never rewrites, so every card still ends at a
+   * real article. The desk falls back to the curated seed when this is empty.
+   */
+  marketEvents: defineTable({
+    ts: v.number(),
+    headline: v.string(),
+    summary: v.string(),
+    lean: v.string(),
+    classes: v.array(v.string()),
+    sourceName: v.string(),
+    sourceUrl: v.string(),
+    impactNote: v.string(),
+    fetchedAt: v.number(),
+  }).index("by_ts", ["ts"]),
+
+  /** One status reply per person per busy block. The dedupe, durable. */
+  presenceSent: defineTable({
+    clientId: v.id("clients"),
+    blockId: v.id("events"),
+    ts: v.number(),
+  }).index("by_client_block", ["clientId", "blockId"]),
+
   pairing: defineTable({
     platform: v.string(),
     state: v.union(

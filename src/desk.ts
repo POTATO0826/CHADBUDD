@@ -27,6 +27,7 @@ import { holdings } from "../data/holdings.ts";
 import type { MarketEvent } from "../data/market.ts";
 import { marketEvents } from "../data/market.ts";
 import { clients } from "./derive.ts";
+import { liveMarketEvents } from "./live.ts";
 import { nowMs } from "./daysource.ts";
 
 const DAY = 86_400_000;
@@ -256,8 +257,10 @@ export function deskView(): Desk {
   const later = maturing.filter((x) => x.daysLeft > URGENT_DAYS);
   const horizon = later.slice(0, HORIZON_CAP);
 
-  /* market */
-  const market: MarketRow[] = marketEvents
+  /* market — the hourly model-filtered feed when it exists, the curated
+     seed when it does not. Same shape either way; nothing below can tell. */
+  const feed = (liveMarketEvents() ?? marketEvents) as MarketEvent[];
+  const market: MarketRow[] = feed
     .slice()
     .sort((a, b) => a.agoHours - b.agoHours)
     .map((ev) => {

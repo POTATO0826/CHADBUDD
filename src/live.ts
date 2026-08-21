@@ -142,6 +142,62 @@ export function liveNotes(key: ClientKey): Array<{ text: string; cite: string; u
   return notesLive.get(key) ?? [];
 }
 
+/** The Ask panel's real backend. Throws plainly when live mode is off. */
+export async function askAgent(
+  key: ClientKey,
+  question: string,
+): Promise<{ answer: string; cites: string[]; uncited: boolean }> {
+  if (!convex) throw new Error("Not connected to the backend.");
+  const lookupA = anyApi as unknown as Record<string, Record<string, unknown>>;
+  return (await convex.action(
+    lookupA["agent"]?.["ask"] as FunctionReference<"action">,
+    { key, question },
+  )) as { answer: string; cites: string[]; uncited: boolean };
+}
+
+/**
+ * The live market feed, when the hourly sweep has produced one.
+ *
+ * Null means "no live rows" — the desk falls back to the curated seed, so an
+ * RSS outage can never blank the section. Shaped here into the exact type
+ * data/market.ts exports, which is what lets the desk not care.
+ */
+let marketRows: Array<{
+  _id: string;
+  ts: number;
+  headline: string;
+  summary: string;
+  lean: string;
+  classes: string[];
+  sourceName: string;
+  sourceUrl: string;
+  impactNote: string;
+}> = [];
+
+export function liveMarketEvents(): Array<{
+  id: string;
+  agoHours: number;
+  headline: string;
+  summary: string;
+  lean: "pressure" | "relief" | "watch";
+  classes: string[];
+  source: { name: string; url: string };
+  impactNote: string;
+}> | null {
+  if (marketRows.length === 0) return null;
+  const now = Date.now();
+  return marketRows.map((r) => ({
+    id: r._id,
+    agoHours: Math.max(1, Math.round((now - r.ts) / 3_600_000)),
+    headline: r.headline,
+    summary: r.summary,
+    lean: r.lean === "pressure" ? "pressure" : r.lean === "relief" ? "relief" : "watch",
+    classes: r.classes,
+    source: { name: r.sourceName, url: r.sourceUrl },
+    impactNote: r.impactNote,
+  }));
+}
+
 /** Send an email through the deployment. Throws plainly when not connected. */
 export async function sendEmail(key: ClientKey, subject: string, text: string): Promise<void> {
   if (!convex) throw new Error("Not connected to the backend — email needs live mode.");
@@ -326,6 +382,11 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
 
     threads = next;
     ready = true;
+    apply();
+  });
+
+  client.onUpdate(q("news", "list"), {}, (value) => {
+    marketRows = value as typeof marketRows;
     apply();
   });
 
