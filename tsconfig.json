@@ -6,6 +6,14 @@
     "moduleResolution": "bundler",
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
+
+    // The vendored bklit chart is React. JSX is compiled by Bun, which needs no
+    // extra tooling; this only tells tsc how to read the .tsx files.
+    "jsx": "react-jsx",
+    // The registry ships its files importing through this alias. Mapping it is
+    // less invasive than rewriting vendored source we may want to re-pull.
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] },
     "verbatimModuleSyntax": true,
     "noEmit": true,
 

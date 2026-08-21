@@ -21,6 +21,10 @@ import {
 } from "./derive.ts";
 import { openDays } from "./ledger.ts";
 import type { LedgerEntry } from "./ledger.ts";
+import { bookTotals, buckets, stageOf } from "./book.ts";
+import { STAGE_NOTE } from "../data/book.ts";
+import { funnelElement } from "./funnel.tsx";
+import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
 import { initScramble } from "./scramble.ts";
@@ -80,6 +84,8 @@ interface State {
   lit: string | null;
   /** Clients page: the grid of cards, or one client opened. */
   cview: ClientView2;
+  /** Clients page: the stage the grid is filtered to. Null shows everyone. */
+  stage: Stage | null;
   /** Dashboard tile: index into bigSlots being shown. Null follows nextUp. */
   up: number | null;
   /** Agenda page: which slot's context is open. Defaults to the next one. */
@@ -107,6 +113,7 @@ const state: State = {
   filter: "all",
   lit: null,
   cview: "grid",
+  stage: null,
   up: null,
   slot: null,
   q: "",
@@ -630,9 +637,55 @@ function agendaPage(): string {
     </div>`;
 }
 
+/* ── the book, by stage ──────────────────────────────────────────
+   What used to sit here was a week grid with two hand-written events on it —
+   the only block on the dashboard that showed something no message supported,
+   on the screen whose whole claim is the opposite. The day tab already owns
+   time, and owns it better as a list, so the slot went to the question the
+   advisor cannot answer by scrolling: where is my book. */
+
+
+/**
+ * The stage strip.
+ *
+ * Drawn with even weights rather than as a taper, and that is a deliberate
+ * departure from the funnel it is modelled on. A funnel narrows because the far
+ * end is the residue of the first — five percent of what went in. Here the far
+ * end is the most valuable cohort on the book: a client with a maturity date is
+ * a renewal with a deadline attached. Tapering would shrink the segment the
+ * advisor most needs to see, in proportion to how well the business is doing.
+ *
+ * Counts, not names. At four clients names would fit; at the several hundred an
+ * advisor actually carries they would not, and a component that stops working
+ * once the demo data is replaced is not built, it is staged. The names live one
+ * click away, which is where they belong.
+ */
+function stageFunnel(): string {
+  /* One tile, one sentence: here is the book, and this much of it is ending
+     soon. Everything else was moved out.
+
+     The first version put a 30px figure, a wrapped caption, a rule and three
+     client rows underneath the chart, in a cell that could not hold them.
+     The labels collided with the rows, the halo rings escaped the tile, and
+     the one thing it was for — the shape of the book at a glance — was the
+     hardest part to see. The maturity list is one click away under the
+     `maturing` segment, which is where someone looking for it would go. */
+  const soon =
+    bookTotals.maturingSoon === 0
+      ? "nothing maturing"
+      : `${bookTotals.maturingSoon} maturing · nearest in ${bookTotals.nextMaturityDays}d`;
+
+  return `
+    <div class="book">
+      <div class="tile-h">
+        <span class="t">The book</span>
+        <span class="soon">${e(soon)}</span>
+      </div>
+      <div class="strip" id="funnel-slot"></div>
+    </div>`;
+}
+
 function overviewPage(): string {
-  const urgent = clients.find((c) => !c.score.silent && c.score.status === "decaying") ?? clients[0]!;
-  const oldest = urgent.open[0];
 
   const bars = weekBars.days
     .map(
@@ -698,18 +751,6 @@ function overviewPage(): string {
         </div>
       </div>`,
     )
-    .join("");
-
-  // The week ahead, so today sits at the left edge.
-  const days: string[] = [];
-  for (let i = 0; i < 6; i++) {
-    const ms = NOW + i * 86_400_000;
-    const dow = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "Asia/Kuala_Lumpur" }).format(ms);
-    const num = new Intl.DateTimeFormat("en-GB", { day: "numeric", timeZone: "Asia/Kuala_Lumpur" }).format(ms);
-    days.push(`<div class="c"><span class="dow">${e(dow)}</span><span class="n" style="color:${i === 0 ? "var(--t1)" : "var(--t3)"}">${e(num)}</span></div>`);
-  }
-  const hours = ["09:00", "11:00", "14:00", "16:00"]
-    .map((h) => `<div class="hr">${h}</div><div class="ln"></div>`)
     .join("");
 
   return `
@@ -803,32 +844,7 @@ function overviewPage(): string {
 
         <div class="rules">${ruleRows}</div>
 
-        <div class="timeline">
-          <div class="hd">
-            <span>this week</span>
-            <span class="mo">${e(new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "Asia/Kuala_Lumpur" }).format(NOW))}</span>
-            <span class="nx">September</span>
-          </div>
-          <div class="tl-days"><div></div>${days.join("")}</div>
-          <div class="tl-grid">
-            ${hours}
-            <div class="tl-ev acc" style="left:20%;top:8px">
-              <span style="display:flex;flex-direction:column;gap:1px">
-                <span class="n">Comparison still owed</span>
-                <span class="s">D-012 · ${oldest ? openDays(oldest) : 0} days</span>
-              </span>
-              <span class="faces" aria-hidden="true">
-                <i style="background:color-mix(in oklab, var(--destructive) 30%, transparent);color:var(--i-crit)">AL</i>
-                <i style="background:color-mix(in oklab, var(--primary) 24%, transparent);color:var(--butter)">WH</i>
-              </span>
-            </div>
-            <div class="tl-ev" style="left:55%;bottom:18px">
-              <span style="display:flex;flex-direction:column;gap:1px">
-                <span class="n">Faizal parked until October</span>
-                <span class="s">his instruction · B-051</span>
-              </span>
-            </div>
-          </div>
+        ${stageFunnel()}
         </div>
       </div>
     </div>`;
@@ -969,16 +985,38 @@ function clientTile(c: ClientView): string {
     </button>`;
 }
 
+/**
+ * The clients page, filtered by stage when one was clicked.
+ *
+ * The chips are duplicated from the dashboard strip on purpose. Arriving
+ * here from the funnel needs a way to widen the filter without going back,
+ * and arriving from the nav needs a way to narrow it without going to the
+ * dashboard first — the same control answers both.
+ */
 function clientsGrid(): string {
+  const shown = state.stage ? clients.filter((c) => stageOf(c.key) === state.stage) : clients;
+
+  const chips = buckets
+    .map((b) => {
+      const on = state.stage === b.stage;
+      return `
+        <button class="schip${on ? " on" : ""}" data-act="stage" data-stage="${e(b.stage)}"
+          title="${e(STAGE_NOTE[b.stage])}">${e(b.stage)} <b>${b.count}</b></button>`;
+    })
+    .join("");
+
   return `
     <div class="page">
       <div class="qhead">
-        <span class="hero-h d">Clients</span>
-        <span class="mt">One card per thread, ordered so silent churn sits first — it is the case
-          a human would never surface unaided. Open a card for the chat, what they are
-          waiting on, and what to say next.</span>
+        <span class="hero-h d">${state.stage ? e(state.stage) : "Clients"}</span>
+        <span class="mt">${state.stage
+          ? `${e(STAGE_NOTE[state.stage])}. ${shown.length} of ${clients.length} ${shown.length === 1 ? "client" : "clients"} — most recently active first. Clear the filter to see the whole book.`
+          : `One card per thread, ordered so silent churn sits first — it is the case a human would never surface unaided. Open a card for the chat, what they are waiting on, and what to say next.`}</span>
       </div>
-      <div class="cgrid">${clients.map(clientTile).join("")}</div>
+      <div class="schips">${chips}${state.stage ? `<button class="schip clear" data-act="stage-clear">clear</button>` : ""}</div>
+      ${shown.length
+        ? `<div class="cgrid">${shown.map(clientTile).join("")}</div>`
+        : `<p class="empty">Nobody is at this stage. That is a measurement, not a gap — the strip keeps empty stages so the absence stays visible.</p>`}
     </div>`;
 }
 
@@ -1315,6 +1353,14 @@ function queuePage(kind: QueueKind): string {
 
 /* ── render ──────────────────────────────────────────────────────── */
 
+/** Filter the clients page to a stage, or clear it if it is already on. */
+function openStage(stage: Stage): void {
+  state.stage = state.stage === stage ? null : stage;
+  state.page = "clients";
+  state.cview = "grid";
+  setState("open");
+}
+
 function body(): string {
   if (state.page === "home") return overviewPage();
   if (state.page === "agenda") return agendaPage();
@@ -1350,6 +1396,13 @@ function render(): void {
     }
 
     need("l-open").innerHTML = `<div class="dash">${header()}<div class="body sc">${body()}</div>${footer()}</div>`;
+
+    /* The funnel is React and this render just replaced the subtree it was in.
+       Re-parenting the same node rather than recreating it is what keeps the
+       root alive — otherwise the entrance animation would replay on every
+       keystroke in the search box. */
+    const slot = document.getElementById("funnel-slot");
+    if (slot && !slot.firstChild) slot.append(funnelElement(openStage));
 
     for (const [id, y] of keep) {
       const el = document.getElementById(id);
@@ -1665,10 +1718,22 @@ island.addEventListener("click", (ev) => {
       render();
       return;
     }
+    /* The strip is a filter, not a chart with a tooltip. A stage is only
+       useful once it resolves to the names inside it, so the click carries
+       straight through to the list rather than expanding in place. */
+    case "stage": {
+      const want = hit.dataset.stage as Stage | undefined;
+      if (want) openStage(want);
+      return;
+    }
     case "open-slot":
       state.slot = hit.dataset.slot ?? null;
       state.page = "agenda";
       setState("open");
+      return;
+    case "stage-clear":
+      state.stage = null;
+      render();
       return;
     case "clients-back":
       state.cview = "grid";

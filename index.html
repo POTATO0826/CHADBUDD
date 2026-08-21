@@ -821,6 +821,143 @@ html[data-shell="tauri"] #desk{ display: none; }
 .rule .thumb{ width: 30px; height: 24px; border-radius: var(--r-sm); background: linear-gradient(140deg, color-mix(in oklab, var(--card) 70%, transparent), color-mix(in oklab, var(--card) 60%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 9%, transparent); flex: none; }
 
 .timeline{ grid-column: span 2; border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+/* ── the book, by stage ───────────────────────────────────────────
+   Sits where the timeline did: bottom-centre, two columns. */
+.book{ grid-column: span 2; border-radius: var(--r-xl); background: var(--tile);
+  box-shadow: var(--edge); padding: 14px 20px 14px; display: flex; flex-direction: column; gap: 10px;
+  /* Both required. min-height:0 lets the tile shrink inside the grid track;
+     overflow:hidden stops the chart's halo rings — which are drawn with
+     overflow-visible so they can bloom past their own segment — from
+     blooming past the tile as well. */
+  min-height: 0; overflow: hidden; }
+.book .soon{ margin-left: auto; font-family: var(--mono); font-size: 9.5px; color: var(--butter);
+  white-space: nowrap; }
+
+/* Even segments, not a taper. A funnel narrows because its far end is the
+   residue of its first — here the far end is a renewal with a deadline on it,
+   so narrowing would shrink the segment that matters most exactly as the
+   business improves. The arrows carry the direction the shape gives up. */
+.book .strip{ flex: 1; min-height: 0; display: flex; }
+.book .seg{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px;
+  padding: 0; text-align: left; border-radius: var(--r-md);
+  transition: transform .16s var(--ease); }
+.book .seg:hover{ transform: translateY(-1px); }
+.book .seg .bar{ height: 44px; border-radius: var(--r-md); display: flex; align-items: center;
+  padding: 0 12px; transition: box-shadow .16s var(--ease); }
+.book .seg:hover .bar{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 45%, transparent) !important; }
+.book .seg.on .bar{ box-shadow: inset 0 0 0 2px var(--primary) !important; }
+.book .seg .n{ font-family: var(--display); font-size: 20px; font-weight: 500; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums; }
+.book .seg .lb{ font-family: var(--label); font-weight: 500; font-size: 8.5px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--t4); padding-left: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book .seg .pc{ font-family: var(--mono); font-size: 9px; color: var(--t5); padding-left: 2px; }
+/* An empty stage keeps its slot. "Nobody came back last quarter" is a finding,
+   and a chart that drops the empty bucket is a chart that hides it. */
+.book .seg.none .n{ opacity: .5; }
+.book .arrow{ align-self: center; margin-top: -14px; font-family: var(--mono); font-size: 11px;
+  color: var(--t5); flex: none; }
+
+
+/* ── stage chips on the clients page ──────────────────────────────
+   Duplicated from the strip on purpose: arriving from the funnel needs a way
+   to widen without going back, arriving from the nav needs a way to narrow
+   without going to the dashboard first. */
+
+/* ── the bklit funnel chart ───────────────────────────────────────
+   The component is vendored from bklit's registry unmodified, which means it
+   arrives wearing Tailwind class names. Rather than install Tailwind — a
+   PostCSS pipeline, a config, and a class scanner, to resolve 41 utilities —
+   the 41 are written out here, scoped under .cb-funnel so nothing leaks into
+   the rest of the sheet.
+
+   The four that carry meaning are the theme tokens. Mapping them onto this
+   app's own ramp is what makes the chart inherit Rosé Pine for free, and keep
+   inheriting whatever the tokens become later. */
+.cb-funnel{ --foreground: var(--t1); --background: var(--card); --muted-foreground: var(--t5); }
+
+.cb-funnel .relative{ position: relative; }
+.cb-funnel .absolute{ position: absolute; }
+.cb-funnel .inset-0{ inset: 0; }
+.cb-funnel .flex{ display: flex; }
+.cb-funnel .flex-row{ flex-direction: row; }
+.cb-funnel .flex-col{ flex-direction: column; }
+.cb-funnel .flex-1{ flex: 1 1 0%; }
+.cb-funnel .shrink-0{ flex-shrink: 0; }
+.cb-funnel .items-center{ align-items: center; }
+.cb-funnel .items-end{ align-items: flex-end; }
+.cb-funnel .items-start{ align-items: flex-start; }
+.cb-funnel .justify-center{ justify-content: center; }
+.cb-funnel .justify-start{ justify-content: flex-start; }
+.cb-funnel .justify-end{ justify-content: flex-end; }
+.cb-funnel .gap-1\.5{ gap: 6px; }
+.cb-funnel .h-full{ height: 100%; }
+.cb-funnel .w-full{ width: 100%; }
+.cb-funnel .h-\[16\%\]{ height: 16%; }
+.cb-funnel .w-\[16\%\]{ width: 16%; }
+.cb-funnel .px-3{ padding-left: 12px; padding-right: 12px; }
+.cb-funnel .py-1{ padding-top: 4px; padding-bottom: 4px; }
+.cb-funnel .pb-1{ padding-bottom: 4px; }
+.cb-funnel .pt-1{ padding-top: 4px; }
+.cb-funnel .pl-2{ padding-left: 8px; }
+.cb-funnel .pr-2{ padding-right: 8px; }
+.cb-funnel .rounded-full{ border-radius: 999px; }
+.cb-funnel .overflow-visible{ overflow: visible; }
+.cb-funnel .whitespace-nowrap{ white-space: nowrap; }
+.cb-funnel .select-none{ user-select: none; }
+.cb-funnel .pointer-events-none{ pointer-events: none; }
+.cb-funnel .cursor-pointer{ cursor: pointer; }
+.cb-funnel .shadow-sm{ box-shadow: var(--shadow-sm); }
+.cb-funnel .bg-foreground{ background: var(--foreground); }
+.cb-funnel .text-foreground{ color: var(--foreground); }
+.cb-funnel .text-background{ color: var(--background); }
+.cb-funnel .text-muted-foreground{ color: var(--muted-foreground); }
+/* The reference sets three tiers — count above the shape, percentage centred
+   in it, stage name below — and that layout only works because the three are
+   visibly different. Tailwind hands values and labels the same `text-sm`, so
+   the distinction is drawn here off `font-semibold` (the count) and
+   `font-medium` (the label). Declared after `.text-sm` so they win on source
+   order at equal specificity. */
+.cb-funnel .text-sm{ font-family: var(--mono); font-size: 11px; }
+.cb-funnel .text-xs{ font-family: var(--mono); font-size: 10px; }
+/* The count: display face, because it is the number being read. */
+.cb-funnel .font-semibold{ font-family: var(--display); font-size: 17px; font-weight: 500;
+  letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+/* The stage name: the same uppercase caption treatment as every other label
+   in the app, so it reads as a label rather than as more chart. */
+.cb-funnel .font-medium{ font-family: var(--label); font-size: 9px; font-weight: 500;
+  letter-spacing: .16em; text-transform: uppercase; }
+.cb-funnel .font-bold{ font-weight: 500; }
+
+/* ── the host ─────────────────────────────────────────────────────
+   Moved between placeholders by render() rather than recreated, so the React
+   root — and the entrance animation — survives an innerHTML swap. */
+.cb-funnel-host{ display: flex; width: 100%; min-height: 0; flex: 1; }
+.cb-funnel{ display: flex; flex-direction: column; gap: 4px; width: 100%; min-height: 0; }
+.cb-funnel-plot{ flex: 1; min-height: 0; width: 100%; cursor: pointer; }
+.cb-funnel-note{ font-family: var(--mono); font-size: 9px; color: var(--t4);
+  /* Fixed height, not conditional: a line that appears on hover would resize
+     the chart under the cursor that summoned it. */
+  min-height: 13px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The chart is pointer-only. These give keyboard users a real control per
+   stage, laid over the plot and invisible until focused. */
+.cb-funnel-keys{ position: absolute; inset: 0 0 16px; display: flex; width: 100%; z-index: 1; }
+.cb-funnel-keys button{ flex: 1; border-radius: var(--r-md); }
+.cb-funnel-keys button:focus-visible{ outline: 2px solid var(--primary); outline-offset: -2px; }
+.cb-funnel{ position: relative; }
+
+.schips{ display: flex; flex-wrap: wrap; gap: 6px; }
+.schip{ font-family: var(--mono); font-size: 10px; padding: 6px 12px; border-radius: 999px;
+  color: var(--t3); box-shadow: var(--edge-2); white-space: nowrap;
+  transition: background .16s var(--ease), color .16s var(--ease); }
+.schip b{ font-weight: 500; color: var(--t1); margin-left: 3px; }
+.schip:hover{ background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--t1); }
+.schip.on{ background: var(--butter); color: var(--butter-d); box-shadow: none; }
+.schip.on b{ color: var(--butter-d); }
+.schip.clear{ color: var(--t4); box-shadow: none; text-decoration: underline; text-underline-offset: 3px; }
+.empty{ font-size: 12.5px; line-height: 1.55; color: var(--t4); max-width: 62ch; padding: 22px 2px; }
 .timeline .hd{ display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--t4); }
 .timeline .hd .mo{ font-family: var(--sans); font-size: 15px; font-weight: 500; color: var(--t1); margin: 0 auto; }
 .timeline .hd .nx{ padding: 5px 11px; border-radius: 999px; box-shadow: var(--edge-2); color: color-mix(in oklab, var(--foreground) 90%, var(--card)); }
