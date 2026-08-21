@@ -25,7 +25,7 @@ import type { FunctionReference } from "convex/server";
 
 import { setNow } from "../data/clock.ts";
 import type { ClientKey, SeedThread } from "../data/types.ts";
-import { initialsOf, rebuild } from "./derive.ts";
+import { initialsOf, rebuild, setDecayTempo } from "./derive.ts";
 import { rebuildAgenda, shiftAgendaToDay } from "./agenda.ts";
 import { setIdeas } from "./copy.ts";
 import { isTauri } from "./shell.ts";
@@ -38,9 +38,29 @@ import type { Idea } from "./copy.ts";
  * editing server.ts and build.ts — shared files — for a value that is the same
  * on every developer's machine. `?convex=` overrides it.
  */
+const params = new URLSearchParams(window.location.search);
+
 const DEFAULT_URL = "http://127.0.0.1:3210";
 
-const params = new URLSearchParams(window.location.search);
+/**
+ * Decay on a timescale a person can watch.
+ *
+ * The real model compares a 30-day window against a 90-day baseline, which
+ * cannot move while someone is looking at it. Live mode adds a quiet-time rule
+ * on top — half an hour without a word is "going quiet", a day is "silent" —
+ * so the states are reachable in a demo instead of theoretical.
+ *
+ * This is a demo tempo, not a claim about relationships: the four measured
+ * signals still sit underneath, and the breakdown still shows what they say.
+ * Overridable so the thresholds can be shortened further when showing someone.
+ */
+const DEMO_TEMPO = {
+  decayAfterMs: Number(params.get("decayMin") ?? 30) * 60_000,
+  silentAfterMs: Number(params.get("silentMin") ?? 24 * 60) * 60_000,
+};
+
+/** How often the clock is re-read. A minute, unless a demo wants it snappier. */
+const TICK_MS = Number(params.get("tickSec") ?? 60) * 1_000;
 
 /**
  * Live in the desktop app, seed in the browser, either overridable.
@@ -147,6 +167,7 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
     if (!clockMoved) {
       setNow(Date.now());
       shiftAgendaToDay(Date.now());
+      setDecayTempo(DEMO_TEMPO);
       clockMoved = true;
       startDayTicker();
     }
@@ -170,8 +191,11 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
     window.setInterval(() => {
       setNow(Date.now());
       rebuildAgenda();
+      // Also rebuilds the book: a client crosses into decaying by the clock
+      // moving, not by anything arriving, so nothing else would notice.
+      rebuild();
       onRender();
-    }, 60_000);
+    }, TICK_MS);
   };
 
   /**

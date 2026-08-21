@@ -29,7 +29,8 @@
     "seed:load": "bun run bridge/seed-load.ts",
     "agent:run": "bunx convex run agent:analyzeAll",
     "agent:verify": "bun run bridge/agent/verify-cites.ts",
-    "demo": "bun run demo/serve.ts"
+    "demo": "bun run demo/serve.ts",
+    "demo:decay": "bun run bridge/demo-client.ts"
   },
   "type": "module",
   "dependencies": {

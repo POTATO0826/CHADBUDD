@@ -380,9 +380,71 @@ function pctOf(recent: number, baseline: number): number {
   return Math.max(0, Math.min(100, Math.round((recent / baseline) * 100)));
 }
 
+/**
+ * Demo tempo: decay measured in minutes rather than months.
+ *
+ * `score()` compares a 30-day recent window against a 90-day baseline, which is
+ * the right model for a real book and impossible to show in a demo — nothing
+ * moves in the ten minutes someone is watching.
+ *
+ * So live mode layers a second, cruder rule on top: how long since this client
+ * last said anything. It is not a better measure of decay, and it does not
+ * replace the four signals — the breakdown underneath still shows what was
+ * actually measured. It just makes the *state* reachable on a human timescale.
+ *
+ * Null by default. The seed demo keeps the real model, so its four hand-written
+ * clients read exactly as they were written to.
+ */
+let tempo: { decayAfterMs: number; silentAfterMs: number } | null = null;
+
+export function setDecayTempo(next: { decayAfterMs: number; silentAfterMs: number } | null): void {
+  tempo = next;
+}
+
+/** "3 minutes" / "2 hours" / "4 days" — the gap, said plainly. */
+function quietFor(ms: number): string {
+  const min = Math.floor(ms / 60_000);
+  if (min < 60) return `${min} minute${min === 1 ? "" : "s"}`;
+  const hours = Math.floor(min / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  return `${Math.floor(hours / 24)} days`;
+}
+
+/**
+ * Promote a status on quiet time alone, when a tempo is set.
+ *
+ * Only ever promotes. A client the four signals already call decaying does not
+ * get talked down because they messaged recently — silence is evidence of
+ * trouble, but noise is not evidence of health.
+ */
+function withQuiet(s: Score, thread: SeedThread): Score {
+  if (!tempo) return s;
+
+  let lastClient: SeedMessage | undefined;
+  for (let i = thread.messages.length - 1; i >= 0; i--) {
+    const m = thread.messages[i]!;
+    if (m.from === "client") {
+      lastClient = m;
+      break;
+    }
+  }
+  if (!lastClient) return s;
+
+  const quiet = NOW - tsOf(lastClient);
+  const said = quietFor(quiet);
+
+  if (quiet >= tempo.silentAfterMs) {
+    return { ...s, silent: true, status: "silent", headline: `Silent — nothing from them in ${said}` };
+  }
+  if (quiet >= tempo.decayAfterMs && !s.silent && s.status !== "decaying") {
+    return { ...s, status: "decaying", headline: `Going quiet — no message in ${said}` };
+  }
+  return s;
+}
+
 function build(thread: SeedThread): ClientView {
   const w = windows(thread);
-  const s = score(w);
+  const s = withQuiet(score(w), thread);
   const led = ledgerFor(thread.key);
   const open = openEntries(thread.key);
   const bySource = new Map(led.entries.map((e) => [e.sourceMessageId, e]));
@@ -484,8 +546,18 @@ function emptyTotals() {
   };
 }
 
+/**
+ * The threads the current view model was built from.
+ *
+ * Held so rebuild() can be called with no argument — the live ticker needs to
+ * recompute as the clock moves, and it has no business knowing where the
+ * threads came from.
+ */
+let lastSource: SeedThread[] = [];
+
 /** Recompute the view model from a set of threads. Seed or live, same path. */
-export function rebuild(source: SeedThread[]): void {
+export function rebuild(source: SeedThread[] = lastSource): void {
+  lastSource = source;
   clients = source
     .map(build)
     // Silent churn first: it's the case a human would never surface unaided.
