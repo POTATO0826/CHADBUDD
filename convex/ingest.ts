@@ -189,6 +189,23 @@ export const ingestBatch = mutation({
   },
 });
 
+/**
+ * Where this client's email replies go.
+ *
+ * Advisor-entered, because no platform we read carries it. Stored on the
+ * client rather than in the page so it survives reinstalls and is one fact,
+ * not one per machine.
+ */
+export const setEmail = mutation({
+  args: { key: v.string(), email: v.string() },
+  handler: async (ctx, { key, email }) => {
+    const client = (await ctx.db.query("clients").collect()).find((c) => c.key === key);
+    if (!client) throw new Error(`No client ${key}`);
+    // Empty clears it: a wrong address is worse than none.
+    await ctx.db.patch(client._id, { email: email.trim() === "" ? undefined : email.trim() });
+  },
+});
+
 /** Connection state for the pairing UI. Single row, replaced in place. */
 export const setPairing = mutation({
   args: {

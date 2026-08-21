@@ -58,6 +58,8 @@ export default defineSchema({
     seq: v.number(),
     /** Last Hermes pass, epoch ms. Debounce lives here, not in the bridge. */
     analyzedTs: v.optional(v.number()),
+    /** Where email replies go. Set by the advisor; absent until they do. */
+    email: v.optional(v.string()),
   })
     .index("by_key", ["key"])
     .index("by_source", ["sourceId"]),
@@ -229,6 +231,24 @@ export default defineSchema({
        that gets slower as the diary fills. */
     .index("by_cite", ["inferredCite"])
     .index("by_client", ["clientKey"]),
+
+  /**
+   * What the agent noticed about the person, as opposed to the thread.
+   *
+   * Personalisation is the product for this advisor — a daughter starting
+   * secondary school, a renovation, a stated risk allergy — and it is exactly
+   * what falls out of memory at a hundred clients. Every note passed the same
+   * verbatim gate as a recommendation claim: the quote is in the message or
+   * the note was never stored. Replaced wholesale on each analysis, because a
+   * note is a reading of the thread as it stands, not an archive.
+   */
+  notes: defineTable({
+    clientId: v.id("clients"),
+    text: v.string(),
+    /** The message that says so. */
+    cite: v.string(),
+    updatedAt: v.number(),
+  }).index("by_client", ["clientId"]),
 
   pairing: defineTable({
     platform: v.string(),

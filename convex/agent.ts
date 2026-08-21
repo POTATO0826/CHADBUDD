@@ -81,8 +81,22 @@ const MIN_MESSAGES = 3;
 const IDEA_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["ideas"],
+  required: ["ideas", "notes"],
   properties: {
+    notes: {
+      type: "array",
+      description: "Durable facts about the person, each with verbatim evidence.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["note", "sourceId", "quote"],
+        properties: {
+          note: { type: "string", description: "The fact, under 15 words, no advice" },
+          sourceId: { type: "string", description: "A message id exactly as shown" },
+          quote: { type: "string", description: "Copied character-for-character from that message" },
+        },
+      },
+    },
     ideas: {
       type: "array",
       items: {
@@ -150,7 +164,14 @@ RULES, in order of importance:
 5. \`draft\` is a message the advisor could send as-is. No placeholders, no
    [square brackets], no product pitches unless the client raised it first.
 
-At most 3 ideas. Fewer is better than padded.`;
+At most 3 ideas. Fewer is better than padded.
+
+Separately, fill \`notes\`: durable facts about the PERSON, not the thread —
+family, dates that matter, stated preferences, money facts, things they are
+proud or worried about. These are what let the advisor open the next call
+like someone who remembered. Same evidence rule: each note carries the
+message id and an EXACT quote, or it is discarded. At most 6, each under 15
+words, no advice, no sentiment-guessing. An empty list is fine.`;
 
 interface ModelIdea {
   rank: string;
@@ -240,7 +261,7 @@ async function runPass(
     const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const raw = body.choices?.[0]?.message?.content ?? "";
 
-    let parsed: { ideas?: ModelIdea[] };
+    let parsed: { ideas?: ModelIdea[]; notes?: Array<{ note: string; sourceId: string; quote: string }> };
     try {
       parsed = JSON.parse(raw) as typeof parsed;
     } catch {
@@ -276,10 +297,26 @@ async function runPass(
       keptIdeas.push({ ...rest, cites: [...new Set(kept.map((c) => c.sourceId))] });
     }
 
+    /* Notes pass the same gate as claims — a note is a claim about a person,
+       and a personalisation fact the client never said is worse than none:
+       it gets repeated back to them at the exact moment trust is being built. */
+    const keptNotes: Array<{ text: string; cite: string }> = [];
+    for (const n of parsed.notes ?? []) {
+      const { kept, rejected } = gate(
+        [{ statement: n.note, sourceId: n.sourceId, quote: n.quote }],
+        byId,
+      );
+      if (kept.length > 0) keptNotes.push({ text: n.note, cite: n.sourceId });
+      for (const r of rejected) {
+        rejections.push({ claim: r.statement, sourceId: r.sourceId, quote: r.quote, reason: r.reason });
+      }
+    }
+
     await ctx.runMutation(internal.agentData.recordAnalysis, {
       clientId: thread.clientId,
       model: MODEL,
       ideas: keptIdeas,
+      notes: keptNotes,
       rejected: rejections,
     });
 

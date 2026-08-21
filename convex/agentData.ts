@@ -161,6 +161,7 @@ export const recordAnalysis = internalMutation({
         cites: v.array(v.string()),
       }),
     ),
+    notes: v.array(v.object({ text: v.string(), cite: v.string() })),
     rejected: v.array(
       v.object({
         claim: v.string(),
@@ -174,7 +175,7 @@ export const recordAnalysis = internalMutation({
       }),
     ),
   },
-  handler: async (ctx, { clientId, model, ideas, rejected }) => {
+  handler: async (ctx, { clientId, model, ideas, notes, rejected }) => {
     const now = Date.now();
 
     for (const stale of await ctx.db
@@ -182,6 +183,18 @@ export const recordAnalysis = internalMutation({
       .withIndex("by_client", (q) => q.eq("clientId", clientId))
       .collect()) {
       await ctx.db.delete(stale._id);
+    }
+
+    /* Notes are a reading of the thread as it stands, not an archive —
+       replaced wholesale, same as ideas. */
+    for (const stale of await ctx.db
+      .query("notes")
+      .withIndex("by_client", (q) => q.eq("clientId", clientId))
+      .collect()) {
+      await ctx.db.delete(stale._id);
+    }
+    for (const n of notes) {
+      await ctx.db.insert("notes", { ...n, clientId, updatedAt: now });
     }
 
     for (const i of ideas) {

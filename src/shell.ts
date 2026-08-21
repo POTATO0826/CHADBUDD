@@ -195,6 +195,16 @@ export function watchHotRect(island: HTMLElement): void {
   window.addEventListener("resize", () => reportHotRect(island));
 }
 
+/**
+ * Open a deep link in whatever the OS has registered for it — tg:// for the
+ * Telegram app, mailto: for the mail client. The Rust side allowlists the
+ * schemes; anything else is refused there, not here, because the page is the
+ * less trusted party in that conversation.
+ */
+export function openExternal(url: string): void {
+  void rawInvoke?.("open_external", { url });
+}
+
 export function quit(): void {
   invoke("quit");
 }

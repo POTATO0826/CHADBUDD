@@ -100,6 +100,26 @@ fn set_content_protected(protected: bool, app: AppHandle) -> Result<bool, String
 /// receives the keystroke — it goes to the editor behind instead.
 ///
 /// So focus is taken on open and never on idle, alert or peek.
+/// Hand a URL to the operating system — the Telegram deep link, mailto.
+///
+/// The scheme allowlist is the entire security model, and it is enough:
+/// everything after the scheme is data to the registered protocol handler,
+/// never a command line. An http url would also "work" here, which is exactly
+/// why it is not on the list — the page has no business opening browsers.
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    let allowed = url.starts_with("tg://") || url.starts_with("mailto:");
+    if !allowed {
+        return Err(format!("refusing to open non-allowlisted url: {url}"));
+    }
+    // `start` needs the empty-title argument or it eats the url as a title.
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn focus_window(app: AppHandle) -> Result<(), String> {
     let window = app
@@ -144,7 +164,8 @@ pub fn run() {
             set_hot_rect,
             quit,
             set_content_protected,
-            focus_window
+            focus_window,
+            open_external
         ])
         .setup(move |app| {
             let window = app

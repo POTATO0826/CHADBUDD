@@ -906,6 +906,33 @@ html[data-shell="tauri"] #desk{ display: none; }
 .dslot .dst{ font-size: 14px; color: var(--t1); }
 .dslot .dsw{ font-family: var(--mono); font-size: 9.5px; color: var(--t3); }
 
+/* ── the composer: replying without leaving ── */
+.composer{ display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent); }
+.cvia{ display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; align-self: flex-start;
+  background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.cvia .cv{ font-family: var(--mono); font-size: 9.5px; padding: 4px 11px; border-radius: 999px;
+  color: var(--t3); transition: background .14s var(--ease), color .14s var(--ease); }
+.cvia .cv.on{ background: color-mix(in oklab, var(--foam) 20%, transparent); color: var(--t1); }
+.replybox{ font: inherit; font-size: 12.5px; line-height: 1.55; color: var(--t1);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--r-md); padding: 8px 10px; resize: vertical; min-height: 40px; }
+.replybox:focus{ outline: none; border-color: color-mix(in oklab, var(--foam) 40%, transparent); }
+.replybox::placeholder{ color: var(--t4); }
+.crow{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.crow .mt{ font-family: var(--mono); font-size: 9px; color: var(--t4); }
+
+.callbtn{ margin-left: auto; }
+
+.emailrow .emailbox{ font: inherit; font-size: 11px; color: var(--t1); width: 100%;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 9%, transparent);
+  border-radius: var(--r-sm); padding: 3px 7px; }
+.emailrow .emailbox:focus{ outline: none; border-color: color-mix(in oklab, var(--foam) 40%, transparent); }
+.emailrow .emailbox::placeholder{ color: var(--t4); }
+.btn.sm{ font-size: 10px; padding: 3px 9px; }
+
 /* Unrated marker on a month cell — the honest "?" */
 .grid .unm{ font-family: var(--mono); font-size: 9px; color: var(--t3);
   border: 1px dashed color-mix(in oklab, var(--foreground) 30%, transparent);

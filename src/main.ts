@@ -27,7 +27,7 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
-import { initLive, queueSend } from "./live.ts";
+import { clientMeta, initLive, liveNotes, queueSend, sendEmail, setClientEmail } from "./live.ts";
 import { connectCalendar } from "./convexCalendar.ts";
 import { initScramble } from "./scramble.ts";
 import { POINT_GLYPH, POINT_LABEL, notesFor } from "./contact.ts";
@@ -43,7 +43,7 @@ import { holdings } from "../data/holdings.ts";
 import type { MarketRow, MaturingRow, Report, StaleRow } from "./desk.ts";
 import { deskView, dismissBrief, snoozeBrief } from "./desk.ts";
 import { initDrag } from "./drag.ts";
-import { focusWindow, isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
+import { focusWindow, isTauri, openExternal, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
 
 /* ── tiny helpers ────────────────────────────────────────────────── */
 
@@ -145,6 +145,9 @@ interface State {
    * goes out is what was approved, not what the model originally wrote.
    */
   editing: string | null;
+  /** Reply composer: which channel, and the draft surviving re-renders. */
+  replyVia: "tg" | "em";
+  replyDraft: string;
   /** The edited text, held apart so cancelling restores the agent's original. */
   editText: string;
   /**
@@ -185,6 +188,8 @@ const state: State = {
   ask: {},
   draft: "",
   editing: null,
+  replyVia: "tg",
+  replyDraft: "",
   editText: "",
   // Off by default: the island should be visible in a screen recording made
   // deliberately, and hidden only when the advisor says so.
@@ -2250,6 +2255,32 @@ function searchKeeps(m: RecMessage): boolean {
  * — which is the one that can be fixed.
  */
 function keyInfoTile(c: ClientView): string {
+  /* Live mode: the agent's own notes, verbatim-gated server-side. Null means
+     no live data yet (seed renders); an empty array is a real answer. */
+  const live = liveNotes(c.key);
+  if (live !== null) {
+    const rows = live
+      .map(
+        (n) => `
+        <div class="kp" data-kind="fact">
+          <span class="g" title="Noted by ChadBuddy">✎</span>
+          <span class="col">
+            <span class="tx">${e(n.text)}</span>
+            <span class="mt">noted by chadbuddy · ${citeChips([n.cite], c.key)}</span>
+          </span>
+        </div>`,
+      )
+      .join("");
+    return `
+      <div class="tile keyinfo" style="gap:9px">
+        <div class="kihead">
+          <span class="t" style="font-size:14px;font-weight:500">Key information</span>
+          <span class="lbl">${live.length} noted</span>
+        </div>
+        ${rows || `<p class="empty" style="font-size:11px">Nothing noted yet — the agent reads every 15 minutes once a thread has a few messages.</p>`}
+      </div>`;
+  }
+
   const notes = notesFor(c.key);
 
   const rows = notes.moments
@@ -2299,6 +2330,69 @@ function keyInfoTile(c: ClientView): string {
     </div>`;
 }
 
+/**
+ * Call them, without leaving to find them.
+ *
+ * Honest about what it is: Telegram voice runs on MTProto's own call stack,
+ * which a webview cannot host — so this deep-links straight into the Telegram
+ * app's call screen for this exact person. One click here, one click there.
+ * The button only exists when there is a real Telegram peer behind the card:
+ * seeded clients have nobody to ring.
+ */
+function callButton(c: ClientView): string {
+  const meta = clientMeta(c.key);
+  if (!isTauri || !meta || meta.sourceId === "" || meta.sourceId.startsWith("seed:")) return "";
+  return `<button class="btn callbtn" data-act="call-tg" data-client="${c.key}"
+    title="Opens the call screen in Telegram">☏ Call</button>`;
+}
+
+/**
+ * The email on file, editable in place.
+ *
+ * Advisor-entered because no platform we read carries it. An empty save
+ * clears it — a wrong address is worse than none.
+ */
+function emailRow(c: ClientView): string {
+  const meta = clientMeta(c.key);
+  const email = meta?.email ?? "";
+  return `
+    <div class="fact emailrow">
+      <span class="g">✉</span><span class="k">Email</span><span class="d"></span>
+      <span class="v" style="display:flex;gap:5px;align-items:center">
+        <input class="emailbox" id="emailbox" type="email" value="${e(email)}" placeholder="none on file">
+        <button class="btn sm" data-act="email-save" data-client="${c.key}">Save</button>
+      </span>
+    </div>`;
+}
+
+/**
+ * Replying without leaving.
+ *
+ * Telegram goes through the outbox — the bridge holds the socket and its
+ * echo puts the sent message straight back into this thread. Email goes
+ * through the deployment's Gmail action. Both paths end at a human pressing
+ * this one button; nothing composes itself.
+ */
+function composer(c: ClientView): string {
+  const meta = clientMeta(c.key);
+  const emailReady = (meta?.email ?? "") !== "";
+  const via = state.replyVia;
+  return `
+    <div class="composer">
+      <div class="cvia">
+        <button class="cv${via === "tg" ? " on" : ""}" data-act="reply-via" data-via="tg">Telegram</button>
+        <button class="cv${via === "em" ? " on" : ""}" data-act="reply-via" data-via="em"
+          ${emailReady ? "" : `title="No email on file — add one in Basic information"`}>Email${emailReady ? "" : " ·?"}</button>
+      </div>
+      <textarea class="replybox" data-act="reply-input" rows="2"
+        placeholder="${via === "tg" ? `Message ${e(c.name.split(" ")[0]!)} on Telegram…` : `Email ${e(c.name.split(" ")[0]!)}…`}">${e(state.replyDraft)}</textarea>
+      <div class="crow">
+        <span class="mt">${via === "tg" ? "sends as you, lands in this thread" : emailReady ? `to ${e(meta?.email ?? "")}` : "add an email first"}</span>
+        <button class="btn acc" data-act="reply-send" data-client="${c.key}">Send</button>
+      </div>
+    </div>`;
+}
+
 function clientDetail(c: ClientView): string {
   const shown = c.messages.filter(searchKeeps);
   const filters: Array<[Filter, string]> = [["all", "all"], ["client", "theirs"], ["flagged", "flagged"]];
@@ -2311,6 +2405,7 @@ function clientDetail(c: ClientView): string {
         <span class="nm">${e(c.name)}</span>
         <span class="chip" data-tone="${c.chipTone}">${e(c.statusWord)}</span>
         ${pulse(c)}
+        ${callButton(c)}
       </div>
 
       <div class="dcols">
@@ -2322,6 +2417,7 @@ function clientDetail(c: ClientView): string {
               ${c.facts
                 .map((f) => `<div class="fact"><span class="g">${e(f.glyph)}</span><span class="k">${e(f.k)}</span><span class="d"></span><span class="v">${e(f.v)}</span></div>`)
                 .join("")}
+              ${emailRow(c)}
             </div>
           </div>
 
@@ -2349,6 +2445,7 @@ function clientDetail(c: ClientView): string {
               ? shown.map((m) => messageRow(m, state.q.trim())).join("")
               : `<p class="empty">No message matches “${e(state.q)}”.<br>Search runs over the text, the id and the timestamp.</p>`}
           </div>
+          ${composer(c)}
         </div>
 
         <!-- what to do about it -->
@@ -2984,6 +3081,69 @@ island.addEventListener("click", (ev) => {
       return;
     }
 
+    case "call-tg": {
+      const who = hit.dataset.client;
+      const meta2 = who ? clientMeta(who) : null;
+      if (meta2 && meta2.sourceId !== "" && !meta2.sourceId.startsWith("seed:")) {
+        openExternal(`tg://user?id=${meta2.sourceId}`);
+      }
+      return;
+    }
+
+    case "email-save": {
+      const who = hit.dataset.client;
+      const box = document.getElementById("emailbox") as HTMLInputElement | null;
+      if (who && box) {
+        void setClientEmail(who, box.value)
+          .then(() => render())
+          .catch((err) => {
+            console.error("[chadbuddy] email save failed", err);
+            showNotif({ kind: "reminder", client: null, title: "Not saved", body: String(err instanceof Error ? err.message : err).slice(0, 60), meta: "", tag: "EMAIL", tone: "critical", dwell: 6000 });
+          });
+      }
+      return;
+    }
+
+    case "reply-via": {
+      state.replyVia = hit.dataset.via === "em" ? "em" : "tg";
+      render();
+      return;
+    }
+
+    /* The send. Both channels end here, at a person pressing a button on a
+       message they wrote — nothing about this path is autonomous. Telegram
+       rides the outbox and comes back into the thread through the bridge's
+       echo; email is fire-and-notify because it is not part of the citation
+       record. */
+    case "reply-send": {
+      const who = hit.dataset.client;
+      const text = state.replyDraft.trim();
+      if (!who || text === "") return;
+
+      const done = (title: string, body: string, tone: "butter" | "critical"): void => {
+        showNotif({ kind: "reminder", client: who, title, body: body.slice(0, 60), meta: "", tag: tone === "critical" ? "FAILED" : "SENT", tone, dwell: 6000 });
+      };
+
+      if (state.replyVia === "tg") {
+        void queueSend(who, text)
+          .then(() => {
+            state.replyDraft = "";
+            render();
+            done("Queued", "the bridge delivers it in about a second", "butter");
+          })
+          .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
+      } else {
+        void sendEmail(who, `Message from ${ADVISOR}`, text)
+          .then(() => {
+            state.replyDraft = "";
+            render();
+            done("Email sent", clientMeta(who)?.email ?? "", "butter");
+          })
+          .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
+      }
+      return;
+    }
+
     /* A block with nobody on the other side.    /* A block with nobody on the other side. The button still exists so the
        whole row is one hit target rather than a mix of live and dead pixels. */
     case "noop":
@@ -3148,6 +3308,11 @@ island.addEventListener("input", (ev) => {
     state.q = el.value;
     refocus = ".qbox";
     render();
+  } else if (act === "reply-input") {
+    /* No render: nothing on screen depends on the draft, and re-rendering
+       per keystroke would fight the caret. State is only the lifeboat for
+       when something ELSE re-renders mid-thought. */
+    state.replyDraft = el.value;
   } else if (act === "edit-draft") {
     /* Held in state rather than read off the DOM at send time, because the
        island re-renders by swapping innerHTML — the textarea the advisor typed

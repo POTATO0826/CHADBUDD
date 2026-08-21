@@ -3,6 +3,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/bun": "latest",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "typescript": "^5"
@@ -36,12 +37,13 @@
   },
   "type": "module",
   "dependencies": {
-    "convex": "^1.44.0",
-    "telegram": "^2.26.22",
     "clsx": "^2.1.1",
+    "convex": "^1.44.0",
     "motion": "^13.1.0",
+    "nodemailer": "^9.0.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "telegram": "^2.26.22"
   }
 }

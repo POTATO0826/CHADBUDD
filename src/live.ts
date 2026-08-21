@@ -119,6 +119,50 @@ export async function queueSend(key: ClientKey, text: string, ideaRank?: string)
 }
 
 /**
+ * Per-client facts that ride threads:list but are not messages: the platform
+ * sourceId (for the Telegram deep link) and the email on file. Held here so
+ * the render path can ask synchronously.
+ */
+const meta = new Map<string, { sourceId: string; email: string | null }>();
+
+export function clientMeta(key: ClientKey): { sourceId: string; email: string | null } | null {
+  return meta.get(key) ?? null;
+}
+
+/**
+ * What the agent noticed about each person, verbatim-gated server-side.
+ * Null means live mode is off or nothing has arrived yet — the seed notes
+ * render instead. An empty array is a real answer: analysed, nothing noted.
+ */
+const notesLive = new Map<ClientKey, Array<{ text: string; cite: string; updatedAt: number }>>();
+let notesReady = false;
+
+export function liveNotes(key: ClientKey): Array<{ text: string; cite: string; updatedAt: number }> | null {
+  if (!notesReady) return null;
+  return notesLive.get(key) ?? [];
+}
+
+/** Send an email through the deployment. Throws plainly when not connected. */
+export async function sendEmail(key: ClientKey, subject: string, text: string): Promise<void> {
+  if (!convex) throw new Error("Not connected to the backend — email needs live mode.");
+  const to = meta.get(key)?.email;
+  if (!to) throw new Error("No email on file for this client — add one in Basic information.");
+  const lookup2 = anyApi as unknown as Record<string, Record<string, unknown>>;
+  await convex.action(
+    lookup2["email"]?.["send"] as FunctionReference<"action">,
+    { to, subject, text },
+  );
+}
+
+/** Store the client's email on the backend, where it survives reinstalls. */
+export async function setClientEmail(key: ClientKey, email: string): Promise<void> {
+  if (!convex) throw new Error("Not connected to the backend — saving needs live mode.");
+  await convex.mutation(mut("ingest", "setEmail"), { key, email });
+  const m2 = meta.get(key);
+  if (m2) meta.set(key, { ...m2, email: email.trim() === "" ? null : email.trim() });
+}
+
+/**
  * The connected client, for modules that issue their own calls.
  *
  * Undefined until initLive has run and succeeded, which is the signal
@@ -238,6 +282,10 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
   client.onUpdate(q("threads", "list"), {}, (value) => {
     const next = value as SeedThread[];
 
+    for (const row of value as Array<{ key: string; sourceId?: string; email?: string | null }>) {
+      meta.set(row.key, { sourceId: row.sourceId ?? "", email: row.email ?? null });
+    }
+
     if (!primed) {
       for (const t of next) for (const m of t.messages) seen.add(m.externalId);
       primed = true;
@@ -278,6 +326,14 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
 
     threads = next;
     ready = true;
+    apply();
+  });
+
+  client.onUpdate(q("threads", "notes"), {}, (value) => {
+    const rows = value as Array<{ key: string; notes: Array<{ text: string; cite: string; updatedAt: number }> }>;
+    notesLive.clear();
+    for (const row of rows) notesLive.set(row.key, row.notes);
+    notesReady = true;
     apply();
   });
 
