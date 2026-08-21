@@ -1,93 +1,107 @@
-//! Voltage shell.
+//! ChadBuddy shell.
 //!
-//! The whole job of this crate: open a transparent window, ask the OS
-//! compositor to paint the desktop behind it, and point a webview at
-//! index.html. Everything visible is HTML — nothing is drawn from Rust.
+//! One transparent, undecorated, always-on-top window covering the work area.
+//! Everything visible is HTML — nothing is drawn from Rust.
+//!
+//! The whole reason this crate has any logic in it is click-through. A window
+//! that covers the screen would swallow every click meant for the desktop, so
+//! the window ignores the cursor by default. But a window that ignores the
+//! cursor can't be told when the cursor is over it either — the hover that
+//! expands the island would never arrive. So the page reports the rectangle the
+//! island currently occupies, and a polling thread here compares the OS cursor
+//! position against it and flips `set_ignore_cursor_events` at the boundary.
+//!
+//! Deliberately no native backdrop (no Mica, no acrylic): on a window this size
+//! it would blur the entire desktop rather than just the area behind the island.
+//! The desktop shows through sharp, and the island's own translucent fill is
+//! what separates it from whatever is behind.
 
-use tauri::Manager;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-#[cfg(target_os = "windows")]
-use window_vibrancy::{apply_acrylic, apply_mica};
+use tauri::{AppHandle, Manager};
 
-#[cfg(target_os = "macos")]
-use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
-
-/// Which native backdrop to attach. Set `VOLTAGE_BACKDROP` to override:
-///
-///   clear   — no backdrop. The desktop shows through sharp and unblurred.
-///   acrylic — blurs whatever is behind the window, tinted to --glass.
-///   mica    — Windows 11 theme surface. Nearly opaque in dark mode; it
-///             takes only a faint colour cue from the wallpaper.
-///
-/// Failure is never fatal: a window with no backdrop is still transparent,
-/// and the page's panels still read. The outcome goes to stderr, because a
-/// silently-failed backdrop and a working one look identical from Rust.
-fn choice() -> String {
-    std::env::var("VOLTAGE_BACKDROP")
-        .unwrap_or_else(|_| "clear".into())
-        .to_lowercase()
+/// The interactive region, in CSS pixels relative to the top-left of the page.
+#[derive(Clone, Copy, Debug, Default)]
+struct HotRect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
 }
 
-#[cfg(target_os = "windows")]
-fn apply_backdrop(window: &tauri::WebviewWindow) {
-    match choice().as_str() {
-        "clear" => eprintln!("[voltage] backdrop: clear — desktop shows through unblurred"),
-        "mica" => match apply_mica(window, Some(true)) {
-            Ok(()) => eprintln!("[voltage] backdrop: mica"),
-            Err(e) => eprintln!("[voltage] backdrop: FAILED (mica: {e})"),
-        },
-        // Alpha 120/255: enough tint to keep text legible over a bright
-        // desktop, transparent enough that you can still read the desktop.
-        _ => match apply_acrylic(window, Some((10, 12, 18, 120))) {
-            Ok(()) => eprintln!("[voltage] backdrop: acrylic"),
-            Err(e) => eprintln!("[voltage] backdrop: FAILED (acrylic: {e})"),
-        },
+impl HotRect {
+    fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x && x <= self.x + self.w && y >= self.y && y <= self.y + self.h
     }
 }
 
-#[cfg(target_os = "macos")]
-fn apply_backdrop(window: &tauri::WebviewWindow) {
-    if choice() == "clear" {
-        eprintln!("[voltage] backdrop: clear — desktop shows through unblurred");
-        return;
-    }
-    match apply_vibrancy(
-        window,
-        NSVisualEffectMaterial::HudWindow,
-        Some(NSVisualEffectState::Active),
-        None,
-    ) {
-        Ok(()) => eprintln!("[voltage] backdrop: vibrancy"),
-        Err(e) => eprintln!("[voltage] backdrop: FAILED ({e})"),
+struct Hot(Arc<Mutex<HotRect>>);
+
+/// Called by the page whenever the island changes size or state.
+#[tauri::command]
+fn set_hot_rect(x: f64, y: f64, w: f64, h: f64, hot: tauri::State<'_, Hot>) {
+    if let Ok(mut r) = hot.0.lock() {
+        *r = HotRect { x, y, w, h };
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn apply_backdrop(_window: &tauri::WebviewWindow) {
-    eprintln!("[voltage] backdrop: unsupported platform");
+/// The window has no titlebar and is skipped in the taskbar, so the page needs
+/// a way out.
+#[tauri::command]
+fn quit(app: AppHandle) {
+    app.exit(0);
 }
+
+/// How often to check where the cursor is. 60ms is under one frame of hover
+/// latency at 16ms/frame — imperceptible when entering the island, and cheap.
+const POLL: Duration = Duration::from_millis(60);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let shared: Arc<Mutex<HotRect>> = Arc::new(Mutex::new(HotRect::default()));
+
     tauri::Builder::default()
-        .setup(|app| {
+        .manage(Hot(shared.clone()))
+        .invoke_handler(tauri::generate_handler![set_hot_rect, quit])
+        .setup(move |app| {
             let window = app
                 .get_webview_window("main")
                 .expect("tauri.conf.json defines a window labelled `main`");
 
-            // Transparency has to be on before any backdrop can show through.
-            let transparent = app
-                .config()
-                .app
-                .windows
-                .iter()
-                .find(|w| w.label == "main")
-                .is_some_and(|w| w.transparent);
-            eprintln!("[voltage] window transparent: {transparent}");
+            // Start fully click-through: until the page reports a rectangle,
+            // nothing on screen should be captured by this window.
+            let _ = window.set_ignore_cursor_events(true);
 
-            apply_backdrop(&window);
+            let rect = shared.clone();
+            std::thread::spawn(move || {
+                let mut ignoring = true;
+                loop {
+                    std::thread::sleep(POLL);
+
+                    let Ok(cursor) = window.cursor_position() else { continue };
+                    let Ok(origin) = window.inner_position() else { continue };
+                    let Ok(scale) = window.scale_factor() else { continue };
+
+                    // Cursor is in physical screen pixels; the page reported CSS
+                    // pixels relative to its own top-left corner.
+                    let x = (cursor.x - f64::from(origin.x)) / scale;
+                    let y = (cursor.y - f64::from(origin.y)) / scale;
+
+                    let inside = rect.lock().map(|r| r.contains(x, y)).unwrap_or(false);
+
+                    // `inside == ignoring` is exactly the two cases that need a
+                    // flip: over the island while ignoring, or off it while not.
+                    if inside == ignoring {
+                        if window.set_ignore_cursor_events(!inside).is_ok() {
+                            ignoring = !inside;
+                        }
+                    }
+                }
+            });
+
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("failed to start Voltage");
+        .expect("failed to start ChadBuddy");
 }

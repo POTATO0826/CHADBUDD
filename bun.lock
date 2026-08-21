@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "voltage-site",
+      "name": "chadbuddy",
       "devDependencies": {
         "@tauri-apps/cli": "^2",
         "@types/bun": "latest",

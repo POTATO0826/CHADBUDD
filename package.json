@@ -1,12 +1,12 @@
 {
-  "name": "voltage-site",
+  "name": "chadbuddy",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "bun run server.ts",
     "build": "bun run build.ts",
+    "verify:seed": "bun run scripts/verify-seed.ts",
     "check": "bunx tsc --noEmit",
-    "icon": "bun run scripts/make-icon.ts && tauri icon scripts/icon-source.png -o src-tauri/icons",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

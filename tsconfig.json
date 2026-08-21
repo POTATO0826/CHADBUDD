@@ -16,6 +16,6 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true
   },
-  "include": ["src", "scripts", "build.ts", "server.ts"],
-  "exclude": ["src-tauri", "dist", "node_modules"]
+  "include": ["data", "src", "scripts"],
+  "exclude": ["node_modules", "dist", "src-tauri"]
 }

@@ -1,27 +1,29 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Voltage",
+  "productName": "ChadBuddy",
   "version": "0.1.0",
-  "identifier": "dev.voltage.hud",
+  "identifier": "dev.chadbuddy.hud",
   "build": {
     "beforeDevCommand": "bun run dev",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://localhost:4321",
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
-        "title": "Voltage",
-        "width": 1280,
-        "height": 860,
-        "minWidth": 420,
-        "minHeight": 480,
+        "title": "ChadBuddy",
+        "maximized": true,
         "transparent": true,
-        "decorations": true,
-        "shadow": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
         "theme": "Dark"
       }
     ],

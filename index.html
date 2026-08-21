@@ -1,767 +1,516 @@
 <!DOCTYPE html>
-<html lang="en" data-wall="dusk">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Voltage — live power and thermal readout for your laptop</title>
-<meta name="description" content="Voltage is a menu-bar app for macOS and Windows that shows live watts, temperature, and real time-remaining in a floating readout. On-device, no account.">
+<title>ChadBuddy — relationship decay for financial advisors</title>
+<meta name="description" content="ChadBuddy reads the WhatsApp history an advisor already has and shows which client relationships are decaying, why, and what is owed — every claim traceable to a message.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script>
-/* Runs before first paint: in the Tauri shell the OS paints the backdrop,
-   so the page hands the wallpaper layer over to Mica / vibrancy. */
+/* Before first paint: inside the Tauri shell the OS paints the backdrop, so the
+   page drops its own simulated desktop and lets the real one show through. */
 if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
     location.protocol === "tauri:" || location.hostname === "tauri.localhost") {
   document.documentElement.dataset.shell = "tauri";
 }
 </script>
 <style>
-/* ── design system ─────────────────────────────────────────────── */
+/* ── tokens ─────────────────────────────────────────────────────────
+   Dark glass. The whole surface is meant to sit over the desktop, so
+   every plane is a translucent dark wash rather than a solid fill. */
 :root{
-  --glass: rgba(10, 12, 18, 0.55);
-  --hair:  rgba(255, 255, 255, 0.10);
-  --edge:  rgba(255, 255, 255, 0.14);
-  --ink:   #eef2f8;
-  --dim:   rgba(238, 242, 248, 0.52);
-  --gain:  #9ef01a;
-  --cost:  #f4a742;
-  --u: 4px;
-  --r: 12px;
+  color-scheme: dark;
 
-  --mono: "JetBrains Mono", ui-monospace, Consolas, "SF Mono", monospace;
+  --glass-1: rgba(12, 15, 20, .58);   /* island, at rest */
+  --glass-2: rgba(9, 11, 15, .80);    /* dashboard plane */
+  --glass-3: rgba(16, 20, 26, .70);   /* raised rows inside the dashboard */
+  --surface: #101317;                 /* what the glass averages to; charts validate against this */
+
+  --hair:  rgba(255, 255, 255, .06);
+  --edge:  rgba(255, 255, 255, .10);
+  --edge-2:rgba(255, 255, 255, .18);
+
+  --ink:  #f2f5f9;
+  --dim:  rgba(242, 245, 249, .52);
+  --mute: rgba(242, 245, 249, .34);
+
+  /* status palette — fixed, never themed. Always shipped with a word label. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
   --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, "SF Mono", monospace;
 
-  --pad: 16px;
-  --gap: 8px;
-}
-
-/* wallpapers — the one layer a native shell would delete */
-html[data-wall="dusk"]{
-  --wall:
-    radial-gradient(120% 95% at 76% 14%, #5a2f83 0%, rgba(90,47,131,0) 58%),
-    radial-gradient(90% 80% at 8% 92%, #b23a6e 0%, rgba(178,58,110,0) 55%),
-    linear-gradient(168deg, #150e26 0%, #221545 46%, #0d0a18 100%);
-}
-html[data-wall="pine"]{
-  --wall:
-    radial-gradient(110% 90% at 82% 20%, #1c6b5c 0%, rgba(28,107,92,0) 60%),
-    radial-gradient(95% 85% at 10% 95%, #3f7f2e 0%, rgba(63,127,46,0) 58%),
-    linear-gradient(172deg, #08150f 0%, #0f2a24 50%, #060d0b 100%);
-}
-html[data-wall="ember"]{
-  --wall:
-    radial-gradient(115% 90% at 70% 12%, #c2541d 0%, rgba(194,84,29,0) 55%),
-    radial-gradient(100% 90% at 5% 90%, #7a1f3d 0%, rgba(122,31,61,0) 60%),
-    linear-gradient(165deg, #1a0f0a 0%, #2e170f 48%, #100a09 100%);
+  --r: 14px;
+  --ease: cubic-bezier(.32,.72,.28,1);
+  --spring: cubic-bezier(.34,1.28,.64,1);
 }
 
 *{ box-sizing: border-box; }
 html{ -webkit-text-size-adjust: 100%; }
 body{
   margin: 0;
+  min-height: 100vh;
   font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
   color: var(--ink);
-  background: #0b0d13;
-  line-height: 1.55;
+  background: #07080b;
   overflow-x: hidden;
 }
-#wall{
-  position: fixed; inset: 0; z-index: -1;
-  background: var(--wall);
-  background-attachment: fixed;
-  transition: background 640ms ease;
-}
-
-/* ── native shell ──────────────────────────────────────────────────
-   Inside Tauri the window is transparent and Mica (Windows 11) or
-   NSVisualEffect (macOS) paints the real desktop behind it. The page
-   drops its own wallpaper and gets out of the way. */
-html[data-shell="tauri"],
-html[data-shell="tauri"] body{ background: transparent; }
-html[data-shell="tauri"] #wall{ display: none; }
-html[data-shell="tauri"] .swatches{ display: none; }
-/* Reading sections need a floor of their own — the desktop is behind them too. */
-html[data-shell="tauri"] .veil{ background: rgba(7, 9, 14, .88); }
-
-/* ── type roles ────────────────────────────────────────────────── */
-.label{
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  color: var(--dim);
-  font-weight: 500;
-}
-.val{
-  font-family: var(--mono);
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.01em;
-}
-.hero-num{
-  font-family: var(--mono);
-  font-size: 28px;
-  letter-spacing: -.02em;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-  font-weight: 500;
-  margin: 0;
-}
-
-/* ── glass ─────────────────────────────────────────────────────── */
-.glass{
-  background: var(--glass);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid var(--edge);
-  border-radius: var(--r);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
-}
-.panel{ padding: var(--pad); }
-
-/* panel rail (header strip) */
-.prail{
-  display: flex; align-items: center; justify-content: space-between;
-  gap: var(--gap);
-  padding: 11px var(--pad);
-  border-bottom: 1px solid var(--hair);
-}
-.prail .mark{ display: flex; align-items: center; gap: var(--gap); }
-.prail svg{ display: block; }
-.status{ display: flex; align-items: center; gap: var(--gap); }
-.dot{
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--gain);
-  box-shadow: 0 0 8px rgba(158,240,26,.65);
-}
-.dot.warm{ background: var(--cost); box-shadow: 0 0 8px rgba(244,167,66,.6); }
-
-/* ledger rows — the signature element */
-.rows{ display: block; }
-.row{
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: var(--gap);
-  padding: var(--gap) 0;
-  border-bottom: 1px solid var(--hair);
-}
-.row:last-child{ border-bottom: 0; }
-.row .k{
-  font-family: var(--mono); font-size: 11px; color: var(--dim);
-  letter-spacing: .01em;
-}
-.row .v{
-  font-family: var(--mono); font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-  text-align: right; margin-left: auto;
-}
-.v.cost{ color: var(--cost); }
-.v.gain{ color: var(--gain); }
-
-/* thin bars */
-.bar{
-  position: relative; height: 3px; border-radius: 2px;
-  background: var(--hair); overflow: hidden;
-}
-.bar > i{
-  position: absolute; inset: 0 auto 0 0;
-  display: block; border-radius: 2px;
-  background: var(--cost);
-  transition: width 620ms cubic-bezier(.32,.72,.28,1);
-}
-.bar > i.gain{ background: var(--gain); }
-
-/* ── focus ─────────────────────────────────────────────────────── */
 a, button{ font: inherit; color: inherit; }
-:focus-visible{
-  outline: 2px solid var(--gain);
-  outline-offset: 3px;
-  border-radius: 4px;
-}
+button{ background: none; border: 0; padding: 0; cursor: pointer; }
+:focus-visible{ outline: 2px solid #7aa7ff; outline-offset: 2px; border-radius: 6px; }
 
-/* ── hero / simulated desktop ──────────────────────────────────── */
-.desk{
-  position: relative;
-  min-height: 100vh;
-  min-height: 100svh;
-  padding: 24px;
+/* ── simulated desktop (dropped inside Tauri) ───────────────────── */
+#wall{
+  position: fixed; inset: 0; z-index: -2;
+  background:
+    radial-gradient(120% 95% at 78% 12%, #26324d 0%, rgba(38,50,77,0) 58%),
+    radial-gradient(90% 80% at 6% 94%, #1f2a3a 0%, rgba(31,42,58,0) 55%),
+    linear-gradient(168deg, #0a0d14 0%, #131a26 48%, #070910 100%);
 }
-
-.copy{
+#desk{ position: fixed; inset: 0; z-index: -1; overflow: hidden; }
+#desk .win{
   position: absolute;
-  left: 6vw; top: 16vh;
-  width: min(420px, 38vw);
-  padding: 24px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.05);
+  background: rgba(255,255,255,.025);
+  box-shadow: 0 24px 60px rgba(0,0,0,.35);
 }
-.copy h1{
-  font-family: var(--sans);
-  font-size: clamp(28px, 3.4vw, 40px);
-  line-height: 1.12;
-  letter-spacing: -.025em;
-  font-weight: 600;
-  margin: 12px 0 0;
+#desk .win::before{
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 26px;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+  background: rgba(255,255,255,.02);
+  border-radius: 10px 10px 0 0;
 }
-.copy p.sub{
-  color: var(--dim);
-  font-size: 15px;
-  margin: 12px 0 0;
-  max-width: 36ch;
+#desk .w1{ left: 4%;  top: 22%; width: 34%; height: 46%; }
+#desk .w2{ right: 5%; top: 30%; width: 30%; height: 40%; }
+#desk .w3{ left: 26%; bottom: 6%; width: 40%; height: 26%; }
+#desk .bar{
+  position: absolute; inset: 0 0 auto 0; height: 28px;
+  background: rgba(6,8,12,.55);
+  -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(255,255,255,.05);
 }
-.cta{ display: flex; flex-wrap: wrap; gap: var(--gap); margin-top: 20px; }
-.btn{
-  display: inline-flex; align-items: center; gap: var(--gap);
-  font-family: var(--mono); font-size: 12.5px; letter-spacing: -.01em;
-  text-decoration: none;
-  padding: 12px 16px;
-  border-radius: 8px;
+html[data-shell="tauri"] body{ background: transparent; }
+html[data-shell="tauri"] #wall,
+html[data-shell="tauri"] #desk,
+html[data-shell="tauri"] .hint{ display: none; }
+
+.hint{
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--mute);
+  pointer-events: none;
+}
+
+/* ── type roles ─────────────────────────────────────────────────── */
+.lbl{
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .15em;
+  text-transform: uppercase; color: var(--mute);
+}
+.id{
+  font-family: var(--mono); font-size: 10px; letter-spacing: .02em;
+  color: var(--mute);
+}
+.num{ font-variant-numeric: tabular-nums; }
+
+/* ── the island ─────────────────────────────────────────────────── */
+.island{
+  position: fixed; z-index: 10;
+  left: 50%; top: 14px;
+  transform: translateX(-50%);
+  width: 232px; height: 38px;
+  border-radius: 19px;
+  background: var(--glass-1);
+  -webkit-backdrop-filter: blur(28px) saturate(170%);
+  backdrop-filter: blur(28px) saturate(170%);
   border: 1px solid var(--edge);
-  background: rgba(255,255,255,.06);
-  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.07),
+    0 18px 50px rgba(0,0,0,.48);
+  overflow: hidden;
+  transition:
+    width 460ms var(--spring),
+    height 460ms var(--spring),
+    border-radius 380ms var(--ease),
+    background 380ms var(--ease);
 }
-.btn:hover{ background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.24); transform: translateY(-1px); }
-.btn.ghost{ background: rgba(255,255,255,.02); color: var(--dim); }
-.btn.ghost:hover{ color: var(--ink); background: rgba(255,255,255,.08); }
+.island[data-state="peek"]{
+  width: 404px; height: 96px; border-radius: 22px;
+}
+.island[data-state="open"]{
+  width: min(940px, calc(100vw - 32px));
+  height: min(660px, calc(100vh - 40px));
+  border-radius: 20px;
+  background: var(--glass-2);
+}
+.island[data-state="open"][data-thread]{
+  width: min(1240px, calc(100vw - 32px));
+}
 
-/* main HUD */
-.hud{
-  position: absolute;
-  left: 58%; top: 50%;
-  transform: translateY(-52%);
-  width: 340px;
-  transition: transform 260ms ease, border-color 260ms ease;
+/* content layers cross-fade; only one is live at a time */
+.layer{
+  position: absolute; inset: 0;
+  opacity: 0; pointer-events: none;
+  transition: opacity 200ms var(--ease), transform 320ms var(--ease);
 }
-.hud:hover{ transform: translateY(-52%) translateY(-3px); border-color: rgba(255,255,255,.22); }
-.hud .body{ padding: var(--pad); }
-.hud .headline{ margin-bottom: var(--pad); }
-.hud .headline .label{ display: block; margin-top: var(--gap); }
-.hud .foot{
-  display: flex; align-items: center; justify-content: space-between;
-  gap: var(--gap);
-  padding: 12px var(--pad);
+.island[data-state="idle"] .layer-idle,
+.island[data-state="peek"] .layer-peek,
+.island[data-state="open"] .layer-open{
+  opacity: 1; pointer-events: auto;
+}
+.layer-idle{ transform: scale(.98); }
+.island[data-state="idle"] .layer-idle{ transform: none; }
+.layer-peek{ transform: translateY(-6px); }
+.island[data-state="peek"] .layer-peek{ transform: none; }
+.layer-open{ transform: translateY(-10px); transition-delay: 60ms; }
+.island[data-state="open"] .layer-open{ transform: none; }
+
+/* idle pill */
+.pill{
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; height: 100%;
+  padding: 0 14px;
+  text-align: left;
+}
+.pill .cnt{ font-size: 12.5px; font-weight: 500; letter-spacing: -.01em; }
+.pill .who{ color: var(--dim); font-size: 12.5px; margin-left: auto; }
+
+.beacon{
+  position: relative; flex: 0 0 auto;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--serious);
+}
+.beacon::after{
+  content: ""; position: absolute; inset: -3px; border-radius: 50%;
+  border: 1px solid var(--serious); opacity: .5;
+  animation: ring 2600ms var(--ease) infinite;
+}
+@keyframes ring{
+  0%   { transform: scale(.7); opacity: .55; }
+  70%  { transform: scale(1.9); opacity: 0; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+
+/* peek card */
+.peek{
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 4px 14px; align-items: center;
+  width: 100%; height: 100%; padding: 14px 16px;
+  text-align: left;
+}
+.peek .nm{ font-size: 14.5px; font-weight: 600; letter-spacing: -.012em; }
+.peek .rz{ grid-column: 1; color: var(--dim); font-size: 12.5px; }
+.peek .sc{ grid-row: 1 / span 2; text-align: right; }
+.peek .sc .v{ font-size: 26px; font-weight: 600; letter-spacing: -.02em; line-height: 1; }
+.peek .sc .u{ display: block; margin-top: 4px; }
+
+/* ── dashboard ──────────────────────────────────────────────────── */
+.dash{
+  display: grid; grid-template-rows: auto minmax(0,1fr) auto;
+  height: 100%;
+}
+.dash-top{
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--hair);
+}
+.dash-top .ttl{ font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.dash-top .sp{ margin-left: auto; }
+.xbtn{
+  width: 26px; height: 26px; border-radius: 7px;
+  border: 1px solid var(--edge);
+  color: var(--dim);
+  display: grid; place-items: center;
+  transition: background 160ms var(--ease), color 160ms var(--ease);
+}
+.xbtn:hover{ background: rgba(255,255,255,.07); color: var(--ink); }
+
+.dash-body{
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 0px;
+  min-height: 0;
+  transition: grid-template-columns 460ms var(--spring);
+}
+.island[data-state="open"][data-thread] .dash-body{
+  grid-template-columns: minmax(0,1.02fr) minmax(0,1fr);
+}
+.pane{ min-width: 0; overflow-y: auto; overflow-x: hidden; }
+.pane-list{ padding: 10px; }
+.pane-thread{
+  border-left: 1px solid var(--hair);
+  opacity: 0; transition: opacity 240ms var(--ease);
+}
+.island[data-state="open"][data-thread] .pane-thread{ opacity: 1; }
+
+.dash-foot{
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 16px;
   border-top: 1px solid var(--hair);
 }
 
-/* top rail */
-.rail{
-  position: absolute;
-  left: 50%; top: 24px; transform: translateX(-50%);
-  width: 400px; height: 44px;
-  display: flex; align-items: center; gap: 12px;
-  padding: 0 16px;
+/* ── client rows ────────────────────────────────────────────────── */
+.client{
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  background: var(--glass-3);
+  margin-bottom: 8px;
+  transition: border-color 200ms var(--ease);
 }
-.rail .bar{ flex: 1; }
+.client:last-child{ margin-bottom: 0; }
+.client[aria-expanded="true"]{ border-color: var(--edge); }
 
-/* event ledger */
-.events{
-  position: absolute;
-  left: 6vw; bottom: 6vh;
-  width: 280px; min-height: 150px;
-  padding: 12px var(--pad);
-}
-.events .label{ display: block; margin-bottom: var(--gap); }
-.ev{
-  display: flex; align-items: baseline; gap: var(--gap);
-  padding: 5px 0;
-  border-bottom: 1px solid var(--hair);
-  font-family: var(--mono); font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-}
-.ev:last-child{ border-bottom: 0; }
-.ev .t{ color: var(--dim); }
-.ev .e{ color: rgba(238,242,248,.82); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ev .d{ margin-left: auto; text-align: right; }
-
-/* wallpaper swatches */
-.swatches{
-  position: absolute;
-  right: 6vw; bottom: 6vh;
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px var(--pad);
-}
-.sw{
-  width: 28px; height: 28px; padding: 0;
-  border-radius: 8px;
-  border: 1px solid var(--edge);
-  cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
-  transition: transform 180ms ease, border-color 180ms ease;
-}
-.sw:hover{ transform: translateY(-2px); }
-.sw[aria-pressed="true"]{ border-color: rgba(255,255,255,.55); }
-.sw-dusk{ background: linear-gradient(150deg, #5a2f83, #b23a6e 60%, #150e26); }
-.sw-pine{ background: linear-gradient(150deg, #1c6b5c, #3f7f2e 60%, #08150f); }
-.sw-ember{ background: linear-gradient(150deg, #c2541d, #7a1f3d 60%, #1a0f0a); }
-
-/* ── page below the fold ───────────────────────────────────────── */
-main{ position: relative; }
-.veil{ background: rgba(7, 9, 14, .74); }
-.wrap{ max-width: 1080px; margin: 0 auto; padding: 0 24px; }
-
-.section{ padding: 96px 0; border-top: 1px solid var(--hair); }
-
-/* features */
-.feature{
+.chead{
   display: grid;
-  grid-template-columns: minmax(0,1fr) minmax(0,1fr);
-  gap: 48px;
-  align-items: center;
-}
-.feature + .feature{ margin-top: 72px; }
-.feature.flip .prose{ order: 2; }
-.feature h3{
-  font-family: var(--sans); font-size: 21px; font-weight: 600;
-  letter-spacing: -.02em; margin: 12px 0 0;
-}
-.feature p{ color: var(--dim); font-size: 14.5px; margin: 12px 0 0; max-width: 44ch; }
-.demo{ max-width: 360px; transition: transform 260ms ease, border-color 260ms ease; }
-.demo:hover{ transform: translateY(-3px); border-color: rgba(255,255,255,.22); }
-.feature:not(.flip) .demo{ margin-left: auto; }
-
-/* the thermal chart */
-.spark{ display: flex; align-items: flex-end; gap: 2px; height: 56px; margin-top: 12px; }
-.spark span{
-  flex: 1; border-radius: 1px;
-  background: rgba(255,255,255,.16);
-}
-.spark span.hot{ background: var(--cost); }
-
-/* comparison */
-.cmp{ width: 100%; border-collapse: collapse; margin-top: 24px; }
-.cmp caption{ text-align: left; }
-.cmp th, .cmp td{
+  grid-template-columns: auto minmax(0,1fr) auto auto;
+  align-items: center; gap: 12px;
+  width: 100%; padding: 12px 14px;
   text-align: left;
-  padding: 12px var(--gap);
+}
+.chev{
+  width: 9px; height: 9px; color: var(--mute);
+  transition: transform 260ms var(--spring);
+}
+.client[aria-expanded="true"] .chev{ transform: rotate(90deg); }
+.cname{ display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.cname .n{ font-size: 14px; font-weight: 600; letter-spacing: -.012em; }
+.cname .sub{
+  flex-basis: 100%;
+  color: var(--dim); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* status chip — colour never travels alone, the word is always there */
+.chip{
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px 3px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--dim);
+  white-space: nowrap;
+}
+.chip .sw{ width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip[data-status="healthy"]  { color: var(--good); }
+.chip[data-status="watch"]    { color: var(--warning); }
+.chip[data-status="silent"]   { color: var(--serious); border-color: color-mix(in oklab, var(--serious) 34%, transparent); background: color-mix(in oklab, var(--serious) 10%, transparent); }
+.chip[data-status="decaying"] { color: var(--critical); }
+
+.score{ text-align: right; min-width: 44px; }
+.score .v{ font-size: 20px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
+
+/* ── the expanded body ──────────────────────────────────────────── */
+.cbody{ display: none; padding: 2px 14px 14px; }
+.client[aria-expanded="true"] .cbody{ display: block; }
+
+.sig{ padding: 9px 0; border-top: 1px solid var(--hair); }
+.sig-head{
+  display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 7px;
+}
+.sig-head .nm{ font-size: 12.5px; }
+.sig-head .vs{
+  margin-left: auto;
+  font-family: var(--mono); font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--dim);
+}
+.sig-head .vs b{ color: var(--ink); font-weight: 500; }
+
+/* meter: fill carries severity, track is a lighter step of the same hue */
+.meter{
+  position: relative; height: 6px; border-radius: 3px;
+  background: color-mix(in oklab, var(--c) 16%, transparent);
+  overflow: hidden;
+}
+.meter > i{
+  position: absolute; left: 0; top: 0; bottom: 0;
+  display: block;
+  border-radius: 0 4px 4px 0;
+  background: var(--c);
+  transition: width 620ms var(--ease);
+}
+.sig[data-sev="none"]{ --c: var(--good); }
+.sig[data-sev="mild"]{ --c: var(--warning); }
+.sig[data-sev="bad"] { --c: var(--serious); }
+.sig[data-sev="gone"]{ --c: var(--critical); }
+
+.sig-foot{
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 7px;
+}
+.trace{
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--hair);
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em;
+  color: var(--mute);
+  transition: color 160ms var(--ease), border-color 160ms var(--ease), background 160ms var(--ease);
+}
+.trace:hover{ color: var(--ink); border-color: var(--edge); background: rgba(255,255,255,.05); }
+
+/* ── ledger ─────────────────────────────────────────────────────── */
+.ledger{ margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--edge); }
+.ledger > .lbl{ display: block; margin-bottom: 9px; }
+.item{
+  display: grid; grid-template-columns: auto minmax(0,1fr);
+  gap: 3px 10px;
+  padding: 9px 0;
   border-bottom: 1px solid var(--hair);
-  font-family: var(--mono); font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  vertical-align: top;
 }
-.cmp thead th{
-  border-bottom: 1px solid var(--edge);
+.item:last-child{ border-bottom: 0; }
+.kind{
+  align-self: start; margin-top: 2px;
+  padding: 2px 6px; border-radius: 5px;
+  border: 1px solid var(--edge);
+  font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--dim);
+  white-space: nowrap;
+}
+.item[data-open="true"] .kind{ color: var(--serious); border-color: color-mix(in oklab, var(--serious) 32%, transparent); }
+.item .txt{ font-size: 12.5px; }
+.item .meta{ grid-column: 2; color: var(--mute); font-family: var(--mono); font-size: 10px; }
+.item blockquote{
+  grid-column: 2;
+  margin: 5px 0 0;
+  padding: 6px 9px;
+  border-left: 2px solid var(--edge-2);
+  border-radius: 0 6px 6px 0;
+  background: rgba(255,255,255,.035);
   color: var(--dim);
-  font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase; font-weight: 500;
+  font-size: 12px; font-style: italic;
 }
-.cmp thead th:first-child{ color: transparent; }
-.cmp tbody th{ font-weight: 400; color: var(--dim); width: 34%; }
-.cmp td{ color: rgba(238,242,248,.86); }
-.cmp td.none{ color: var(--dim); }
-.cmp td.own{ color: var(--ink); }
-.cmp tbody tr:last-child th, .cmp tbody tr:last-child td{ border-bottom: 0; }
+.item .cite{ grid-column: 2; margin-top: 6px; }
 
-/* privacy */
-.privacy{ display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.4fr); gap: 48px; }
-.privacy p{ font-size: 15px; color: rgba(238,242,248,.78); margin: 0; max-width: 56ch; }
+.empty{ color: var(--mute); font-size: 12.5px; padding: 4px 0 2px; }
 
-/* footer */
-footer{ border-top: 1px solid var(--hair); padding: 32px 0 48px; }
-.fbar{ display: flex; flex-wrap: wrap; gap: 24px; align-items: baseline; justify-content: space-between; }
-.fnav{ display: flex; flex-wrap: wrap; gap: 20px; }
-.fnav a{
-  font-family: var(--mono); font-size: 12px; color: var(--dim);
-  text-decoration: none;
-  transition: color 180ms ease;
+/* ── conversation pane ──────────────────────────────────────────── */
+.thead{
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--hair);
+  background: var(--glass-2);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
 }
-.fnav a:hover{ color: var(--ink); }
+.thead .n{ font-size: 12.5px; font-weight: 600; }
+.msgs{ padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 9px; }
+.msg{ max-width: 84%; }
+.msg[data-from="advisor"]{ align-self: flex-end; }
+.msg .bub{
+  padding: 8px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--hair);
+  background: rgba(255,255,255,.04);
+  font-size: 12.5px; line-height: 1.45;
+  transition: background 400ms var(--ease), border-color 400ms var(--ease), box-shadow 400ms var(--ease);
+}
+.msg[data-from="advisor"] .bub{
+  background: rgba(122,167,255,.10);
+  border-color: rgba(122,167,255,.20);
+  border-bottom-right-radius: 4px;
+}
+.msg[data-from="client"] .bub{ border-bottom-left-radius: 4px; }
+.msg .stamp{
+  display: flex; gap: 8px; align-items: baseline;
+  margin: 4px 2px 0;
+}
+.msg[data-from="advisor"] .stamp{ justify-content: flex-end; }
+.msg.lit .bub{
+  background: color-mix(in oklab, var(--serious) 16%, transparent);
+  border-color: color-mix(in oklab, var(--serious) 44%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--serious) 12%, transparent);
+}
+.msg.dim{ opacity: .38; }
 
-.eyebrow{ display: flex; align-items: center; gap: var(--gap); }
-
-/* ── responsive ────────────────────────────────────────────────── */
-@media (max-width: 1080px){
-  .desk{
-    display: flex; flex-direction: column; gap: 16px;
-    padding: 24px 16px 48px;
-    min-height: 0;
+/* ── responsive ─────────────────────────────────────────────────── */
+@media (max-width: 900px){
+  .island[data-state="open"],
+  .island[data-state="open"][data-thread]{
+    width: calc(100vw - 20px);
+    height: calc(100vh - 28px);
   }
-  .copy, .hud, .rail, .events, .swatches{
-    position: static; transform: none; width: 100%; max-width: 520px;
+  .island[data-state="open"][data-thread] .dash-body{
+    grid-template-columns: minmax(0,1fr);
   }
-  .copy{ order: 2; }
-  .rail{ order: 1; }
-  .hud{ order: 3; }
-  .events{ order: 4; }
-  .swatches{ order: 5; width: auto; align-self: flex-start; }
-  .hud:hover{ transform: translateY(-3px); }
-  .desk{ align-items: stretch; }
+  .island[data-state="open"][data-thread] .pane-list{ display: none; }
+  .pane-thread{ border-left: 0; }
+  .island[data-state="peek"]{ width: calc(100vw - 20px); }
 }
-@media (max-width: 800px){
-  .section{ padding: 64px 0; }
-  .feature{ grid-template-columns: minmax(0,1fr); gap: 24px; }
-  .feature.flip .prose{ order: 0; }
-  .feature .demo{ margin: 0; max-width: 100%; }
-  .privacy{ grid-template-columns: minmax(0,1fr); gap: 16px; }
-  .cmp th, .cmp td{ padding: 12px 4px; font-size: 11px; }
-  .cmp tbody th{ width: 30%; }
-}
-@media (max-width: 420px){
-  .rail{ height: auto; padding: 12px 16px; flex-wrap: wrap; }
-  .rail .bar{ order: 3; flex-basis: 100%; }
-  .wrap{ padding: 0 16px; }
-}
-
 @media (prefers-reduced-motion: reduce){
   *, *::before, *::after{
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
   }
-  #wall{ transition: none; }
 }
 </style>
 </head>
 <body>
 
 <div id="wall" aria-hidden="true"></div>
+<div id="desk" aria-hidden="true">
+  <div class="bar"></div>
+  <div class="win w1"></div>
+  <div class="win w2"></div>
+  <div class="win w3"></div>
+</div>
 
-<!-- ── 1. HERO — simulated desktop ───────────────────────────────── -->
-<header class="desk">
+<!-- The island is one element that changes size. Contents cross-fade. -->
+<div class="island" id="island" data-state="idle">
 
-  <!-- top rail -->
-  <section class="rail glass" aria-label="Current draw">
-    <span class="val" id="rail-watts">18.4 W</span>
-    <span class="bar"><i id="rail-bar" style="width:46%"></i></span>
-    <span class="label">balanced</span>
-  </section>
-
-  <!-- headline card -->
-  <div class="copy glass">
-    <div class="eyebrow">
-      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-        <path d="M6.8 1 2.4 6.9h2.9L4.9 11l4.6-6.1H6.4L6.8 1Z" fill="#9ef01a"/>
-      </svg>
-      <span class="label">Voltage · macOS &amp; Windows</span>
-    </div>
-    <h1>See what your battery is actually paying for.</h1>
-    <p class="sub">A floating readout of live watts, temperature, and honest time-remaining — per process, on your machine, while you keep working.</p>
-    <div class="cta">
-      <a class="btn" href="#">Download for macOS</a>
-      <a class="btn ghost" href="#">Download for Windows</a>
-    </div>
+  <div class="layer layer-idle">
+    <button class="pill" id="pill" type="button" aria-label="Open ChadBuddy">
+      <span class="beacon" aria-hidden="true"></span>
+      <span class="cnt" id="pill-count">—</span>
+      <span class="who" id="pill-who"></span>
+    </button>
   </div>
 
-  <!-- main HUD -->
-  <section class="hud glass" aria-label="Voltage readout">
-    <div class="prail">
-      <span class="mark">
-        <svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
-          <path d="M0 0v10l8-5-8-5Z" fill="rgba(238,242,248,.52)"/>
-        </svg>
-        <span class="label">Power</span>
+  <div class="layer layer-peek">
+    <button class="peek" id="peek" type="button" aria-label="Open ChadBuddy dashboard">
+      <span class="nm" id="peek-name">—</span>
+      <span class="rz" id="peek-reason"></span>
+      <span class="sc">
+        <span class="v num" id="peek-score">—</span>
+        <span class="lbl u">decay</span>
       </span>
-      <span class="status">
-        <span class="label">live</span>
-        <span class="dot" aria-hidden="true"></span>
-      </span>
-    </div>
-
-    <div class="body">
-      <div class="headline">
-        <p class="hero-num" id="remaining">4h 12m</p>
-        <span class="label">estimated remaining</span>
-      </div>
-
-      <div class="rows">
-        <div class="row"><span class="k">draw</span><span class="v cost" id="draw">18.4 W</span></div>
-        <div class="row"><span class="k">cpu package</span><span class="v" id="temp">62 °C</span></div>
-        <div class="row"><span class="k">fan</span><span class="v" id="fan">2,180</span></div>
-        <div class="row"><span class="k">cycles</span><span class="v">241</span></div>
-      </div>
-    </div>
-
-    <div class="foot">
-      <span class="label">top offender</span>
-      <span class="val" id="offender">Chrome &nbsp;·&nbsp; 6.2 W</span>
-    </div>
-  </section>
-
-  <!-- event ledger -->
-  <section class="events glass" aria-label="Recent power events">
-    <span class="label">events</span>
-    <div class="ev"><span class="t">14:22</span><span class="e">display dimmed</span><span class="d v gain">−1.4 W</span></div>
-    <div class="ev"><span class="t">14:19</span><span class="e">Chrome woke 6 tabs</span><span class="d v cost">+2.1 W</span></div>
-    <div class="ev"><span class="t">14:11</span><span class="e">unplugged</span><span class="d v">—</span></div>
-    <div class="ev"><span class="t">13:58</span><span class="e">fan stepped up</span><span class="d v cost">+0.3 W</span></div>
-    <div class="ev"><span class="t">13:47</span><span class="e">build started</span><span class="d v cost">+8.6 W</span></div>
-  </section>
-
-  <!-- wallpaper swatches -->
-  <div class="swatches glass">
-    <span class="label">wallpaper</span>
-    <button class="sw sw-dusk" type="button" data-wall="dusk" aria-pressed="true" aria-label="Dusk wallpaper"></button>
-    <button class="sw sw-pine" type="button" data-wall="pine" aria-pressed="false" aria-label="Pine wallpaper"></button>
-    <button class="sw sw-ember" type="button" data-wall="ember" aria-pressed="false" aria-label="Ember wallpaper"></button>
+    </button>
   </div>
-</header>
 
-<main class="veil">
-
-  <!-- ── 2. FEATURES ─────────────────────────────────────────────── -->
-  <section class="section" aria-labelledby="f-title">
-    <div class="wrap">
-      <span class="label" id="f-title">what it shows you</span>
-
-      <!-- per-process -->
-      <div class="feature" style="margin-top:24px">
-        <div class="prose">
-          <span class="label">01</span>
-          <h3>Watts per process, not a vague score.</h3>
-          <p>Voltage attributes draw to the thing causing it and sorts by size. When the fan spins up you get a name and a number, so you can quit one tab instead of guessing at five.</p>
-        </div>
-
-        <section class="demo glass" aria-label="Per-process draw">
-          <div class="prail">
-            <span class="mark">
-              <svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true"><path d="M0 0v10l8-5-8-5Z" fill="rgba(238,242,248,.52)"/></svg>
-              <span class="label">processes</span>
-            </span>
-            <span class="status"><span class="label">live</span><span class="dot" aria-hidden="true"></span></span>
-          </div>
-          <div class="panel">
-            <div class="headline" style="margin-bottom:16px">
-              <p class="hero-num" id="p-total">18.4 W</p>
-              <span class="label">total draw · 5 processes</span>
-            </div>
-            <div class="rows" id="proc-rows">
-              <div class="row"><span class="k">Chrome</span><span class="v cost" data-proc="6.2">6.2 W</span></div>
-              <div class="row"><span class="k">Xcode</span><span class="v cost" data-proc="4.8">4.8 W</span></div>
-              <div class="row"><span class="k">WindowServer</span><span class="v" data-proc="2.4">2.4 W</span></div>
-              <div class="row"><span class="k">Slack</span><span class="v" data-proc="1.9">1.9 W</span></div>
-              <div class="row"><span class="k">Spotify</span><span class="v" data-proc="0.7">0.7 W</span></div>
-            </div>
-          </div>
-        </section>
+  <div class="layer layer-open">
+    <div class="dash">
+      <div class="dash-top">
+        <span class="ttl">Relationships</span>
+        <span class="lbl" id="dash-sub"></span>
+        <span class="sp"></span>
+        <button class="xbtn" id="close" type="button" aria-label="Close">
+          <svg width="9" height="9" viewBox="0 0 9 9" aria-hidden="true">
+            <path d="M1 1l7 7M8 1l-7 7" stroke="currentColor" stroke-width="1.4" fill="none"/>
+          </svg>
+        </button>
       </div>
 
-      <!-- thermal -->
-      <div class="feature flip">
-        <div class="prose">
-          <span class="label">02</span>
-          <h3>An hour of heat behind you.</h3>
-          <p>Package temperature every ten seconds, kept for the last sixty minutes. You can see whether the machine is throttling now or has been quietly cooking since the build kicked off.</p>
-        </div>
-
-        <section class="demo glass" aria-label="Thermal history">
-          <div class="prail">
-            <span class="mark">
-              <svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true"><path d="M0 0v10l8-5-8-5Z" fill="rgba(238,242,248,.52)"/></svg>
-              <span class="label">thermal</span>
-            </span>
-            <span class="status"><span class="label">60 min</span><span class="dot warm" aria-hidden="true"></span></span>
-          </div>
-          <div class="panel">
-            <div class="headline">
-              <p class="hero-num" style="color:var(--cost)">81 °C</p>
-              <span class="label">peak · 14:03</span>
-            </div>
-            <div class="spark" id="spark" aria-hidden="true"></div>
-            <div class="rows" style="margin-top:16px">
-              <div class="row"><span class="k">now</span><span class="v">62 °C</span></div>
-              <div class="row"><span class="k">median</span><span class="v">58 °C</span></div>
-              <div class="row"><span class="k">throttled</span><span class="v cost">4m 20s</span></div>
-            </div>
-          </div>
-        </section>
+      <div class="dash-body">
+        <div class="pane pane-list" id="list"></div>
+        <div class="pane pane-thread" id="thread" aria-live="polite"></div>
       </div>
 
-      <!-- battery health -->
-      <div class="feature">
-        <div class="prose">
-          <span class="label">03</span>
-          <h3>Battery health you can watch move.</h3>
-          <p>Voltage records full-charge capacity once a day and keeps the series locally. Instead of one number in System Settings, you get the slope — how much capacity this year actually cost you.</p>
-        </div>
-
-        <section class="demo glass" aria-label="Battery health">
-          <div class="prail">
-            <span class="mark">
-              <svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true"><path d="M0 0v10l8-5-8-5Z" fill="rgba(238,242,248,.52)"/></svg>
-              <span class="label">health</span>
-            </span>
-            <span class="status"><span class="label">14 months</span><span class="dot" aria-hidden="true"></span></span>
-          </div>
-          <div class="panel">
-            <div class="headline" style="margin-bottom:12px">
-              <p class="hero-num" style="color:var(--gain)">94%</p>
-              <span class="label">of design capacity</span>
-            </div>
-            <span class="bar" style="display:block"><i class="gain" style="width:94%"></i></span>
-            <div class="rows" style="margin-top:16px">
-              <div class="row"><span class="k">full charge</span><span class="v">47.9 Wh</span></div>
-              <div class="row"><span class="k">design</span><span class="v">51.0 Wh</span></div>
-              <div class="row"><span class="k">cycles</span><span class="v">241</span></div>
-              <div class="row"><span class="k">last 90 days</span><span class="v cost">−1.8%</span></div>
-            </div>
-          </div>
-        </section>
+      <div class="dash-foot">
+        <span class="lbl" id="foot-note"></span>
       </div>
     </div>
-  </section>
+  </div>
+</div>
 
-  <!-- ── 3. COMPARISON ───────────────────────────────────────────── -->
-  <section class="section" aria-labelledby="c-title">
-    <div class="wrap">
-      <span class="label" id="c-title">what you get where</span>
-      <table class="cmp">
-        <thead>
-          <tr><th scope="col">Measure</th><th scope="col">Voltage</th><th scope="col">Activity Monitor</th><th scope="col">Nothing</th></tr>
-        </thead>
-        <tbody>
-          <tr><th scope="row">power per process</th><td class="own">watts</td><td>energy impact score</td><td class="none">—</td></tr>
-          <tr><th scope="row">time remaining</th><td class="own">measured drain</td><td>system estimate</td><td class="none">a guess</td></tr>
-          <tr><th scope="row">cpu temperature</th><td class="own">live, 60 min history</td><td class="none">—</td><td class="none">—</td></tr>
-          <tr><th scope="row">fan speed</th><td class="own">rpm</td><td class="none">—</td><td class="none">—</td></tr>
-          <tr><th scope="row">battery health</th><td class="own">daily series</td><td class="none">cycle count only</td><td class="none">—</td></tr>
-          <tr><th scope="row">while you work</th><td class="own">floating HUD</td><td>another window</td><td class="none">—</td></tr>
-          <tr><th scope="row">data leaves the machine</th><td class="own">no</td><td>no</td><td>no</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
+<p class="hint">hover the island · click to open</p>
 
-  <!-- ── 4. PRIVACY ──────────────────────────────────────────────── -->
-  <section class="section" aria-labelledby="p-title">
-    <div class="wrap privacy">
-      <span class="label" id="p-title">privacy</span>
-      <p>Voltage reads sensors on your laptop and writes what it reads to a file in your home folder. There is no account to make, nothing to sign in to, and no analytics, crash reporting, or update pings. Delete the app and the history goes with it.</p>
-    </div>
-  </section>
-
-  <!-- ── 5. FOOTER ───────────────────────────────────────────────── -->
-  <footer>
-    <div class="wrap fbar">
-      <nav class="fnav" aria-label="Footer">
-        <a href="#">Download</a>
-        <a href="#">Changelog</a>
-        <a href="#">Docs</a>
-        <a href="#">Support</a>
-        <a href="#">Privacy</a>
-      </nav>
-      <span class="label">© 2026 Voltage Instruments · fictional product, demo build</span>
-    </div>
-  </footer>
-</main>
-
-<script>
-/* hud:start — generated from src/hud.ts by build.ts */
-(() => {
-  // src/hud.ts
-  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var swatches = Array.from(document.querySelectorAll(".sw"));
-  for (const btn of swatches) {
-    btn.addEventListener("click", () => {
-      const wall = btn.dataset.wall;
-      if (!wall)
-        return;
-      document.documentElement.setAttribute("data-wall", wall);
-      for (const b of swatches) {
-        b.setAttribute("aria-pressed", String(b === btn));
-      }
-    });
-  }
-  var SERIES = [
-    54,
-    56,
-    55,
-    58,
-    61,
-    64,
-    63,
-    67,
-    71,
-    74,
-    78,
-    81,
-    79,
-    76,
-    73,
-    70,
-    68,
-    66,
-    69,
-    72,
-    70,
-    67,
-    64,
-    62
-  ];
-  var FLOOR = 45;
-  var CEIL = 85;
-  var HOT = 75;
-  var spark = document.getElementById("spark");
-  if (spark) {
-    for (const t of SERIES) {
-      const bar = document.createElement("span");
-      const h = Math.round((t - FLOOR) / (CEIL - FLOOR) * 100);
-      bar.style.height = `${Math.max(8, h)}%`;
-      if (t >= HOT)
-        bar.className = "hot";
-      spark.appendChild(bar);
-    }
-  }
-  function walk(v, step, lo, hi) {
-    const next = v + (Math.random() - 0.5) * 2 * step;
-    return Math.min(hi, Math.max(lo, next));
-  }
-  function el(id) {
-    return document.getElementById(id);
-  }
-  function startDrift() {
-    const state = { draw: 18.4, temp: 62, fan: 2180, mins: 252, chrome: 6.2 };
-    const procs = Array.from(document.querySelectorAll("[data-proc]"));
-    const out = {
-      draw: el("draw"),
-      railWatts: el("rail-watts"),
-      railBar: el("rail-bar"),
-      temp: el("temp"),
-      fan: el("fan"),
-      remaining: el("remaining"),
-      offender: el("offender"),
-      total: el("p-total")
-    };
-    const tick = () => {
-      state.draw = walk(state.draw, 0.55, 14.2, 23.8);
-      state.temp = walk(state.temp, 1.2, 54, 74);
-      state.fan = walk(state.fan, 60, 1900, 2600);
-      state.mins = walk(state.mins, 2, 236, 268);
-      state.chrome = walk(state.chrome, 0.25, 4.9, 7.6);
-      const watts = `${state.draw.toFixed(1)} W`;
-      if (out.draw)
-        out.draw.textContent = watts;
-      if (out.railWatts)
-        out.railWatts.textContent = watts;
-      if (out.railBar) {
-        out.railBar.style.width = `${Math.round((state.draw - 10) / 20 * 100)}%`;
-      }
-      if (out.temp)
-        out.temp.textContent = `${Math.round(state.temp)} °C`;
-      if (out.fan) {
-        const rpm = Math.round(state.fan / 10) * 10;
-        out.fan.textContent = rpm.toLocaleString("en-US");
-      }
-      if (out.remaining) {
-        const h = Math.floor(state.mins / 60);
-        const m = `0${Math.round(state.mins % 60)}`.slice(-2);
-        out.remaining.textContent = `${h}h ${m}m`;
-      }
-      if (out.offender) {
-        out.offender.textContent = `Chrome  ·  ${state.chrome.toFixed(1)} W`;
-      }
-      let total = 0;
-      for (const p of procs) {
-        const base = Number.parseFloat(p.dataset.proc ?? "0");
-        const v = walk(base, 0.18, base * 0.82, base * 1.18);
-        p.dataset.proc = v.toFixed(2);
-        p.textContent = `${v.toFixed(1)} W`;
-        total += v;
-      }
-      if (out.total)
-        out.total.textContent = `${total.toFixed(1)} W`;
-    };
-    window.setInterval(tick, 2400);
-  }
-  if (!reduce)
-    startDrift();
-})();
-/* hud:end */
-</script>
+<script type="module" src="/app.js"></script>
 </body>
 </html>
