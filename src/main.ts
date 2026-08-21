@@ -16,7 +16,7 @@ import { approvals, ideas, queues, rules } from "./copy.ts";
 import type { Idea, QueueKind, QueueRow } from "./copy.ts";
 import type { Cell, ClientView, RecMessage, Tone, Week } from "./derive.ts";
 import {
-  ADVISOR, INK, MARK, clientById, clients, dateShort, replyClock,
+  ADVISOR, INK, MARK, clientById, clients, dateShort, humanGap, replyClock,
   severityInk, severityMark, totals, weekBars,
 } from "./derive.ts";
 import { openDays } from "./ledger.ts";
@@ -71,7 +71,6 @@ const state: State = {
 };
 
 const island = need("island");
-let alertTimer: number | undefined;
 
 /* ── island: compact states ──────────────────────────────────────── */
 
@@ -88,83 +87,182 @@ function idleLayer(): string {
     </button>`;
 }
 
-/** The most recent client message in the book — what "a new message" means here. */
-const newest = (() => {
-  let best: { c: ClientView; id: string; text: string; ago: string } | null = null;
-  let bestTs = -Infinity;
-  for (const c of clients) {
-    const msgs = c.thread.messages;
-    for (let i = msgs.length - 1; i >= 0; i--) {
+/* ── notifications ───────────────────────────────────────────────
+   Two kinds of automatic enlargement, both fed by real data:
+
+   · message — a client's latest WhatsApp message replays as an incoming
+     alert: the pill grows to 360px with the butter sweep and a NEW tag,
+     dwells 7 seconds, and returns to idle.
+   · reminder — the agent surfaces a pending item from the approval queue
+     at 376px with the breathing dot. Urgent ones (something owed) stay
+     until acted on; the rest dwell 9 seconds.
+
+   A notification only ever fires from idle — never over the open
+   dashboard, and never while the cursor is on the island. Hovering a
+   visible notification pauses its dwell so it can be read. */
+
+interface Notif {
+  kind: "message" | "reminder";
+  client: ClientKey | null;
+  title: string;
+  body: string;
+  meta: string;
+  tag: string;
+  tone: "butter" | "critical";
+  initials?: string;
+  mode?: Mode;
+  /** ms on screen; null = stays until clicked or dismissed. */
+  dwell: number | null;
+}
+
+const notifs: Notif[] = (() => {
+  // Each client's most recent message, newest first — what "a customer
+  // messaged you" means against a fixed seed set.
+  const messages = clients
+    .map((c) => {
+      const msgs = c.thread.messages;
+      let i = msgs.length - 1;
+      while (i >= 0 && msgs[i]!.from !== "client") i--;
       const m = msgs[i]!;
-      if (m.from !== "client") continue;
-      const ts = Date.parse(m.at);
-      if (ts > bestTs) {
-        const prev = msgs[i - 1];
-        const gapMs = prev ? ts - Date.parse(prev.at) : 0;
-        const mins = gapMs / 60_000;
-        best = {
-          c, id: m.externalId,
-          text: m.text.length > 26 ? `${m.text.slice(0, 25)}…` : m.text,
-          ago: mins < 90 ? `${Math.round(mins)}m later` : mins < 48 * 60 ? `${(mins / 60).toFixed(1)}h later` : `${(mins / 1440).toFixed(1)}d later`,
-        };
-        bestTs = ts;
-      }
-      break;
-    }
+      const prev = i > 0 ? msgs[i - 1] : undefined;
+      return {
+        kind: "message" as const,
+        client: c.key,
+        title: c.name.split(" ")[0] ?? c.name,
+        body: m.text.length > 30 ? `${m.text.slice(0, 29)}…` : m.text,
+        meta: prev ? humanGap(Date.parse(m.at) - Date.parse(prev.at)) : "",
+        tag: "NEW",
+        tone: "butter" as const,
+        initials: c.initials,
+        mode: "record" as Mode,
+        dwell: 7000,
+        ts: Date.parse(m.at),
+      };
+    })
+    .sort((a, b) => b.ts - a.ts);
+
+  const STYLE: Record<string, { tag: string; tone: "butter" | "critical"; dwell: number | null }> = {
+    "→": { tag: "SEND", tone: "butter", dwell: 9000 },
+    "!": { tag: "OWED", tone: "critical", dwell: null },
+    "☏": { tag: "CALL", tone: "critical", dwell: 9000 },
+    "◇": { tag: "HELD", tone: "butter", dwell: 9000 },
+  };
+  const reminders = approvals
+    .filter((a) => !a.done)
+    .map((a) => {
+      const st = STYLE[a.glyph] ?? STYLE["→"]!;
+      return {
+        kind: "reminder" as const,
+        client: a.go?.client ?? null,
+        title: a.title,
+        body: "",
+        meta: a.meta,
+        tag: st.tag,
+        tone: st.tone,
+        mode: a.go?.mode,
+        dwell: st.dwell,
+      };
+    });
+
+  // Interleave so the demo alternates: a customer message, then a reminder.
+  const out: Notif[] = [];
+  for (let i = 0; i < Math.max(messages.length, reminders.length); i++) {
+    const m = messages[i];
+    if (m) out.push(m);
+    const r = reminders[i];
+    if (r) out.push(r);
   }
-  return best!;
+  return out;
 })();
 
-function alertLayer(): string {
+function messageLayer(n: Notif): string {
   return `
-    <button class="row pad" data-act="open-record" data-client="${newest.c.key}" aria-label="Open ${e(newest.c.name)}'s record">
+    <button class="row pad" data-act="notif-open" aria-label="Open ${e(n.title)}'s message">
       <span class="sweepline" aria-hidden="true"></span>
-      <span class="ava-sq" aria-hidden="true">${e(newest.c.initials)}</span>
-      <span class="txt">${e(newest.c.name.split(" ")[0] ?? "")}: “${e(newest.text)}”</span>
-      <span class="ago">${e(newest.ago)}</span>
-      <span class="tag new">NEW</span>
+      <span class="ava-sq" aria-hidden="true">${e(n.initials ?? "")}</span>
+      <span class="txt">${e(n.title)}: “${e(n.body)}”</span>
+      <span class="ago">${e(n.meta)}</span>
+      <span class="tag new">${e(n.tag)}</span>
     </button>`;
 }
 
-/** The client a call reminder has fired on, if any. */
-const callTarget = clients.find((c) => c.key === "B") ?? clients[0]!;
-
-function callLayer(): string {
+function reminderLayer(n: Notif): string {
+  const dot = n.tone === "butter" ? ' style="background:var(--butter)"' : "";
   return `
-    <button class="row pad" data-act="page" data-page="calls" aria-label="Open call reminders">
-      <span class="dot live" aria-hidden="true"></span>
-      <span class="txt">${e(callTarget.name.split(" ")[0] ?? "")} — <span class="crit-ink">call flagged</span></span>
-      <span class="ago">2 reschedules</span>
-      <span class="tag call">CALL</span>
+    <button class="row pad" data-act="notif-open" aria-label="${e(n.title)}">
+      <span class="dot live"${dot} aria-hidden="true"></span>
+      <span class="txt grow">${e(n.title)}</span>
+      <span class="tag ${n.tone === "butter" ? "new" : "call"}">${e(n.tag)}</span>
     </button>`;
 }
 
-/** Four bands: solid where a value was measured, dotted where it is an absence. */
-function peekStrip(c: ClientView): string {
-  return c.score.signals
-    .map((s) => {
-      const absent = s.recent.startsWith("0") && s.severity > 0.6;
-      if (absent) {
-        const cls = s.severity > 0.85 ? "absent-crit" : "absent-ser";
-        return `<i class="${cls}" title="${e(s.label)}: none measured"></i>`;
-      }
-      return `<i style="background:${severityMark(s.severity)}" title="${e(s.label)}: ${e(s.recent)}"></i>`;
-    })
-    .join("");
+let notifIdx = 0;
+let dwellTimer: number | undefined;
+let current: Notif | null = null;
+
+function showNotif(n: Notif): void {
+  current = n;
+  if (n.kind === "message") {
+    need("l-alert").innerHTML = messageLayer(n);
+    setState("alert");
+  } else {
+    need("l-call").innerHTML = reminderLayer(n);
+    island.dataset.tone = n.tone;
+    setState("call");
+  }
+  window.clearTimeout(dwellTimer);
+  if (n.dwell !== null) {
+    dwellTimer = window.setTimeout(() => {
+      if (state.st === "alert" || state.st === "call") setState("idle");
+    }, n.dwell);
+  }
 }
 
+function nextNotif(): void {
+  if (state.st !== "idle" || notifs.length === 0) return;
+  showNotif(notifs[notifIdx % notifs.length]!);
+  notifIdx++;
+}
+
+/**
+ * The hover card is a book-level glance, not a single client: how many are
+ * silent, how many are decaying, how much the clients actually said this
+ * week, and whether anything sits in the call queue. The strip underneath
+ * is one band per client in their status colour, so the shape of the whole
+ * book reads in a quarter of a second.
+ */
 function peekLayer(): string {
-  const c = top;
-  const lat = c.score.signals.find((s) => s.name === "latency")!;
+  const callQ = queues.calls.rows.filter((r) => r.btn !== "").length;
+  const strip = clients
+    .map((c) => `<i style="background:${markOf(c.tone)}" title="${e(c.name)} · ${e(c.statusWord)}"></i>`)
+    .join("");
+
+  // Numbers stay in ink; the status colour rides a small dot beside the label,
+  // so colour never carries meaning alone and the numerals line up cleanly.
+  const stat = (label: string, value: number | string, dot?: string): string => `
+    <span class="st">
+      <span class="hd">${dot ? `<i class="dt" style="background:${dot}"></i>` : ""}<span class="lbl">${e(label)}</span></span>
+      <span class="v num">${e(String(value))}</span>
+    </span>`;
+
   return `
     <button class="peek" data-act="open" aria-label="Open ChadBuddy dashboard">
       <span class="top">
-        <span class="nm">${e(c.name)}</span>
-        <span class="chip" data-tone="${c.chipTone}">${e(c.statusWord)}</span>
-        <span class="sc-n">${c.score.composite} prov.</span>
+        <span class="nm">Your book right now</span>
+        <span class="sc-n">${e(dateShort.format(NOW))} · ${totals.clients} clients</span>
       </span>
-      <span class="why">Replies in <b>${e(lat.recent)}</b> — and hasn't asked a single question in 30 days.</span>
-      <span class="strip" aria-hidden="true">${peekStrip(c)}</span>
+      <span class="stats">
+        ${stat("silent", totals.silent, "var(--butter)")}
+        <i class="div"></i>
+        ${stat("decaying", totals.decaying, "var(--m-crit)")}
+        <i class="div"></i>
+        ${stat("msgs · 7d", weekBars.total)}
+        <i class="div"></i>
+        ${stat("calls", callQ, callQ > 0 ? "var(--m-warn)" : "var(--m-good)")}
+        <i class="div"></i>
+        ${stat("owed by you", totals.owedByAdvisor, totals.owedByAdvisor > 0 ? "var(--butter)" : undefined)}
+      </span>
+      <span class="strip" aria-hidden="true">${strip}</span>
     </button>`;
 }
 
@@ -864,9 +962,8 @@ let compactRendered = false;
 
 function render(): void {
   if (!compactRendered) {
+    // Alert and call layers are rendered per-notification by showNotif.
     need("l-idle").innerHTML = idleLayer();
-    need("l-alert").innerHTML = alertLayer();
-    need("l-call").innerHTML = callLayer();
     need("l-peek").innerHTML = peekLayer();
     compactRendered = true;
   }
@@ -879,6 +976,11 @@ function render(): void {
 function setState(st: IslandState): void {
   state.st = st;
   island.dataset.state = st;
+  if (st !== "call") delete island.dataset.tone;
+  if (st !== "alert" && st !== "call") {
+    window.clearTimeout(dwellTimer);
+    current = null;
+  }
   if (st !== "open") state.lit = null;
   render();
 }
@@ -895,11 +997,37 @@ function focusCite(id: string): void {
 
 /* ── events ──────────────────────────────────────────────────────── */
 
+/* Hover-with-intent. A deliberate hover expands to the summary card; a
+   cursor merely passing through does not — the 160ms delay filters the
+   drive-bys that made the earlier version feel like it was dodging the
+   pointer. The island grows around a fixed top-centre anchor, so nothing
+   slides. Hovering a visible notification pauses its dwell so it can
+   actually be read; leaving gives it 2.5s more, then it retires. */
+let hoverTimer: number | undefined;
+
 island.addEventListener("pointerenter", () => {
-  if (state.st === "idle") setState("peek");
+  if (state.st === "alert" || state.st === "call") {
+    window.clearTimeout(dwellTimer);
+    return;
+  }
+  if (state.st !== "idle") return;
+  window.clearTimeout(hoverTimer);
+  hoverTimer = window.setTimeout(() => {
+    if (state.st === "idle") setState("peek");
+  }, 160);
 });
+
 island.addEventListener("pointerleave", () => {
+  window.clearTimeout(hoverTimer);
   if (state.st === "peek") setState("idle");
+  else if (state.st === "alert" || state.st === "call") {
+    if (current?.dwell !== null) {
+      window.clearTimeout(dwellTimer);
+      dwellTimer = window.setTimeout(() => {
+        if (state.st === "alert" || state.st === "call") setState("idle");
+      }, 2500);
+    }
+  }
 });
 
 island.addEventListener("click", (ev) => {
@@ -953,6 +1081,20 @@ island.addEventListener("click", (ev) => {
       state.filter = (hit.dataset.f ?? "all") as Filter;
       render();
       return;
+    case "notif-open": {
+      // Read before setState — leaving alert/call clears the current notif.
+      const n = current;
+      if (n?.client) {
+        state.sel = n.client;
+        state.page = "clients";
+        state.mode = n.mode ?? "record";
+        state.idea = 0;
+      } else if (n?.kind === "reminder") {
+        state.page = "calls";
+      }
+      setState("open");
+      return;
+    }
     case "cite": {
       const id = hit.dataset.id;
       if (!id || !key) return;
@@ -972,6 +1114,10 @@ island.addEventListener("click", (ev) => {
 
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
+  if (state.st === "alert" || state.st === "call") {
+    setState("idle");
+    return;
+  }
   if (state.lit !== null) {
     state.lit = null;
     render();
@@ -998,12 +1144,10 @@ watchHotRect(island);
 const qs = new URLSearchParams(location.search);
 const wanted = qs.get("state") as IslandState | null;
 
-if (wanted === "alert") {
-  setState("alert");
-  alertTimer = window.setTimeout(() => {
-    if (state.st === "alert") setState("idle");
-  }, 7000);
-} else if (wanted && ["idle", "call", "peek", "open"].includes(wanted)) {
+if (wanted === "alert" || wanted === "call") {
+  const n = notifs.find((x) => (wanted === "alert" ? x.kind === "message" : x.kind === "reminder"));
+  if (n) showNotif(n);
+} else if (wanted === "idle" || wanted === "peek" || wanted === "open") {
   setState(wanted);
 } else if (qs.has("open")) {
   const page = qs.get("page");
@@ -1017,4 +1161,8 @@ if (wanted === "alert") {
   setState("open");
 }
 
-export { alertTimer };
+/* The live feed. First notification lands 6s after boot, then one every 22s,
+   cycling through the real events — each fires only if the island is idle, so
+   nothing ever barges in over the dashboard or a hover. */
+window.setTimeout(nextNotif, 6_000);
+window.setInterval(nextNotif, 22_000);

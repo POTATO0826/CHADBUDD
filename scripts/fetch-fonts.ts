@@ -26,6 +26,21 @@ const WEIGHTS: Record<string, string> = {
   "Geist Mono": "400 500",
 };
 
+/**
+ * Metric overrides, the fix for "the text sits low on Windows".
+ *
+ * Windows resolves a font's vertical metrics from its usWin table, macOS and
+ * most Linux stacks from hhea — so the same line box centres differently per
+ * platform, and in a 38px pill a couple of pixels reads as misalignment.
+ * Overriding ascent/descent in the @font-face pins one set of metrics
+ * everywhere; the platform tables stop mattering.
+ *
+ * The values are chosen so ascent − descent ≈ cap height (~0.72em): with that,
+ * flex centring lands the CAP BAND on the geometric centre, which is what the
+ * eye reads as "centred" — ink-centring would let descenders drag text high.
+ */
+const METRICS = "ascent-override:86%;descent-override:14%;line-gap-override:0%";
+
 interface Face {
   family: string;
   style: string;
@@ -68,7 +83,7 @@ for (const f of faces.values()) {
   const weight = WEIGHTS[f.family] ?? "400";
   out +=
     `@font-face{font-family:"${f.family}";font-style:${f.style};font-weight:${weight};` +
-    `font-display:swap;src:url(data:font/woff2;base64,${b64}) format("woff2")}\n`;
+    `${METRICS};font-display:swap;src:url(data:font/woff2;base64,${b64}) format("woff2")}\n`;
   console.log(`${f.family} ${f.style} ${weight}  ${bytes.length.toLocaleString("en-US")} bytes`);
 }
 
