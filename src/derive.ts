@@ -21,6 +21,7 @@ import { isOpen, ledgerFor, openDays, openEntries } from "./ledger.ts";
 import type { LedgerEntry } from "./ledger.ts";
 import type { Score, SignalScore } from "./score.ts";
 import { fmtMinutes, score } from "./score.ts";
+import { callStats, fmtGap } from "./contact.ts";
 import { conversationStarts, isQuestion, windows } from "./signals.ts";
 import type { Windows } from "./signals.ts";
 
@@ -499,9 +500,10 @@ function build(thread: SeedThread): ClientView {
     facts: [
       { glyph: "◷", k: "First message", v: dateLong.format(tsOf(first)) },
       { glyph: "☏", k: "Phone", v: thread.handle },
-      { glyph: "✉", k: "Channel", v: "WhatsApp only" },
+      { glyph: "✉", k: "Channel", v: "Telegram · phone · meetings" },
       { glyph: "✦", k: "Messages", v: `${thread.messages.length} · ${clientCount} theirs` },
       { glyph: "◔", k: "Last contact", v: stamp.format(tsOf(last)) },
+      { glyph: "☎", k: "Calls", v: callLine(thread.key) },
       { glyph: "⌂", k: "Adviser", v: ADVISOR },
     ],
     weeks,
@@ -524,6 +526,23 @@ function build(thread: SeedThread): ClientView {
 }
 
 /* ── the set ─────────────────────────────────────────────────────── */
+
+/**
+ * The phone, in one line of the facts list.
+ *
+ * Leads with what went wrong when something did. A client whose calls were all
+ * returned gets a count; one with calls still hanging gets the number hanging,
+ * because that is the fact the advisor needs and folding it into a ratio would
+ * be a way of not saying it.
+ */
+
+function callLine(key: ClientKey): string {
+  const s = callStats(key);
+  if (s.total === 0) return "none logged";
+  if (s.unreturned > 0) return `${s.total} · ${s.unreturned} never returned`;
+  if (s.medianCallbackMin !== null) return `${s.total} · returned in ${fmtGap(s.medianCallbackMin)}`;
+  return `${s.total} · none missed`;
+}
 
 /**
  * `let`, not `const`, so live data can replace the seed without this file
@@ -580,7 +599,6 @@ export function rebuild(source: SeedThread[] = lastSource): void {
 // The seed remains the default. Live mode overwrites this after boot; without
 // it, the page behaves exactly as it did before any of this existed.
 rebuild(threads);
-
 export function clientById(id: string): ClientView {
   return clients.find((c) => c.id === id) ?? clients[0]!;
 }

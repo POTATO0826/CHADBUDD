@@ -33,6 +33,7 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { gate, type Claim } from "./verbatim";
 
@@ -182,10 +183,22 @@ interface PassResult {
  * `analyze` would mean a public function reachable from the browser sitting in
  * the middle of an internal loop — more surface, no benefit.
  */
-type Runner = (ref: never, args: never) => Promise<unknown>;
-
+/**
+ * `ActionCtx` rather than a hand-written shape.
+ *
+ * This was `{ runQuery: (ref: never, args: never) => Promise<unknown> }`, which
+ * types every function reference as unassignable and every result as `{}` — so
+ * the seventeen errors it produced were the type system correctly reporting
+ * that nothing here was checked. `convex dev` typechecks before it deploys,
+ * which is what turned that from cosmetic into a push that will not go.
+ *
+ * The generated context carries the whole api graph, so `thread.messages` and
+ * `thread.clientId` are now real. The explicit `Promise<PassResult>` is what
+ * keeps that from becoming circular: the return type is declared rather than
+ * inferred from calls that themselves depend on it.
+ */
 async function runPass(
-  ctx: { runQuery: Runner; runMutation: Runner },
+  ctx: ActionCtx,
   key: string,
   force: boolean,
 ): Promise<PassResult> {

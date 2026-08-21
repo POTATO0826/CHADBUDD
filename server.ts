@@ -7,6 +7,8 @@
 
 // Must match `build.devUrl` in src-tauri/tauri.conf.json — `tauri dev` runs this
 // server as its beforeDevCommand and then points the webview at that URL.
+import { convexDefine, convexUrl } from "./scripts/convex-url.ts";
+
 const PORT = Number(process.env.PORT ?? 4321);
 
 async function bundle(): Promise<Response> {
@@ -15,6 +17,9 @@ async function bundle(): Promise<Response> {
     target: "browser",
     format: "esm",
     minify: false,
+    // Re-read on every bundle, so running `convex dev` in another terminal
+    // takes effect on the next reload rather than on a restart of this one.
+    define: convexDefine(),
   });
 
   if (!built.success) {

@@ -19,6 +19,7 @@ import type { FunctionReference } from "convex/server";
 
 import { TelegramSource } from "./telegram/source.ts";
 import { DAY, WANTED_DAYS, type BridgeMessage, type Source } from "./types.ts";
+import { MISSING_CONVEX, convexUrl as resolveConvexUrl } from "../scripts/convex-url.ts";
 
 /** Must match BATCH_LIMIT in convex/ingest.ts — mutations get one second. */
 const BATCH = 200;
@@ -40,18 +41,16 @@ const CHAT_REFRESH_MS = 5 * 60_000;
  */
 const BACKFILL_DAYS = Number(process.env["BRIDGE_BACKFILL_DAYS"] ?? "0");
 
-const convexUrl = process.env["CONVEX_SELF_HOSTED_URL"] ?? process.env["CONVEX_URL"] ?? "";
+/* Resolved the same way the page resolves it, so a backend the dashboard can
+   reach is a backend this can reach. It covers both deployments: self-hosted on
+   loopback, and Convex Cloud, where `convex dev` writes only CONVEX_DEPLOYMENT
+   and the hostname is derived from it. */
+const convexUrl = resolveConvexUrl();
 const apiId = Number(process.env["TELEGRAM_API_ID"] ?? "");
 const apiHash = process.env["TELEGRAM_API_HASH"] ?? "";
 
 if (convexUrl === "") {
-  console.error(
-    "Missing CONVEX_SELF_HOSTED_URL in .env.local.\n\n" +
-      "  docker compose up -d\n" +
-      "  docker compose exec backend ./generate_admin_key.sh\n\n" +
-      "  CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210\n" +
-      "  CONVEX_SELF_HOSTED_ADMIN_KEY=<key>\n",
-  );
+  console.error(MISSING_CONVEX);
   process.exit(1);
 }
 if (!Number.isInteger(apiId) || apiId <= 0 || apiHash === "") {

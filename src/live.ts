@@ -31,16 +31,28 @@ import { setIdeas } from "./copy.ts";
 import { isTauri } from "./shell.ts";
 import type { Idea } from "./copy.ts";
 
-/**
- * The deployment URL.
- *
- * Defaulted rather than injected at build time, because bundling it would mean
- * editing server.ts and build.ts — shared files — for a value that is the same
- * on every developer's machine. `?convex=` overrides it.
- */
 const params = new URLSearchParams(window.location.search);
 
-const DEFAULT_URL = "http://127.0.0.1:3210";
+/**
+ * The deployment URL, baked in at build time by scripts/convex-url.ts.
+ *
+ * This was a hard-coded loopback address, on the reasoning that the value was
+ * the same on every developer's machine. True of a self-hosted backend; not
+ * true of Convex Cloud, where each deployment has its own hostname. So it now
+ * follows `CONVEX_DEPLOYMENT` in .env.local.
+ *
+ * `typeof` rather than a plain read: if something bundles this module without
+ * the define — a test harness, an editor's own type-check run — an undeclared
+ * identifier throws on load, and live mode failing has to stay survivable.
+ */
+declare const __CONVEX_URL__: string;
+const BUILT_URL = typeof __CONVEX_URL__ === "string" ? __CONVEX_URL__ : "";
+
+/**
+ * Loopback when nothing was configured, which is what a self-hosted deployment
+ * answers on. `?convex=` overrides either way.
+ */
+const DEFAULT_URL = BUILT_URL || "http://127.0.0.1:3210";
 
 /**
  * Decay on a timescale a person can watch.
@@ -106,6 +118,17 @@ export async function queueSend(key: ClientKey, text: string, ideaRank?: string)
   return res.to;
 }
 
+/**
+ * The connected client, for modules that issue their own calls.
+ *
+ * Undefined until initLive has run and succeeded, which is the signal
+ * convexCalendar.ts uses to decide whether there is a live calendar to point
+ * at — the same "no backend, no change" posture the rest of this file takes.
+ */
+export function convexClient(): ConvexClient | undefined {
+  return convex;
+}
+
 interface IdeaRow extends Idea {
   generatedTs: number;
   model: string;
@@ -118,6 +141,8 @@ export interface Arrival {
   initials: string;
   text: string;
   at: string;
+  /** The message's own id, so anything derived from it stays traceable. */
+  cite: string;
   /** Gap since the previous message in that thread, or null if it's the first. */
   gapMs: number | null;
 }
@@ -221,7 +246,7 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
         // Only the newest unseen message per client is announced. A burst of
         // five should grow the island once, not five times — and the latest is
         // the one worth reading.
-        let latest: { text: string; at: string; gapMs: number | null } | null = null;
+        let latest: { text: string; at: string; cite: string; gapMs: number | null } | null = null;
 
         t.messages.forEach((m, i) => {
           if (seen.has(m.externalId)) return;
@@ -231,18 +256,20 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
           latest = {
             text: m.text,
             at: m.at,
+            cite: m.externalId,
             gapMs: prev ? Date.parse(m.at) - Date.parse(prev.at) : null,
           };
         });
 
         if (latest !== null) {
-          const a = latest as { text: string; at: string; gapMs: number | null };
+          const a = latest as { text: string; at: string; cite: string; gapMs: number | null };
           onArrive({
             key: t.key,
             clientName: t.clientName,
             initials: initialsOf(t.clientName),
             text: a.text,
             at: a.at,
+            cite: a.cite,
             gapMs: a.gapMs,
           });
         }
