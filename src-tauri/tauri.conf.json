@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.chadbuddy.hud",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "bun run web",
     "devUrl": "http://localhost:4321",
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"

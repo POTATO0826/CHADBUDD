@@ -9,7 +9,8 @@
   },
   "private": true,
   "scripts": {
-    "dev": "bun run server.ts",
+    "dev": "bun run scripts/dev.ts",
+    "web": "bun run server.ts",
     "build": "bun run build.ts",
     "fonts": "bun run scripts/fetch-fonts.ts",
     "verify:seed": "bun run scripts/verify-seed.ts",
@@ -19,7 +20,6 @@
     "test:backend": "bun test bridge/",
     "tg:check": "bun run bridge/telegram/check.ts",
     "tg:spike": "bun run bridge/telegram/spike.ts",
-    "dev:all": "bun run scripts/dev.ts",
     "convex:dev": "bunx convex dev",
     "convex:deploy": "bunx convex dev --once",
     "convex:codegen": "bunx convex codegen",

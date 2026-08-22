@@ -1,5 +1,7 @@
 /**
- * bun run dev — serves index.html and bundles src/main.ts to /app.js on request.
+ * bun run web — serves index.html and bundles src/main.ts to /app.js on request.
+ * (`bun run dev` is the whole stack — scripts/dev.ts — and Tauri's
+ * beforeDevCommand starts this server through `web`, never `dev`.)
  *
  * No watcher and no cache: every reload re-bundles, which at this size is a
  * couple of milliseconds and means the page is never stale.

@@ -1,9 +1,9 @@
 /**
- * bun run dev:all — every long-running process, in one terminal.
+ * bun run dev — every long-running process, in one terminal.
  *
- *   bun run dev:all         convex watch + bridge + the Tauri window
- *   bun run dev:all --web   the same, but a browser tab instead of Tauri
- *   bun run dev:all --no-bridge --no-convex   any part can be dropped
+ *   bun run dev         convex watch + bridge + the Tauri window
+ *   bun run dev --web   the same, but a browser tab instead of Tauri
+ *   bun run dev --no-bridge --no-convex   any part can be dropped
  *
  * There are three things that have to be running at once and no reason for
  * three terminals: `convex dev` pushes convex/ on save, the bridge holds the
@@ -12,9 +12,11 @@
  * deployment the window in front of you is no longer reading.
  *
  * The web server is deliberately absent from that list. `tauri dev` runs
- * `bun run dev` itself via beforeDevCommand in src-tauri/tauri.conf.json, so
+ * `bun run web` itself via beforeDevCommand in src-tauri/tauri.conf.json, so
  * starting it here too would put two servers on port 4321. `--web` swaps the
- * Tauri child for that same server rather than adding one.
+ * Tauri child for that same server rather than adding one. And beforeDevCommand
+ * MUST stay `web`, not `dev`: this script is `dev` now, and a Tauri that calls
+ * back into it would spawn another Tauri, forever.
  *
  * Output is prefixed rather than interleaved raw, because three processes
  * writing to one terminal is unreadable otherwise — and the prefix is the only
