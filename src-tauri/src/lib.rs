@@ -115,6 +115,15 @@ fn set_content_protected(protected: bool, app: AppHandle) -> Result<bool, String
 /// by validation, so the URL cannot be steered anywhere but a Telegram chat.
 /// The window gets no IPC capabilities — a remote page has no business
 /// invoking anything.
+/// The Telegram window's voice, arriving in the terminal. The page has an
+/// IPC capability scoped to its window and origin for exactly this: the
+/// white-screen hunt proved that debugging a remote page with no return
+/// channel is guessing with extra steps.
+#[tauri::command]
+fn tg_diag(msg: String) {
+    println!("[tgweb][js] {msg}");
+}
+
 #[tauri::command]
 fn open_telegram(app: AppHandle, peer: String) -> Result<(), String> {
     if peer.is_empty() || !peer.chars().all(|c| c.is_ascii_digit()) {
@@ -124,39 +133,21 @@ fn open_telegram(app: AppHandle, peer: String) -> Result<(), String> {
     println!("[tgweb] open requested for peer {peer}");
 
     /* The window already exists — created once in setup(), because runtime
-       webview creation on this app silently never navigated however it was
-       threaded. Opening is now: point the SPA at the peer, show, focus. */
+       webview creation silently never navigated however it was threaded.
+       Opening a chat is a FULL navigation with the peer in the hash and a
+       marker in the query: the A client only honours the hash at SPA boot
+       (recon proved runtime hash changes change nothing), and the marker is
+       what tells the page-load handler this load intends to ring. */
     let w = app
         .get_webview_window("tgweb")
         .ok_or_else(|| "telegram window was not created at startup".to_string())?;
-    let _ = w.eval(&format!("location.hash = '#{peer}'"));
+    let _ = w.eval(&format!(
+        "location.href='https://web.telegram.org/a/?cbcall=1#{peer}'"
+    ));
     let _ = w.show();
     let _ = w.unminimize();
     let _ = w.set_focus();
-
-    /* One click means ringing, not "here is the chat, press their button".
-       The injected script presses Telegram's own call button and then its
-       confirm dialog, retrying for ten seconds so the chat has time to load.
-       Two guards keep it polite: it does nothing on the login screen (the
-       user still has to link the device once), and nothing when a call is
-       already up (no ongoing-call class check needed — the phone button
-       simply is not rendered mid-call, so the loop just times out).
-       Selectors are Telegram A's DOM, which is not an API and will someday
-       move; the failure mode is the old behaviour, one manual tap. */
-    let _ = w.eval(concat!(
-        "(function(){",
-        "if(document.querySelector('#auth-phone-number-form,#auth-qr-form')){return;}",
-        "var tries=0;var t=setInterval(function(){tries++;",
-        "var m=Array.prototype.find.call(document.querySelectorAll('.Modal button,[class*=confirm] button'),function(b){return /^\\s*call\\s*$/i.test(b.textContent);});",
-        "if(m){m.click();clearInterval(t);return;}",
-        "var i=document.querySelector('.icon-phone');",
-        "var btn=i&&i.closest('button');",
-        "if(!btn){btn=Array.prototype.find.call(document.querySelectorAll('button[title],button[aria-label]'),function(b){return /call/i.test(b.title||b.getAttribute('aria-label')||'');});}",
-        "if(btn){btn.click();}",
-        "if(tries>40){clearInterval(t);}",
-        "},250);})();",
-    ));
-    println!("[tgweb] shown on peer {peer}, auto-call armed");
+    println!("[tgweb] navigating to peer {peer} with call intent");
     Ok(())
 }
 
@@ -226,7 +217,8 @@ pub fn run() {
             set_content_protected,
             focus_window,
             open_external,
-            open_telegram
+            open_telegram,
+            tg_diag
         ])
         .setup(move |app| {
             /* The Telegram window, created once here and only ever shown.
@@ -255,8 +247,63 @@ pub fn run() {
                     println!("[tgweb] navigating: {url}");
                     true
                 })
-                .on_page_load(|_w, payload| {
+                .on_page_load(|w, payload| {
                     println!("[tgweb] page {:?}: {}", payload.event(), payload.url());
+                    if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                        return;
+                    }
+                    /* Findings this handler encodes, so nobody re-digs:
+                       eval() works (proven by a forced navigation arriving in
+                       this log); document.title does not reach the native
+                       title; __TAURI_INTERNALS__ never materialises on the
+                       remote origin despite the capability, so the page
+                       reports by fetching the dev server — mixed-content
+                       rules carve localhost out as trustworthy. And the big
+                       one: the A client ignores runtime hash changes — recon
+                       showed zero chat-header buttons after location.hash —
+                       and honours the hash ONLY at SPA boot. So opening a
+                       chat is a real navigation, and this handler is where
+                       the call-press must live: it is the only code that
+                       runs at the right moment. */
+                    let is_call = payload.url().query().unwrap_or("").contains("cbcall");
+                    if !is_call {
+                        let _ = w.eval("try{fetch('http://localhost:4321/__diag?m=boot-ok',{mode:'no-cors'})}catch(e){}");
+                        return;
+                    }
+                    let _ = w.eval(concat!(
+                        "(function(){",
+                        "var diag=function(m){try{fetch('http://localhost:4321/__diag?m='+encodeURIComponent('call: '+String(m).slice(0,380)),{mode:'no-cors'}).catch(function(){});}catch(e){}};",
+                        "var press=function(el){['mousedown','mouseup','click'].forEach(function(k){",
+                        "el.dispatchEvent(new MouseEvent(k,{bubbles:true,cancelable:true,view:window}));});};",
+                        "if(document.querySelector('#auth-phone-number-form,#auth-qr-form')){diag('auth-screen');return;}",
+                        "diag('armed '+location.hash);",
+                        "var tries=0,stage='start';",
+                        "var t=setInterval(function(){tries++;",
+                        /* A modal confirm anywhere with a bare "Call" label wins outright. */
+                        "var m=Array.prototype.find.call(document.querySelectorAll('.Modal button'),",
+                        "function(b){return /^\\s*call\\s*$/i.test(b.textContent);});",
+                        "if(m){press(m);diag('confirm-pressed');clearInterval(t);return;}",
+                        /* An open menu with a "Call" item is one press from ringing. */
+                        "var item=Array.prototype.find.call(document.querySelectorAll('.MenuItem,[role=menuitem]'),",
+                        "function(b){return /^\\s*call\\s*$/i.test(b.textContent||'');});",
+                        "if(item){press(item);stage='item';diag('menu-item-pressed');return;}",
+                        /* Desktop layout: the phone icon in the chat header. */
+                        "var ph=document.querySelector('.icon-phone');var pb=ph&&ph.closest('button');",
+                        "if(pb){press(pb);stage='phone';diag('phone-pressed');return;}",
+                        /* Mobile layout: the chat header's own more-menu. */
+                        "if(stage==='start'){",
+                        "var col=document.getElementById('MiddleColumn')||document.querySelector('.MiddleHeader');",
+                        "var mi=col&&col.querySelector('.icon-more');var mb=mi&&mi.closest('button');",
+                        "if(mb){press(mb);stage='menu';diag('menu-opened');return;}",
+                        /* Nothing recognised: dump what the column actually holds so the
+                           next build aims at reality instead of memory. */
+                        "if(tries===10||tries===25){",
+                        "var btns=Array.prototype.slice.call((col||document).querySelectorAll('button'),0,12)",
+                        ".map(function(b){return (b.className||'').slice(0,36);});",
+                        "diag('probe t'+tries+' col='+!!col+' btns='+btns.join(' ; '));}}",
+                        "if(tries>45){clearInterval(t);diag('gave-up stage='+stage);}",
+                        "},300);})();",
+                    ));
                 })
                 .build()
                 {
