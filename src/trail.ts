@@ -33,6 +33,10 @@ export function initTrail(): void {
     dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.round(window.innerWidth * dpr);
     canvas.height = Math.round(window.innerHeight * dpr);
+    // Belt and braces with the stylesheet: the drawing buffer is device
+    // pixels, the on-screen box must be CSS pixels, or the two scales skew.
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${window.innerHeight}px`;
   };
   fit();
   window.addEventListener("resize", fit);

@@ -951,7 +951,10 @@ html[data-shell="tauri"] #desk{ display: none; }
 .apitem{ display: inline-flex; align-items: center; gap: 1px; }
 
 /* the mouse trail: an overlay that draws and never intercepts */
-#mousetrail{ position: fixed; inset: 0; pointer-events: none; z-index: 9999; }
+/* An absolutely-positioned canvas with only inset keeps its INTRINSIC size
+   (the device-pixel attribute size), so on a scaled display it overflows the
+   viewport and every stroke lands past the cursor. The CSS size pins it. */
+#mousetrail{ position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 9999; }
 
 /* the peek stats are doors now — say so on hover */
 .peek .st{ border-radius: var(--r-sm); padding: 2px 5px; margin: -2px -1px; }
