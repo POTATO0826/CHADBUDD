@@ -144,6 +144,8 @@ interface State {
   room: { key: ClientKey; stage: Stage } | null;
   /** Bumped by Regenerate so the draft cache asks the model afresh. */
   roomNonce: number;
+  /** The advisor's in-progress edit of the room draft, surviving re-renders. */
+  roomText: string | null;
   /** Week view: Monday of the week shown. Null follows the clock. */
   wk: number | null;
   /** Desk: the expanded row, by brief id. Null is everything collapsed. */
@@ -204,6 +206,7 @@ const state: State = {
   contractOpen: null,
   room: null,
   roomNonce: 0,
+  roomText: null,
   agendaDay: null,
   taskSel: null,
   calFilters: ((): { meetings: boolean; emails: boolean; outreach: boolean } => {
@@ -3675,11 +3678,11 @@ function stageRoom(key: ClientKey, stage: Stage): string {
           <div class="rmright">
             <div class="rmdraft">
               <span class="lbl" style="color:var(--iris)">${e(draftLabel)}</span>
-              <textarea id="roomdraft">${e(draft)}</textarea>
+              <textarea id="roomdraft">${e(state.roomText ?? draft)}</textarea>
               <div class="ctxacts">
                 <span class="seg2" style="display:inline-flex">
-                  <button class="${state.replyVia === "tg" ? "on" : ""}" data-act="reply-via" data-via="tg">Telegram</button>
-                  <button class="${state.replyVia === "em" ? "on" : ""}" data-act="reply-via" data-via="em">Email</button>
+                  <button aria-current="${state.replyVia === "tg"}" data-act="reply-via" data-via="tg">Telegram</button>
+                  <button aria-current="${state.replyVia === "em"}" data-act="reply-via" data-via="em">Email</button>
                 </span>
                 <button class="btn acc" data-act="room-send" data-client="${c.key}">Approve & send</button>
                 <button class="btn" data-act="room-regen">↻ Regenerate</button>
@@ -3690,6 +3693,22 @@ function stageRoom(key: ClientKey, stage: Stage): string {
         </div>
       </div>
     </div>`;
+}
+
+/**
+ * Demo-grade receipts: after a human-approved send, pull the channel up in
+ * the OS browser so the message can be seen landing — Telegram Web on the
+ * chat, Gmail on the sent thread. Human sends only; nothing automatic
+ * opens windows.
+ */
+function showSendExternally(who: ClientKey, via: "tg" | "em"): void {
+  if (via === "tg") {
+    const src = clientMeta(who)?.sourceId ?? "";
+    openExternal(src !== "" ? `https://web.telegram.org/a/#${src}` : "https://web.telegram.org/a/");
+  } else {
+    const em = clientMeta(who)?.email ?? "";
+    openExternal(`https://mail.google.com/mail/u/0/#search/${encodeURIComponent(em !== "" ? `in:sent to:${em}` : "in:sent")}`);
+  }
 }
 
 function openStage(stage: Stage): void {
@@ -4110,6 +4129,7 @@ island.addEventListener("click", (ev) => {
           }
           btn.textContent = "Replying…";
           await queueSend(p.key as ClientKey, proposalReply(p));
+          showSendExternally(p.key as ClientKey, "tg");
         })
         .catch((err: unknown) => {
           btn.disabled = false;
@@ -4340,6 +4360,10 @@ island.addEventListener("click", (ev) => {
 
     case "reply-via": {
       state.replyVia = hit.dataset.via === "em" ? "em" : "tg";
+      // The room draft is being edited in place — a channel change must not
+      // throw the advisor's words away with the re-render.
+      const box = document.getElementById("roomdraft") as HTMLTextAreaElement | null;
+      if (box) state.roomText = box.value;
       render();
       return;
     }
@@ -4364,6 +4388,7 @@ island.addEventListener("click", (ev) => {
             state.replyDraft = "";
             render();
             done("Queued", "the bridge delivers it in about a second", "butter");
+            showSendExternally(who, "tg");
           })
           .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       } else {
@@ -4372,6 +4397,7 @@ island.addEventListener("click", (ev) => {
             state.replyDraft = "";
             render();
             done("Email sent", clientMeta(who)?.email ?? "", "butter");
+            showSendExternally(who, "em");
           })
           .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       }
@@ -4552,6 +4578,7 @@ island.addEventListener("click", (ev) => {
     case "open-room": {
       if (key && state.stage !== null) {
         state.room = { key, stage: state.stage };
+        state.roomText = null;
         render();
       } else if (key) {
         openClient(key);
@@ -4561,12 +4588,14 @@ island.addEventListener("click", (ev) => {
 
     case "room-back": {
       state.room = null;
+      state.roomText = null;
       render();
       return;
     }
 
     case "room-regen": {
       state.roomNonce++;
+      state.roomText = null;
       render();
       return;
     }
@@ -4588,11 +4617,17 @@ island.addEventListener("click", (ev) => {
       };
       if (state.replyVia === "tg") {
         void queueSend(who, text)
-          .then(() => finish("Queued", "the bridge delivers it in about a second", "butter"))
+          .then(() => {
+            finish("Queued", "the bridge delivers it in about a second", "butter");
+            showSendExternally(who, "tg");
+          })
           .catch((err) => finish("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       } else {
         void sendEmail(who, `Message from ${ADVISOR}`, text)
-          .then(() => finish("Email sent", clientMeta(who)?.email ?? "", "butter"))
+          .then(() => {
+            finish("Email sent", clientMeta(who)?.email ?? "", "butter");
+            showSendExternally(who, "em");
+          })
           .catch((err) => finish("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       }
       return;
