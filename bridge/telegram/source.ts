@@ -168,6 +168,34 @@ export class TelegramSource implements Source {
   }
 
   /**
+   * The ring, as it happens. UpdatePhoneCall carries PhoneCallRequested
+   * while the phone is ringing (adminId is the caller) and PhoneCallDiscarded
+   * or an accepted state when it stops — the end variants do not name a
+   * peer, so the end event simply says "stopped".
+   */
+  onRinging(cb: (evt: { sourceId: string; ringing: boolean }) => void): void {
+    const client = this.#need();
+    client.addEventHandler((update: {
+      className?: string;
+      phoneCall?: { className?: string; adminId?: { toString(): string } };
+    }) => {
+      if (update.className !== "UpdatePhoneCall") return;
+      const call = update.phoneCall;
+      if (!call) return;
+      if (call.className === "PhoneCallRequested") {
+        const who = call.adminId?.toString();
+        if (who) cb({ sourceId: who, ringing: true });
+      } else if (
+        call.className === "PhoneCallDiscarded" ||
+        call.className === "PhoneCall" ||
+        call.className === "PhoneCallAccepted"
+      ) {
+        cb({ sourceId: "", ringing: false });
+      }
+    });
+  }
+
+  /**
    * Voice notes: a document whose audio attribute says voice. Downloaded
    * here — the backend cannot reach Telegram — and capped, because a
    * fifteen-minute ramble is an upload nobody asked for.

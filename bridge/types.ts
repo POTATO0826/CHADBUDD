@@ -125,6 +125,13 @@ export interface Source {
   onMessage(cb: (chatId: string, message: BridgeMessage) => void): void;
 
   /**
+   * The phone ringing, live. ringing=false means whatever was ringing has
+   * stopped — Telegram's end event does not say which call, and one at a
+   * time is all a phone does anyway.
+   */
+  onRinging?(cb: (evt: { sourceId: string; ringing: boolean }) => void): void;
+
+  /**
    * Voice notes, as they arrive. Optional: a source without audio simply
    * never calls it. Same chatId convention as onMessage.
    */

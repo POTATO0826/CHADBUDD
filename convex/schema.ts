@@ -43,6 +43,20 @@ export default defineSchema({
     .index("by_source", ["sourceId"])
     .index("by_last", ["lastTs"]),
 
+  /**
+   * A phone ringing right now. One row per caller, flipped active/inactive
+   * by the bridge as Telegram reports the call — the page subscribes and
+   * turns the island into an answer button while a row is live.
+   */
+  ringing: defineTable({
+    sourceId: v.string(),
+    name: v.string(),
+    startedTs: v.number(),
+    active: v.boolean(),
+  })
+    .index("by_active", ["active"])
+    .index("by_source", ["sourceId"]),
+
   /** A chat the advisor has explicitly promoted to a tracked client. */
   clients: defineTable({
     /** Citation prefix — "A". Assigned in pick order, stable for life. */
@@ -80,7 +94,7 @@ export default defineSchema({
      * in a thread is ever sent to a client, so both are advisor-only by
      * construction; the flag exists so the page can say so.
      */
-    via: v.optional(v.union(v.literal("voice"), v.literal("call"))),
+    via: v.optional(v.union(v.literal("voice"), v.literal("call"), v.literal("email"))),
   })
     // The index data/types.ts:13 specifies, kept verbatim.
     .index("by_client_ts", ["clientId", "ts"])

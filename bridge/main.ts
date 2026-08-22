@@ -123,6 +123,8 @@ const API = {
   pickClients: m("ingest", "pickClients"),
   telegramCall: m("calls", "fromTelegram"),
   voiceIngest: act("voice", "ingest"),
+  ringStart: m("calls", "ringStart"),
+  ringEnd: m("calls", "ringEnd"),
   replaceHoldings: m("holdings", "replaceAll"),
   setEmail: m("ingest", "setEmail"),
   pendingSends: q("outbox", "pending"),
@@ -404,6 +406,19 @@ async function main(): Promise<void> {
      iPhone answer: the phone's own call log is sealed, but Telegram calls
      ride the socket this process already holds — ended or missed, any
      device, nothing installed anywhere. */
+  source.onRinging?.(({ sourceId, ringing }) => {
+    if (ringing) {
+      console.log(`[ring] incoming call from ${sourceId}`);
+      void convex.mutation(API.ringStart, { sourceId }).catch((err) =>
+        console.error("[ring] start failed:", err instanceof Error ? err.message : String(err)),
+      );
+    } else {
+      void convex.mutation(API.ringEnd, {}).catch((err) =>
+        console.error("[ring] end failed:", err instanceof Error ? err.message : String(err)),
+      );
+    }
+  });
+
   source.onVoice?.((chatId, vmsg) => {
     console.log(`[voice] note from ${chatId} · ${vmsg.durationSec}s — transcribing…`);
     void convex

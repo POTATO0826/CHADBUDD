@@ -125,7 +125,7 @@ fn tg_diag(msg: String) {
 }
 
 #[tauri::command]
-fn open_telegram(app: AppHandle, peer: String) -> Result<(), String> {
+fn open_telegram(app: AppHandle, peer: String, dial: Option<bool>) -> Result<(), String> {
     if peer.is_empty() || !peer.chars().all(|c| c.is_ascii_digit()) {
         return Err(format!("not a telegram peer id: {peer}"));
     }
@@ -151,16 +151,25 @@ fn open_telegram(app: AppHandle, peer: String) -> Result<(), String> {
        to that suspender for any path that still goes through the page. */
     let _ = w.eval("try{window.onbeforeunload=null;}catch(e){}");
 
-    let url: tauri::Url = format!("https://web.telegram.org/a/?cbcall=1#{peer}")
-        .parse()
-        .map_err(|e| format!("{e}"))?;
+    /* dial=false is the answer path: an incoming call is already ringing,
+       so the window opens on the chat WITHOUT the cbcall marker — pressing
+       the call button mid-ring would dial out over the incoming call. The
+       accept overlay is Telegram's own UI, already on screen. */
+    let with_dial = dial.unwrap_or(true);
+    let url_str = if with_dial {
+        format!("https://web.telegram.org/a/?cbcall=1#{peer}")
+    } else {
+        format!("https://web.telegram.org/a/#{peer}")
+    };
+    let url: tauri::Url = url_str.parse().map_err(|e| format!("{e}"))?;
     match w.navigate(url) {
-        Ok(()) => println!("[tgweb] rust-navigate to peer {peer} with call intent"),
+        Ok(()) => println!(
+            "[tgweb] rust-navigate to peer {peer} ({})",
+            if with_dial { "call intent" } else { "answer" }
+        ),
         Err(e) => {
             println!("[tgweb] rust-navigate failed ({e}); falling back to eval");
-            let _ = w.eval(&format!(
-                "location.replace('https://web.telegram.org/a/?cbcall=1#{peer}')"
-            ));
+            let _ = w.eval(&format!("location.replace('{url_str}')"));
         }
     }
 

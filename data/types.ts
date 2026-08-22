@@ -35,8 +35,8 @@ export interface SeedMessage {
   /** ISO 8601 with the +08:00 offset these conversations actually happened in. */
   at: string;
   text: string;
-  /** "voice" = transcribed voice note; "call" = advisor-only log line. */
-  via?: "voice" | "call";
+  /** "voice" = transcribed note; "call" = advisor-only log; "email" = inbound mail. */
+  via?: "voice" | "call" | "email";
 }
 
 export interface SeedThread {

@@ -3148,7 +3148,9 @@ function messageRow(m: RecMessage, hit = ""): string {
             ? `<span class="viachip vv">♪ voice note · transcribed</span>`
             : m.via === "call"
               ? `<span class="viachip vc">☏ only you see this</span>`
-              : ""
+              : m.via === "email"
+                ? `<span class="viachip ve">✉ email</span>`
+                : ""
         }
         <span class="tx">${mark(m.text, hit)}</span>
         <span class="meta">${chips}<span class="id">${e(m.time)} · ${e(m.id)}</span></span>
@@ -4280,6 +4282,16 @@ island.addEventListener("click", (ev) => {
     case "ask-preset":
       ask(clientById(state.sel.toLowerCase()), hit.dataset.q ?? "");
       return;
+    /* Answer: open the owned Telegram window on the caller, no dial intent. */
+    case "ring-answer": {
+      const src = hit.dataset.source ?? "";
+      if (src !== "") {
+        void openTelegram(src, false).catch(() => openExternal(`tg://user?id=${src}`));
+      }
+      setState("idle");
+      return;
+    }
+
     case "notif-open": {
       // Read before setState — leaving alert/call clears the current notif.
       const n = current;
@@ -4583,6 +4595,33 @@ const demoLoop = window.setInterval(nextNotif, 22_000);
    `clients`, `totals` and `ideas` are imported bindings, and ES modules make
    imports live views — so live.ts reassigns them at their source and a plain
    render() picks everything up. Nothing above this line had to change. */
+/* ── the phone, ringing in the pill ──────────────────────────────
+   While a ring row is live the island becomes an answer button: the caller's
+   name, tap to open the owned Telegram window on their chat — WITHOUT the
+   dial intent, because Telegram's own accept overlay is already up there.
+   The open dashboard is never barged: whoever is already looking will see
+   the call on their phone and in the window regardless. */
+let ringingSrc: string | null = null;
+
+function showRinging(r: { sourceId: string; name: string }): void {
+  ringingSrc = r.sourceId;
+  if (state.st === "open") return;
+  need("l-call").innerHTML = `
+    <button class="row pad" data-act="ring-answer" data-source="${e(r.sourceId)}"
+      aria-label="${e(r.name)} is calling — answer">
+      <span class="dot live" style="background:var(--m-good)" aria-hidden="true"></span>
+      <span class="txt grow">${e(r.name)} is calling — tap to answer</span>
+      <span class="tag call">CALL</span>
+    </button>`;
+  island.dataset.tone = "butter";
+  setState("call");
+}
+
+function clearRinging(): void {
+  if (ringingSrc !== null && state.st === "call") setState("idle");
+  ringingSrc = null;
+}
+
 const live = initLive(
   () => {
     state.sel = clients[0]?.key ?? state.sel;
@@ -4598,8 +4637,8 @@ const live = initLive(
       client: a.key,
       title: a.clientName.split(" ")[0] ?? a.clientName,
       body: a.text.length > 30 ? `${a.text.slice(0, 29)}…` : a.text,
-      meta: a.gapMs === null ? "just now" : humanGap(a.gapMs),
-      tag: "NEW",
+      meta: `${a.via === "email" ? "email · " : a.via === "voice" ? "voice · " : ""}${a.gapMs === null ? "just now" : humanGap(a.gapMs)}`,
+      tag: a.via === "email" ? "EMAIL" : a.via === "voice" ? "VOICE" : "NEW",
       tone: "butter",
       initials: a.initials,
       mode: "record",
@@ -4610,6 +4649,10 @@ const live = initLive(
        convex/scheduling.ts runs on ingest, so it works when the app is shut.
        Doing it here as well would put two writers on the same sentence. The
        block it creates arrives back through the calendar subscription. */
+  },
+  (r) => {
+    if (r) showRinging(r);
+    else clearRinging();
   },
 );
 

@@ -206,8 +206,8 @@ export function watchHotRect(island: HTMLElement): void {
  * Returns the invoke promise so the caller can fall back to the OS deep link
  * when window creation fails.
  */
-export function openTelegram(peer: string): Promise<unknown> {
-  return rawInvoke?.("open_telegram", { peer }) ?? Promise.reject(new Error("not in tauri"));
+export function openTelegram(peer: string, dial = true): Promise<unknown> {
+  return rawInvoke?.("open_telegram", { peer, dial }) ?? Promise.reject(new Error("not in tauri"));
 }
 
 export function openExternal(url: string): void {

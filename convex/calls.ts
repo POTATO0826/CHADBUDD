@@ -120,6 +120,66 @@ export const fromTelegram = mutation({
   },
 });
 
+/** The phone started ringing. Name resolved here so the page needn't. */
+export const ringStart = mutation({
+  args: { sourceId: v.string() },
+  handler: async (ctx, { sourceId }) => {
+    const client = await ctx.db
+      .query("clients")
+      .withIndex("by_source", (q) => q.eq("sourceId", sourceId))
+      .unique();
+    const chat = client
+      ? null
+      : await ctx.db
+          .query("chats")
+          .withIndex("by_source", (q) => q.eq("sourceId", sourceId))
+          .unique();
+    const name = client?.name ?? chat?.name ?? "Someone";
+
+    // One live ring at a time: whatever was ringing before, isn't.
+    for (const r of await ctx.db
+      .query("ringing")
+      .withIndex("by_active", (q) => q.eq("active", true))
+      .collect()) {
+      await ctx.db.patch(r._id, { active: false });
+    }
+    const existing = await ctx.db
+      .query("ringing")
+      .withIndex("by_source", (q) => q.eq("sourceId", sourceId))
+      .unique();
+    if (existing) await ctx.db.patch(existing._id, { name, startedTs: Date.now(), active: true });
+    else await ctx.db.insert("ringing", { sourceId, name, startedTs: Date.now(), active: true });
+  },
+});
+
+/** The ringing stopped — answered, declined, or gave up. Ends every ring. */
+export const ringEnd = mutation({
+  args: {},
+  handler: async (ctx) => {
+    for (const r of await ctx.db
+      .query("ringing")
+      .withIndex("by_active", (q) => q.eq("active", true))
+      .collect()) {
+      await ctx.db.patch(r._id, { active: false });
+    }
+  },
+});
+
+/** What is ringing right now, if anything. Stale rings age out at 2 min. */
+export const ringingNow = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("ringing")
+      .withIndex("by_active", (q) => q.eq("active", true))
+      .collect();
+    const floor = Date.now() - 120_000;
+    return rows
+      .filter((r) => r.startedTs > floor)
+      .map((r) => ({ sourceId: r.sourceId, name: r.name, startedTs: r.startedTs }));
+  },
+});
+
 /** Per-client call history, newest first, for the contact panel. */
 export const forClients = query({
   args: {},

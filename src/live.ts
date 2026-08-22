@@ -324,6 +324,14 @@ export interface Arrival {
   cite: string;
   /** Gap since the previous message in that thread, or null if it's the first. */
   gapMs: number | null;
+  /** How it arrived, when not typed in chat. */
+  via?: "voice" | "call" | "email";
+}
+
+/** Whatever is ringing right now, or null. */
+export interface Ring {
+  sourceId: string;
+  name: string;
 }
 
 /**
@@ -335,7 +343,11 @@ export interface Arrival {
  * or the client could not be constructed, so the caller can carry on with the
  * seed.
  */
-export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void): boolean {
+export function initLive(
+  onRender: () => void,
+  onArrive?: (a: Arrival) => void,
+  onRing?: (r: Ring | null) => void,
+): boolean {
   if (!isLive) return false;
 
   const url = params.get("convex") ?? DEFAULT_URL;
@@ -429,7 +441,7 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
         // Only the newest unseen message per client is announced. A burst of
         // five should grow the island once, not five times — and the latest is
         // the one worth reading.
-        let latest: { text: string; at: string; cite: string; gapMs: number | null } | null = null;
+        let latest: { text: string; at: string; cite: string; gapMs: number | null; via?: "voice" | "call" | "email" } | null = null;
 
         t.messages.forEach((m, i) => {
           if (seen.has(m.externalId)) return;
@@ -441,11 +453,12 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
             at: m.at,
             cite: m.externalId,
             gapMs: prev ? Date.parse(m.at) - Date.parse(prev.at) : null,
+            ...(m.via ? { via: m.via } : {}),
           };
         });
 
         if (latest !== null) {
-          const a = latest as { text: string; at: string; cite: string; gapMs: number | null };
+          const a = latest as { text: string; at: string; cite: string; gapMs: number | null; via?: "voice" | "call" | "email" };
           onArrive({
             key: t.key,
             clientName: t.clientName,
@@ -454,6 +467,7 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
             at: a.at,
             cite: a.cite,
             gapMs: a.gapMs,
+            ...(a.via ? { via: a.via } : {}),
           });
         }
       }
@@ -462,6 +476,11 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
     threads = next;
     ready = true;
     apply();
+  });
+
+  client.onUpdate(q("calls", "ringingNow"), {}, (value) => {
+    const rows = value as Array<{ sourceId: string; name: string; startedTs: number }>;
+    onRing?.(rows[0] ?? null);
   });
 
   client.onUpdate(q("holdings", "list"), {}, (value) => {

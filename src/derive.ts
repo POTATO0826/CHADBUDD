@@ -273,8 +273,8 @@ export interface RecMessage {
   id: string;
   who: "advisor" | "client";
   text: string;
-  /** "voice" = transcribed voice note; "call" = advisor-only log line. */
-  via?: "voice" | "call";
+  /** "voice" = transcribed note; "call" = advisor-only log; "email" = inbound mail. */
+  via?: "voice" | "call" | "email";
   time: string;
   /** Divider above the bubble, when the delay is worth naming. */
   gap: string;

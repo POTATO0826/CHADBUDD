@@ -292,6 +292,7 @@ export const ingestEmail = internalMutation({
       sender: "client",
       ts,
       text,
+      via: "email",
     });
     await ctx.db.patch(client._id, { seq: client.seq + 1 });
 
