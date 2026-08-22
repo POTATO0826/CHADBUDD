@@ -131,7 +131,19 @@ export const record = internalMutation({
   },
   handler: async (ctx, { rows }) => {
     let added = 0;
+    const pendingAll = await ctx.db
+      .query("taskSuggestions")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .collect();
+    const pendingPerClient = new Map();
+    for (const p of pendingAll) {
+      pendingPerClient.set(p.clientKey, (pendingPerClient.get(p.clientKey) ?? 0) + 1);
+    }
     for (const row of rows) {
+      // Two pending per client is the ceiling. The model re-words the same
+      // idea across runs, and a queue that grows every half hour is nagging,
+      // not helping.
+      if ((pendingPerClient.get(row.clientKey) ?? 0) >= 2) continue;
       // One suggestion per (client, title), across every status — a dismissal
       // is a decision, and re-suggesting over it would nag.
       const dupe = await ctx.db
@@ -146,6 +158,7 @@ export const record = internalMutation({
         status: "pending",
         createdTs: Date.now(),
       });
+      pendingPerClient.set(row.clientKey, (pendingPerClient.get(row.clientKey) ?? 0) + 1);
       added++;
     }
     return added;
@@ -155,6 +168,7 @@ export const record = internalMutation({
 export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<number> => {
+    await ctx.runMutation(internal.suggestions.prune, {});
     const keys = await ctx.runQuery(internal.agentData.clientKeys, {});
     let total = 0;
 
@@ -210,6 +224,36 @@ export const run = internalAction({
       }
     }
     return total;
+  },
+});
+
+/**
+ * Keep the queue reviewable: the two soonest-due pending suggestions per
+ * client stay, the rest are dismissed. Run by the pass before it reads, so
+ * an over-grown queue heals itself.
+ */
+export const prune = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const pendingAll = await ctx.db
+      .query("taskSuggestions")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .collect();
+    const byClient = new Map<string, typeof pendingAll>();
+    for (const p of pendingAll) {
+      const list = byClient.get(p.clientKey) ?? [];
+      list.push(p);
+      byClient.set(p.clientKey, list);
+    }
+    let dropped = 0;
+    for (const list of byClient.values()) {
+      list.sort((a, b) => a.dueMs - b.dueMs);
+      for (const extra of list.slice(2)) {
+        await ctx.db.patch(extra._id, { status: "dismissed" });
+        dropped++;
+      }
+    }
+    return dropped;
   },
 });
 

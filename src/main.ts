@@ -1069,7 +1069,7 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
           ${n ? `<span class="cn">${n}</span>` : ""}
         </span>
         <span class="chips">
-          ${cellTasks.slice(0, 2).map(taskChip).join("")}
+          ${cellTasks.slice(0, 2).map(miniTask).join("")}
           ${cellTasks.length > 2 ? `<span class="more">+${cellTasks.length - 2} tasks</span>` : ""}
           ${chips}${over > 0 ? `<span class="more">+${over} more</span>` : ""}
         </span>
@@ -1226,6 +1226,22 @@ const railWhenFmt = new Intl.DateTimeFormat("en-GB", {
  * alarm red nothing else on the calendar is allowed to. Day fills keep
  * meaning importance: two signals, two surfaces, no fight.
  */
+/**
+ * The month-cell variant: same look, no controls. A cell is a <button>, and
+ * a button inside a button is where the HTML parser closes the outer one
+ * early and the grid falls apart — so in cells the chip is spans only,
+ * still draggable, and the day page carries the toggles.
+ */
+function miniTask(t: Task): string {
+  const late = t.hardMs !== undefined && startOfDay(t.dueMs) > startOfDay(t.hardMs);
+  return `
+    <span class="tchip mini urg-${urgencyOf(t)}${t.done ? " tdone" : ""}" draggable="true"
+      data-task="${e(t.id)}" title="${e(t.title)}">
+      <span class="tt">${e(t.title)}</span>
+      ${late ? `<span class="tlate">!</span>` : ""}
+    </span>`;
+}
+
 function taskChip(t: Task): string {
   const late = t.hardMs !== undefined && startOfDay(t.dueMs) > startOfDay(t.hardMs);
   return `
@@ -1292,7 +1308,7 @@ function weekTitle(anchor: number): string {
  * a fixed 9-to-6 would clip them silently.
  */
 function weekGrid(anchor: number): string {
-  const events = calendarWeek();
+  const events = calendarWeek().filter((ev) => state.calFilters.meetings || !BIG.has(ev.kind));
   const today = startOfDay(nowMs());
 
   let from = 8 * 60;
@@ -1356,7 +1372,13 @@ function weekGrid(anchor: number): string {
       })
       .join("");
 
-    const dayTasks = tasksOn(day);
+    const dayTasks = tasksOn(day).filter((t) =>
+      t.kind === "email"
+        ? state.calFilters.emails
+        : t.kind === "outreach"
+          ? state.calFilters.outreach
+          : true,
+    );
     return `
       <div class="wcol${day === today ? " today" : ""}" data-drop-day="${day}">
         <button class="whead" data-act="cal-day" data-day="${day}">
@@ -1423,7 +1445,10 @@ function calOverlay(): string {
           <button class="btn" data-act="cal-view" data-view="month">Make main</button>
           <button class="ico" data-act="cal-over" style="margin-left:auto" aria-label="Close">✕</button>
         </div>
-        ${monthGrid(state.month ?? nowMs(), calendarMonth())}`
+        <div class="covrow">
+          <div class="covmain">${monthGrid(state.month ?? nowMs(), calendarMonth())}</div>
+          <div class="covside sc">${calFilterCard()}${calAdviceCard()}${needsReviewCard()}</div>
+        </div>`
       : `<div class="mnav">
           <span class="hero-h d" style="font-size:17px">${e(weekTitle(state.wk ?? mondayOf(nowMs())))}</span>
           <button class="ico" data-act="wk-step" data-by="-1">‹</button>
@@ -1547,7 +1572,7 @@ const FILTER_META: Array<{ f: "meetings" | "emails" | "outreach"; glyph: string;
 function calFilterCard(): string {
   return `
     <div class="scard">
-      <span class="lbl">show on the month</span>
+      <span class="lbl">show on the calendar</span>
       ${FILTER_META.map(({ f, glyph, label }) => {
         const on = state.calFilters[f];
         return `
@@ -4096,6 +4121,7 @@ island.addEventListener("dragover", (ev) => {
   const zone = (ev.target as HTMLElement).closest?.("[data-drop-day]");
   if (!zone) return;
   ev.preventDefault();
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
   if (dropHover !== zone) {
     dropHover?.classList.remove("dropok");
     zone.classList.add("dropok");
