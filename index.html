@@ -965,6 +965,53 @@ html[data-shell="tauri"] #desk{ display: none; }
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--iris) 30%, transparent); }
 .qcite:hover{ background: color-mix(in oklab, var(--iris) 14%, transparent); }
 
+/* ── the stage workroom ── */
+.room{ display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.rmhead{ display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.rmclock{ font-family: var(--mono); font-size: 11px; padding: 4px 10px; border-radius: 999px;
+  color: var(--gold-hi); background: color-mix(in oklab, var(--gold) 18%, var(--background)); }
+.rmfacts{ display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 11px 14px;
+  border-radius: var(--r-md); background: color-mix(in oklab, var(--glacial) 8%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 18%, transparent); }
+.rmfacts .rf{ display: flex; flex-direction: column; gap: 1px; }
+.rmfacts .rk{ font-family: var(--label); font-size: 8.5px; font-weight: 500;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--t4); }
+.rmfacts .rv{ font-size: 12.5px; color: var(--t1); font-variant-numeric: tabular-nums; }
+.rmgrid{ display: grid; grid-template-columns: 285px minmax(0, 1fr); gap: 12px;
+  flex: 1; min-height: 0; }
+.rmnotes{ display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 0;
+  padding: 12px 13px; border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--glacial) 8%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 18%, transparent); }
+.nrw{ display: flex; flex-direction: column; gap: 3px; padding: 7px 8px; border-radius: var(--r-sm); }
+.nrw .ntx{ font-size: 11px; line-height: 1.5; color: var(--t2); }
+.nrw.hot{ background: color-mix(in oklab, var(--foam) 14%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foam) 30%, transparent); }
+.nrw.hot .ntx{ color: var(--t1); }
+.rmright{ display: flex; flex-direction: column; gap: 9px; min-height: 0; overflow-y: auto; }
+.rmreport{ font-size: 12px; line-height: 1.6; color: var(--t2); margin: 0;
+  padding: 11px 13px; border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--glacial) 8%, var(--background)); }
+.ropts{ display: flex; gap: 8px; }
+.ropt{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px;
+  padding: 10px 11px; border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--glacial) 8%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 18%, transparent); }
+.ropt.rec{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foam) 55%, transparent); }
+.ropt .on2{ font-size: 12px; color: var(--t1); font-weight: 500; }
+.ropt .op2{ font-size: 10.5px; color: var(--t3); line-height: 1.5; }
+.ropt .of2{ font-size: 10px; color: var(--t4); line-height: 1.45; }
+.ropt .rb{ font-family: var(--mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--background); background: color-mix(in oklab, var(--foam) 80%, var(--background));
+  padding: 2px 7px; border-radius: 999px; align-self: flex-start; }
+.rmdraft{ display: flex; flex-direction: column; gap: 7px; flex: 1; }
+.rmdraft textarea{ flex: 1; min-height: 150px; resize: vertical; padding: 12px 13px;
+  border-radius: var(--r-md); border: 0; font: inherit; font-size: 12.5px; line-height: 1.6;
+  color: var(--t1); background: color-mix(in oklab, var(--glacial) 8%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 18%, transparent); }
+.rmdraft textarea:focus{ outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--iris) 45%, transparent); }
+
 /* ── the task, opened ── */
 .tctx{ display: flex; flex-direction: column; gap: 8px; padding: 13px 14px;
   border-radius: var(--r-md);
@@ -1583,6 +1630,10 @@ html[data-shell="tauri"] #desk{ display: none; }
 .cb-funnel-host{ display: flex; width: 100%; min-height: 0; flex: 1; }
 .cb-funnel{ display: flex; flex-direction: column; gap: 4px; width: 100%; min-height: 0; }
 .cb-funnel-plot{ flex: 1; min-height: 0; width: 100%; cursor: pointer; }
+.cb-funnel-names{ display: flex; width: 100%; flex: none; }
+.cb-funnel-names span{ flex: 1; text-align: center; font-family: var(--label);
+  font-size: 9px; font-weight: 500; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--t4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cb-funnel-note{ font-family: var(--mono); font-size: 9.5px; color: var(--t4);
   /* Fixed height, not conditional: a line that appears on hover would resize
      the chart under the cursor that summoned it. */

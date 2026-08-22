@@ -47,7 +47,7 @@ import { calendarDay, calendarMonth, calendarSource, calendarWeek, mondayOf, now
 import type { CalendarEvent, Importance } from "./calendar.ts";
 import { IMPORTANCE } from "./calendar.ts";
 import { BIG } from "../data/schedule.ts";
-import { holdings } from "../data/holdings.ts";
+import { type Holding, holdings } from "../data/holdings.ts";
 import type { MarketRow, MaturingRow, Report, StaleRow } from "./desk.ts";
 import { deskView, dismissBrief, snoozeBrief } from "./desk.ts";
 import { initDrag } from "./drag.ts";
@@ -140,6 +140,10 @@ interface State {
   agendaDay: number | null;
   /** Day page: the task whose detail panel is open. */
   taskSel: string | null;
+  /** Clients page: the stage workroom open over the grid, or null. */
+  room: { key: ClientKey; stage: Stage } | null;
+  /** Bumped by Regenerate so the draft cache asks the model afresh. */
+  roomNonce: number;
   /** Week view: Monday of the week shown. Null follows the clock. */
   wk: number | null;
   /** Desk: the expanded row, by brief id. Null is everything collapsed. */
@@ -198,6 +202,8 @@ const state: State = {
   calOverlay: false,
   calDay: null,
   contractOpen: null,
+  room: null,
+  roomNonce: 0,
   agendaDay: null,
   taskSel: null,
   calFilters: ((): { meetings: boolean; emails: boolean; outreach: boolean } => {
@@ -2668,7 +2674,7 @@ function clientTile(c: ClientView): string {
   const owed = c.open.length;
 
   return `
-    <button class="pcard" data-act="open-client" data-client="${c.key}" aria-label="Open ${e(c.name)}">
+    <button class="pcard" data-act="${state.stage !== null ? "open-room" : "open-client"}" data-client="${c.key}" aria-label="Open ${e(c.name)}">
       <span class="glow" aria-hidden="true" style="background:radial-gradient(closest-side, ${tint(markOf(c.tone), 12)}, transparent)"></span>
 
       <span class="top">
@@ -3360,8 +3366,335 @@ function queuePage(kind: QueueKind): string {
 /* ── render ──────────────────────────────────────────────────────── */
 
 /** Filter the clients page to a stage, or clear it if it is already on. */
+/* ── the stage workroom ────────────────────────────────────────────
+   A card clicked inside a stage-filtered grid opens here instead of the
+   plain client page: the hard facts for this client AT THIS STAGE on top,
+   their personalised notes on the left — lit when the draft leans on them —
+   and a ready outreach message on the right, approve-and-send only. Every
+   figure in a live draft passes the digit-guard; the template is the
+   fallback and the whole answer in seed mode. */
+
+interface RoomOpt {
+  name: string;
+  purpose: string;
+  fit: string;
+  rec: boolean;
+  why: string;
+}
+
+interface RoomKit {
+  clock: string;
+  details: Array<[string, string]>;
+  report: string | null;
+  options: RoomOpt[] | null;
+  facts: string;
+  ask: string;
+  template: string;
+}
+
+const RM = (n: number): string => `RM ${Math.round(n).toLocaleString("en-MY")}`;
+
+/** Days until a holding matures, however the book states it. */
+function matDays(h: Holding): number | undefined {
+  if (h.maturesInDays !== undefined) return h.maturesInDays;
+  if (h.maturesAtIso) return Math.ceil((Date.parse(h.maturesAtIso) - nowMs()) / DAY_MS);
+  return undefined;
+}
+
+/* Purpose-only option sheet — no invented performance numbers, ever. The
+   recommendation is picked from the client's own words, quoted and cited. */
+const ROOM_OPTIONS: Array<{ name: string; purpose: string; horizon: "short" | "mid" | "long" }> = [
+  { name: "Capital-Guarded Deposit", purpose: "Protects the amount first. For money with a near date on it — a house, a fee, a wedding.", horizon: "short" },
+  { name: "Balanced Income Fund", purpose: "The steady middle path — regular income, moderate movement. For 2–4 year money.", horizon: "mid" },
+  { name: "Growth Equity Plan", purpose: "Aims highest and swings hardest. For 5+ year money that can sit through a bad year.", horizon: "long" },
+];
+
+/** The client's stated outcome, read from their own messages. */
+function statedOutcome(c: ClientView): { horizon: "short" | "mid" | "long"; quote: string; cite: string } | null {
+  const mine = [...c.thread.messages].reverse().filter((x) => x.from === "client");
+  const SHORT = /house|home|deposit|wedding|next year|1-2 year|soon|down ?payment/i;
+  const LONG = /long term|long-term|5 year|ten year|10 year|retire|aggressive|can take risk|growth/i;
+  for (const msg of mine) {
+    if (SHORT.test(msg.text)) return { horizon: "short", quote: msg.text, cite: msg.externalId };
+    if (LONG.test(msg.text)) return { horizon: "long", quote: msg.text, cite: msg.externalId };
+  }
+  return null;
+}
+
+function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
+  const first = c.name.split(" ")[0]!;
+  const noteTexts = (liveNotes(c.key) ?? []).map((n) => n.text);
+  const noteFacts = noteTexts.length > 0 ? ` Client notes: ${noteTexts.join(" · ")}` : "";
+
+  if (stage === "maturing") {
+    const timed = book
+      .map((h) => ({ h, d: matDays(h) }))
+      .filter((x): x is { h: Holding; d: number } => x.d !== undefined && x.d >= 0)
+      .sort((a, b) => a.d - b.d);
+    const pick = timed[0] ?? (book[0] ? { h: book[0], d: undefined as number | undefined } : null);
+    if (!pick) {
+      return {
+        clock: "no holdings on the book",
+        details: [],
+        report: null,
+        options: null,
+        facts: `Client: ${c.name}.`,
+        ask: "Write a short check-in asking to review their maturing product together.",
+        template: `Hi ${first} — one of your products is coming up to maturity. Worth a quick word this week on what happens next. When suits you?`,
+      };
+    }
+    const h = pick.h;
+    const days = pick.d;
+    const matISO = h.maturesAtIso ?? (days !== undefined ? new Date(nowMs() + days * DAY_MS).toISOString() : null);
+    const matStr = matISO ? shortDayFmt.format(Date.parse(matISO)) : "—";
+    const grew = h.value >= h.invested;
+    const pct1y = h.series.length >= 2 && h.series[0]! > 0 ? Math.round((h.series[h.series.length - 1]! / h.series[0]! - 1) * 100) : 0;
+
+    const details: Array<[string, string]> = [
+      ["product", h.name],
+      ["invested", RM(h.invested)],
+      ["worth now", RM(h.value)],
+      ...(h.startIso ? [["started", shortDayFmt.format(Date.parse(h.startIso))] as [string, string]] : []),
+      ["matures", `${matStr}${days !== undefined ? ` · in ${days} day${days === 1 ? "" : "s"}` : ""}`],
+      ["last update sent", `${h.lastUpdateDaysAgo} days ago`],
+    ];
+
+    const report =
+      `${h.name} stands at ${RM(h.value)} against ${RM(h.invested)} put in — ` +
+      `${grew ? "ahead" : "behind"} by ${RM(Math.abs(h.value - h.invested))}, and ${pct1y >= 0 ? "up" : "down"} ${Math.abs(pct1y)}% on a year ago. ` +
+      (h.kind === "structured" || h.kind === "plan"
+        ? "A dated product: the outcome was mostly set by its terms, not the market's mood."
+        : "A market-priced holding: the year's movement is the market's, the position sized so it could ride it.") +
+      (days !== undefined && days <= 30 ? ` The clock matters now — ${days} days to decide what the money does next.` : "");
+
+    return {
+      clock: days !== undefined ? `matures in ${days} day${days === 1 ? "" : "s"} · ${matStr}` : "maturity date not on file",
+      details,
+      report,
+      options: null,
+      facts:
+        `Client: ${c.name}. Product: ${h.name}. Invested: ${h.invested}. Current value: ${h.value}. ` +
+        `Matures: ${matStr}${days !== undefined ? ` (in ${days} days)` : ""}. Change vs a year ago: ${pct1y}%.` +
+        noteFacts,
+      ask:
+        "Write the maturity outreach message: name the product, the maturity date and days remaining, one line on how it did, and ask to talk this week about what's next (renew, roll over, or release). Warm, plain, short.",
+      template:
+        `Hi ${first} — ${h.name} matures on ${matStr}${days !== undefined ? ` (${days} days away)` : ""}. ` +
+        `It stands at ${RM(h.value)} against the ${RM(h.invested)} you put in. ` +
+        `Before it lands, worth a quick word on what the money does next — renew as-is, roll into something matched to your plans, or release it. When suits you this week?`,
+    };
+  }
+
+  if (stage === "proposing") {
+    const outcome = statedOutcome(c);
+    const options: RoomOpt[] = ROOM_OPTIONS.map((o) => {
+      const rec = outcome ? o.horizon === outcome.horizon : o.horizon === "mid";
+      return {
+        name: o.name,
+        purpose: o.purpose,
+        fit:
+          o.horizon === "short"
+            ? "fits: money needed within ~2 years"
+            : o.horizon === "mid"
+              ? "fits: 2–4 year goals, steady temperament"
+              : "fits: 5+ years, can bear a rough year",
+        rec,
+        why: rec
+          ? outcome
+            ? `matches what they said: “${outcome.quote.length > 90 ? `${outcome.quote.slice(0, 90)}…` : outcome.quote}”`
+            : "the default middle until they state a goal — ask, then re-anchor"
+          : "",
+      };
+    });
+    const days = Math.max(0, Math.floor((nowMs() - c.lastContact) / DAY_MS));
+    const q = c.turn.quote;
+    const recName = options.find((o) => o.rec)?.name ?? "";
+
+    const lines = options
+      .map((o) => `${o.name} — ${o.purpose}`)
+      .join(" `` `` ``````````".slice(0, 0) + "\n");
+
+    return {
+      clock: `their last word · ${days} day${days === 1 ? "" : "s"} ago`,
+      details: [
+        ["they asked", q.length > 60 ? `${q.slice(0, 60)}…` : q || "—"],
+        ["options on the table", String(options.length)],
+        ["their stated outcome", outcome ? `${outcome.horizon}-horizon — ${outcome.cite}` : "not stated yet — worth asking"],
+      ],
+      report: null,
+      options,
+      facts:
+        `Client: ${c.name}. Options: ${options.map((o) => `${o.name} (${o.purpose})`).join("; ")}. ` +
+        `Recommended: ${recName}.` +
+        (outcome ? ` Client said: "${outcome.quote}" [${outcome.cite}].` : "") +
+        noteFacts,
+      ask:
+        options.length <= 3
+          ? "Write the options message: lay out each option in one plain line (purpose, who it suits), recommend exactly one and tie the reason to what the client themselves said. End by inviting questions. No pressure language."
+          : "Too many options to list — write a short message asking one or two guiding questions (timeline, purpose of the money) to narrow the set. Do not list products yet.",
+      template:
+        options.length <= 3
+          ? `Hi ${first} — as promised, the choices side by side:\n\n${lines}\n\nIf it were me: ${recName}${outcome ? ` — it fits what you said about ${outcome.horizon === "short" ? "needing the money sooner" : "being able to sit long"}` : ""}. Happy to talk any of them through — no rush.`
+          : `Hi ${first} — before I list everything, two quick questions so I only show you what fits: when do you want this money back in your hands, and what is it for? That narrows it to two or three worth your time.`,
+    };
+  }
+
+  if (stage === "inquiring") {
+    const q = c.turn.quote;
+    return {
+      clock: `asked · ${c.turn.cite || "—"}`,
+      details: [
+        ["they asked", q.length > 70 ? `${q.slice(0, 70)}…` : q || "—"],
+        ["messages so far", String(c.messageCount)],
+        ["known goal", statedOutcome(c) ? `${statedOutcome(c)!.horizon}-horizon` : "unknown — qualify first"],
+      ],
+      report: null,
+      options: null,
+      facts: `Client: ${c.name}. Their question: "${q}".` + noteFacts,
+      ask:
+        "Answer their question briefly from the thread, then ask ONE qualifying question — what the money is for and roughly when they need it back. Never pitch a product yet.",
+      template: `Hi ${first} — good question, and the honest answer depends on one thing I don't know yet: what's this money for, and when would you want it back in your hands? Tell me that and I can point you somewhere specific instead of somewhere general.`,
+    };
+  }
+
+  if (stage === "renewing") {
+    const open = c.open.length;
+    const timed = book.map((h) => ({ h, d: matDays(h) })).filter((x) => x.d !== undefined).sort((a, b) => a.d! - b.d!)[0];
+    return {
+      clock: timed?.d !== undefined ? `renewal window · ${timed.d} days` : "renewal in progress",
+      details: [
+        ["open items", String(open)],
+        ...(timed ? [["product", timed.h.name] as [string, string]] : []),
+        ...(open > 0 ? [["oldest owed by", c.open[0]!.owedBy] as [string, string]] : []),
+      ],
+      report: null,
+      options: null,
+      facts: `Client: ${c.name}. Open items: ${c.open.map((o) => o.text).join("; ") || "none"}.` + noteFacts,
+      ask: "Write a short, warm nudge to finish the renewal — name what is still outstanding and offer to make it easy (a call, a pre-filled form). Deadline-aware, never pushy.",
+      template: `Hi ${first} — the renewal is nearly done, ${open > 0 ? `just ${open} thing${open === 1 ? "" : "s"} outstanding on the paperwork` : "nothing outstanding on my side"}. Want me to call and walk it through, or shall I send the form pre-filled? Two minutes either way.`,
+    };
+  }
+
+  // completed
+  const biggest = [...book].sort((a, b) => b.value - a.value)[0];
+  return {
+    clock: "aftercare",
+    details: [
+      ...(biggest ? ([["product", biggest.name], ["value", RM(biggest.value)]] as Array<[string, string]>) : []),
+      ["open items", String(c.open.length)],
+    ],
+    report: null,
+    options: null,
+    facts: `Client: ${c.name}.${biggest ? ` Product: ${biggest.name}, value ${biggest.value}.` : ""}` + noteFacts,
+    ask: "Write the aftercare message: confirm everything is in place, say what happens next (first statement, when you'll check in), and thank them plainly. No selling.",
+    template: `Hi ${first} — everything's in place on my side. You'll see the first statement next month, and I'll check in each quarter regardless. Thank you for the trust — and if anything changes on your end, I'm one message away.`,
+  };
+}
+
+/** Words worth matching when deciding whether a note fed the draft. */
+function keyWords(text: string): string[] {
+  return text.toLowerCase().split(/[^a-z0-9%]+/).filter((w) => w.length > 4);
+}
+
+function stageRoom(key: ClientKey, stage: Stage): string {
+  const c = findClient(key.toLowerCase());
+  if (!c) {
+    state.room = null;
+    return clientsGrid();
+  }
+  const book = ((liveHoldings() as Holding[] | null) ?? holdings).filter((h) => h.client === key);
+  const kit = roomKit(c, stage, book);
+
+  const ai = aiText(`room:${stage}:${c.key}:n${state.roomNonce}`, {
+    kind: `room-${stage}`,
+    facts: kit.facts,
+    ask: kit.ask,
+    key: c.key,
+  });
+  const draft = ai.status === "ready" && ai.text ? ai.text : kit.template;
+  const draftLabel =
+    ai.status === "ready"
+      ? "chadbuddy wrote this from the book and their thread — review, then send"
+      : ai.status === "pending"
+        ? "chadbuddy is writing from their thread… meanwhile, the honest template"
+        : "template — the model is off, every figure is from the book";
+
+  // The left box: live notes first, profile facts as the floor. A note is
+  // hot when the draft visibly leans on it — shared words, not vibes.
+  const draftWords = new Set(keyWords(draft));
+  const notes = (liveNotes(c.key) ?? []).map((n) => ({ text: n.text, cite: n.cite as string | undefined }));
+  const rows = (notes.length > 0 ? notes : c.facts.map((f) => ({ text: `${f.k} — ${f.v}`, cite: undefined as string | undefined })))
+    .map((n) => {
+      const hot = keyWords(n.text).filter((w) => draftWords.has(w)).length >= 2;
+      return `
+      <div class="nrw${hot ? " hot" : ""}">
+        <span class="ntx">${e(n.text)}</span>
+        ${n.cite ? `<div class="citerow">${citeChips([n.cite], c.key)}</div>` : ""}
+      </div>`;
+    })
+    .join("");
+
+  const optCards = kit.options
+    ? `<div class="ropts">${kit.options
+        .map(
+          (o) => `
+        <div class="ropt${o.rec ? " rec" : ""}">
+          ${o.rec ? `<span class="rb">recommended</span>` : ""}
+          <span class="on2">${e(o.name)}</span>
+          <span class="op2">${e(o.purpose)}</span>
+          <span class="of2">${e(o.fit)}</span>
+          ${o.why ? `<span class="of2" style="color:var(--foam)">${e(o.why)}</span>` : ""}
+        </div>`,
+        )
+        .join("")}</div>`
+    : "";
+
+  return `
+    <div class="page fixed">
+      <div class="room">
+        <div class="rmhead">
+          <button class="btn" data-act="room-back">‹ ${e(stage)}</button>
+          <span class="hero-h d">${e(c.name)}</span>
+          <span class="rmclock">${e(kit.clock)}</span>
+          <button class="btn" data-act="open-client" data-client="${c.key}" style="margin-left:auto">Full profile →</button>
+        </div>
+        ${
+          kit.details.length > 0
+            ? `<div class="rmfacts">${kit.details
+                .map(([k, v]) => `<span class="rf"><span class="rk">${e(k)}</span><span class="rv">${e(v)}</span></span>`)
+                .join("")}</div>`
+            : ""
+        }
+        ${kit.report ? `<p class="rmreport">${e(kit.report)}</p>` : ""}
+        ${optCards}
+        <div class="rmgrid">
+          <div class="rmnotes sc">
+            <span class="lbl">their key points — lit when the draft uses them</span>
+            ${rows || `<span class="sempty">Nothing noted yet — the agent reads every 15 minutes.</span>`}
+          </div>
+          <div class="rmright">
+            <div class="rmdraft">
+              <span class="lbl" style="color:var(--iris)">${e(draftLabel)}</span>
+              <textarea id="roomdraft">${e(draft)}</textarea>
+              <div class="ctxacts">
+                <span class="seg2" style="display:inline-flex">
+                  <button class="${state.replyVia === "tg" ? "on" : ""}" data-act="reply-via" data-via="tg">Telegram</button>
+                  <button class="${state.replyVia === "em" ? "on" : ""}" data-act="reply-via" data-via="em">Email</button>
+                </span>
+                <button class="btn acc" data-act="room-send" data-client="${c.key}">Approve & send</button>
+                <button class="btn" data-act="room-regen">↻ Regenerate</button>
+              </div>
+              <span class="m" style="font-size:9.5px;color:var(--t4)">nothing sends without this button — figures come from the book or the draft is refused</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function openStage(stage: Stage): void {
   state.stage = state.stage === stage ? null : stage;
+  state.room = null;
   state.page = "clients";
   state.cview = "grid";
   setState("open");
@@ -3373,7 +3706,9 @@ function body(): string {
   if (state.page === "calendar") return calendarPage();
   if (state.page === "assist") return assistPage();
   if (state.page === "clients") {
-    if (state.cview === "grid") return clientsGrid();
+    if (state.cview === "grid") {
+      return state.room !== null ? stageRoom(state.room.key, state.room.stage) : clientsGrid();
+    }
     // The selection can go stale under the render: live mode swaps the book
     // after connect, and a seed client open at that moment no longer exists.
     // Falling back to clients[0] here is how a page changed people mid-look.
@@ -4211,6 +4546,55 @@ island.addEventListener("click", (ev) => {
       if (!key) return;
       const src = clientMeta(key)?.sourceId ?? "";
       openExternal(src !== "" ? `https://web.telegram.org/a/#${src}` : "https://web.telegram.org/a/");
+      return;
+    }
+
+    case "open-room": {
+      if (key && state.stage !== null) {
+        state.room = { key, stage: state.stage };
+        render();
+      } else if (key) {
+        openClient(key);
+      }
+      return;
+    }
+
+    case "room-back": {
+      state.room = null;
+      render();
+      return;
+    }
+
+    case "room-regen": {
+      state.roomNonce++;
+      render();
+      return;
+    }
+
+    /* Approve & send: the edited text in the box is what goes, via the same
+       paths every other send uses. The room stays open to show the result. */
+    case "room-send": {
+      const who = hit.dataset.client;
+      const box = document.getElementById("roomdraft") as HTMLTextAreaElement | null;
+      const text = box?.value.trim() ?? "";
+      if (!who || text === "") return;
+      const btn = hit as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = "Sending…";
+      const finish = (title: string, body: string, tone: "butter" | "critical"): void => {
+        btn.disabled = false;
+        btn.textContent = "Approve & send";
+        showNotif({ kind: "reminder", client: who, title, body: body.slice(0, 60), meta: "stage outreach", tag: tone === "critical" ? "FAILED" : "SENT", tone, dwell: 6000 });
+      };
+      if (state.replyVia === "tg") {
+        void queueSend(who, text)
+          .then(() => finish("Queued", "the bridge delivers it in about a second", "butter"))
+          .catch((err) => finish("Not sent", err instanceof Error ? err.message : String(err), "critical"));
+      } else {
+        void sendEmail(who, `Message from ${ADVISOR}`, text)
+          .then(() => finish("Email sent", clientMeta(who)?.email ?? "", "butter"))
+          .catch((err) => finish("Not sent", err instanceof Error ? err.message : String(err), "critical"));
+      }
       return;
     }
 

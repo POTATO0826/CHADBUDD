@@ -57,6 +57,8 @@ export interface Holding {
    * index 11 = now). Drawn as the sparkline and quoted in the brief.
    */
   series: number[];
+  /** When the money went in, ISO date — live book only; seed omits it. */
+  startIso?: string;
   /** Days until the plan matures, where it does. Resolved against nowMs(). */
   maturesInDays?: number;
   /** Fixed maturity where a cited message states the date. Wins over offset. */

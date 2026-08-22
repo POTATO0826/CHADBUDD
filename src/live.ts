@@ -170,6 +170,7 @@ export function liveNotes(key: ClientKey): Array<{ text: string; cite: string; u
  * exists — the seed remains the demo's book.
  */
 interface HoldingRow {
+  startIso?: string;
   hid: string;
   clientKey: string;
   name: string;
@@ -193,6 +194,7 @@ export function liveHoldings(): Array<{
   invested: number;
   series: number[];
   maturesAtIso?: string;
+  startIso?: string;
   lastUpdateDaysAgo: number;
 }> | null {
   if (holdingRows.length === 0) return null;
@@ -214,6 +216,7 @@ export function liveHoldings(): Array<{
     // the CSV carries endpoints, not a NAV history.
     series: Array.from({ length: 12 }, (_, i) => r.value1yAgo + ((r.value - r.value1yAgo) * i) / 11),
     ...(r.maturityIso ? { maturesAtIso: r.maturityIso } : {}),
+    ...(r.startIso ? { startIso: r.startIso } : {}),
     lastUpdateDaysAgo: Math.max(
       0,
       Math.floor((now - (Date.parse(r.lastUpdateIso) || now)) / 86_400_000),

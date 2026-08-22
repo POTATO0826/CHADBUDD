@@ -110,8 +110,17 @@ function Funnel({ onStage }: Props): React.JSX.Element {
           onHoverChange={setHovered}
           showPercentage
           showValues
-          showLabels
+          showLabels={false}
         />
+      </div>
+
+      {/* The stage names, in a row this file owns. The vendored chart draws
+          its labels inside the measured plot, and a tight tile clips that
+          bottom band silently — so the names live outside the measurement. */}
+      <div aria-hidden="true" className="cb-funnel-names">
+        {data.map((d) => (
+          <span key={d.label}>{d.label}</span>
+        ))}
       </div>
 
     </div>
