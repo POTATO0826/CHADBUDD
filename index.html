@@ -1041,8 +1041,10 @@ html[data-shell="tauri"] #desk{ display: none; }
 
 /* The today contract. */
 .contract{ display: flex; align-items: baseline; gap: 10px; padding: 8px 12px;
-  border-radius: var(--r-md);
-  background: color-mix(in oklab, var(--gold) 7%, transparent); }
+  border-radius: var(--r-md); width: 100%; cursor: pointer;
+  background: color-mix(in oklab, var(--gold) 7%, transparent);
+  transition: background .16s var(--ease); }
+.contract:hover{ background: color-mix(in oklab, var(--gold) 13%, transparent); }
 .contract.clear{ background: color-mix(in oklab, var(--foam) 7%, transparent); }
 .contract .clabel{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em;
   text-transform: uppercase; color: var(--t3); }

@@ -1236,7 +1236,7 @@ function miniTask(t: Task): string {
   const late = t.hardMs !== undefined && startOfDay(t.dueMs) > startOfDay(t.hardMs);
   return `
     <span class="tchip mini urg-${urgencyOf(t)}${t.done ? " tdone" : ""}" draggable="true"
-      data-task="${e(t.id)}" title="${e(t.title)}">
+      data-task="${e(t.id)}" data-act="task-ref" title="${e(t.title)}">
       <span class="tt">${e(t.title)}</span>
       ${late ? `<span class="tlate">!</span>` : ""}
     </span>`;
@@ -1246,8 +1246,8 @@ function taskChip(t: Task): string {
   const late = t.hardMs !== undefined && startOfDay(t.dueMs) > startOfDay(t.hardMs);
   return `
     <div class="tchip urg-${urgencyOf(t)}${t.done ? " tdone" : ""}" draggable="true"
-      data-task="${e(t.id)}"
-      title="${e(t.title)}${late ? " — planned AFTER the hard deadline" : ""}">
+      data-task="${e(t.id)}" data-act="task-ref"
+      title="${e(t.title)}${late ? " — planned AFTER the hard deadline" : ""}${t.cite ? " — click for the message behind it" : ""}">
       <button class="tk" data-act="task-done" data-task="${e(t.id)}"
         aria-label="${t.done ? "Reopen" : "Mark done"}">${t.done ? "✓" : "○"}</button>
       <span class="tt">${e(t.title)}</span>
@@ -1285,7 +1285,9 @@ function todayContract(): string {
   ];
 
   return `
-    <div class="contract${open === 0 && overdue === 0 ? " clear" : ""}">
+    <button class="contract${open === 0 && overdue === 0 ? " clear" : ""}"
+      data-act="cal-day" data-day="${today}"
+      aria-label="Open today: ${meets.length} meetings, ${open} tasks due, ${overdue} overdue">
       <span class="clabel">today</span>
       <span class="cbody">${parts.join(" · ")}</span>
       <span class="cnote">${
@@ -1293,7 +1295,7 @@ function todayContract(): string {
           ? "clear — finish the meetings and nothing slips today"
           : "finish these and you are genuinely free"
       }</span>
-    </div>`;
+    </button>`;
 }
 
 function weekTitle(anchor: number): string {
@@ -1812,7 +1814,14 @@ function dayPage(dayMs: number): string {
  * and the desk already has it.
  */
 function dayPlan(dayMs: number): string {
-  const list = tasksOn(dayMs);
+  const today0 = startOfDay(nowMs());
+  const base = tasksOn(dayMs);
+  // On today's page the overdue rides along — it is today's load too, and
+  // hiding it on the one page the contract links to would strand it.
+  const list =
+    startOfDay(dayMs) === today0
+      ? [...tasks().filter((t) => !t.done && startOfDay(t.dueMs) < today0), ...base]
+      : base;
   const iso = new Date(startOfDay(dayMs) + 12 * 3_600_000).toISOString().slice(0, 10);
   return `
     <div class="dtasks" data-drop-day="${startOfDay(dayMs)}">
@@ -3850,7 +3859,25 @@ island.addEventListener("click", (ev) => {
     case "sugg-accept":
     case "sugg-dismiss": {
       const id = hit.dataset.sugg;
-      if (id) void resolveSuggestion(id, act === "sugg-accept").then(() => render());
+      if (!id) return;
+      const s = suggestions().find((x) => x.id === id);
+      const accepted = act === "sugg-accept";
+      (hit as HTMLButtonElement).disabled = true;
+      void resolveSuggestion(id, accepted)
+        .then(() => {
+          if (accepted && s) {
+            showNotif({
+              kind: "reminder", client: s.clientKey, title: "On the plan",
+              body: s.title.slice(0, 60), meta: `due ${shortDayFmt.format(s.dueMs)}`,
+              tag: "TASK", tone: "butter", dwell: 4500,
+            });
+          }
+          render();
+        })
+        .catch((err: unknown) => {
+          (hit as HTMLButtonElement).disabled = false;
+          console.error("[chadbuddy] suggestion resolve failed", err);
+        });
       return;
     }
 
@@ -3882,6 +3909,29 @@ island.addEventListener("click", (ev) => {
           btn.textContent = "⟳ read the chats";
           console.error("[chadbuddy] suggestion pass failed", err);
         });
+      return;
+    }
+
+    /* A task chip opens its evidence: the cited message, highlighted in
+       the client's thread — telegram and email alike land there. No cite
+       but a client: the client. Neither: the day it lives on. */
+    case "task-ref": {
+      const id = hit.dataset.task;
+      const t = id ? tasks().find((x) => x.id === id) : undefined;
+      if (!t) return;
+      if (t.cite && t.clientKey) {
+        openClient(t.clientKey);
+        state.lit = t.cite;
+        setState("open");
+        focusCite(t.cite);
+      } else if (t.clientKey) {
+        openClient(t.clientKey);
+        setState("open");
+      } else {
+        state.page = "calendar";
+        state.calDay = startOfDay(t.dueMs);
+        setState("open");
+      }
       return;
     }
 

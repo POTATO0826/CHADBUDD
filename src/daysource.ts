@@ -27,9 +27,18 @@ export function nowMs(): number {
   return NOW;
 }
 
+/**
+ * Hidden for now, per the advisor: the recurring Google "Focus time" blocks
+ * paint every single day and drown the meetings the calendar exists to
+ * show. Display-level only — the busy/presence logic still sees them.
+ */
+function shown(list: CalendarEvent[]): CalendarEvent[] {
+  return list.filter((ev) => !/focus time/i.test(ev.title));
+}
+
 /** Today's events, as last fetched. Empty until refreshCalendar has run once. */
 export function calendarDay(): CalendarEvent[] {
-  return today;
+  return shown(today);
 }
 
 /** Re-read the day. Called at boot and after anything that changes it. */
@@ -52,7 +61,7 @@ export function mondayOf(ms: number): number {
 
 /** The week last fetched, Monday to Sunday, in start order. */
 export function calendarWeek(): CalendarEvent[] {
-  return week;
+  return shown(week);
 }
 
 export function calendarWeekAnchor(): number {
@@ -79,7 +88,7 @@ export async function refreshWeek(anchorMs: number): Promise<void> {
 
 /** Everything in the month last fetched, in start order. */
 export function calendarMonth(): CalendarEvent[] {
-  return month;
+  return shown(month);
 }
 
 /**
