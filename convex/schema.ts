@@ -58,8 +58,6 @@ export default defineSchema({
     seq: v.number(),
     /** Last Hermes pass, epoch ms. Debounce lives here, not in the bridge. */
     analyzedTs: v.optional(v.number()),
-    /** Where email replies go. Set by the advisor; absent until they do. */
-    email: v.optional(v.string()),
   })
     .index("by_key", ["key"])
     .index("by_source", ["sourceId"]),
@@ -97,6 +95,36 @@ export default defineSchema({
     ),
     /** externalIds, every one already verified against real message text. */
     cites: v.array(v.string()),
+    generatedTs: v.number(),
+    model: v.string(),
+  }).index("by_client", ["clientId"]),
+
+  /**
+   * Emotion spans, extracted per message and grounded in it.
+   *
+   * The extraction pass derive.ts:268 said did not exist. It runs outside
+   * Convex (LangExtract is Python — see bridge/emotion/), but nothing lands
+   * here without passing the same verbatim gate the ideas pass: `quote` is the
+   * exact span the label was read from, checked against the cited message's
+   * real text in emotions.record. A label that cannot show its span is not a
+   * weaker label, it is an invented one, and it goes to `rejected` like any
+   * other fabricated citation.
+   *
+   * One row per grounded span, not per client: Faizal being "appreciative" in
+   * April and "curt" in August is the decay story itself, and collapsing that
+   * to a single mood would throw away exactly what the dashboard measures.
+   */
+  emotions: defineTable({
+    clientId: v.id("clients"),
+    /** externalId of the message the span sits in. The citation. */
+    sourceId: v.string(),
+    /** The span, character-for-character from that message. */
+    quote: v.string(),
+    /** e.g. "frustrated", "appreciative". The extractor's word, not an enum. */
+    label: v.string(),
+    intensity: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    /** The cited message's own timestamp, so "latest read" needs no join. */
+    ts: v.number(),
     generatedTs: v.number(),
     model: v.string(),
   }).index("by_client", ["clientId"]),
@@ -216,12 +244,6 @@ export default defineSchema({
     inferredCite: v.optional(v.string()),
     /** A conferencing link, which is also how an online meeting is detected. */
     conferenceUrl: v.optional(v.string()),
-    /** Advisor-set weight. Absent means unrated, which the UI shows as such. */
-    importance: v.optional(v.string()),
-    /** The advisor's own prep note, written at confirm time or after. */
-    prepUser: v.optional(v.string()),
-    /** Assistant-suggested prep, newline-joined. */
-    prepAi: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index("by_google", ["googleId"])
@@ -231,109 +253,6 @@ export default defineSchema({
        that gets slower as the diary fills. */
     .index("by_cite", ["inferredCite"])
     .index("by_client", ["clientKey"]),
-
-  /**
-   * What the agent noticed about the person, as opposed to the thread.
-   *
-   * Personalisation is the product for this advisor — a daughter starting
-   * secondary school, a renovation, a stated risk allergy — and it is exactly
-   * what falls out of memory at a hundred clients. Every note passed the same
-   * verbatim gate as a recommendation claim: the quote is in the message or
-   * the note was never stored. Replaced wholesale on each analysis, because a
-   * note is a reading of the thread as it stands, not an archive.
-   */
-  notes: defineTable({
-    clientId: v.id("clients"),
-    text: v.string(),
-    /** The message that says so. */
-    cite: v.string(),
-    updatedAt: v.number(),
-  }).index("by_client", ["clientId"]),
-
-  /**
-   * Dated work. See convex/tasks.ts for the rule that keeps this from
-   * becoming a todo list: no date by which it stops being optional, no row.
-   */
-  tasks: defineTable({
-    title: v.string(),
-    /** The deadline, and the plan. Dragging a task moves this. */
-    dueMs: v.number(),
-    clientKey: v.optional(v.string()),
-    /** The immovable fact underneath, where there is one. Drags warn past it. */
-    hardMs: v.optional(v.number()),
-    source: v.union(v.literal("advisor"), v.literal("chadbuddy")),
-    /** Dedupe key: prep:<eventId>, mature:<holdingId>. One task per fact. */
-    ref: v.optional(v.string()),
-    cite: v.optional(v.string()),
-    done: v.boolean(),
-    doneTs: v.optional(v.number()),
-    createdTs: v.number(),
-  })
-    .index("by_due", ["dueMs"])
-    .index("by_ref", ["ref"]),
-
-  /**
-   * The live market feed: Google News, filtered and tagged by the model
-   * hourly. Headlines and links are the outlet's own, verbatim — the model
-   * chooses and annotates, it never rewrites, so every card still ends at a
-   * real article. The desk falls back to the curated seed when this is empty.
-   */
-  marketEvents: defineTable({
-    ts: v.number(),
-    headline: v.string(),
-    summary: v.string(),
-    lean: v.string(),
-    classes: v.array(v.string()),
-    sourceName: v.string(),
-    sourceUrl: v.string(),
-    impactNote: v.string(),
-    fetchedAt: v.number(),
-  }).index("by_ts", ["ts"]),
-
-  /** One status reply per person per busy block. The dedupe, durable. */
-  presenceSent: defineTable({
-    clientId: v.id("clients"),
-    blockId: v.id("events"),
-    ts: v.number(),
-  }).index("by_client_block", ["clientId", "blockId"]),
-
-  /**
-   * The phone's call log, one row per call, posted by an automation app on
-   * the phone itself — the only device that can see it. Matched to a client
-   * by number where possible; kept anyway where not, because an unmatched
-   * missed call is still a fact the advisor may want to see.
-   */
-  phoneCalls: defineTable({
-    /** As the phone reported it. Normalised digits kept alongside. */
-    number: v.string(),
-    digits: v.string(),
-    direction: v.union(v.literal("incoming"), v.literal("outgoing"), v.literal("missed")),
-    durationSec: v.number(),
-    ts: v.number(),
-    clientId: v.optional(v.id("clients")),
-  })
-    .index("by_ts", ["ts"])
-    .index("by_client", ["clientId"]),
-
-  /** The real book, one row per product, replaced whole on each import. */
-  holdings: defineTable({
-    hid: v.string(),
-    clientKey: v.string(),
-    name: v.string(),
-    kind: v.string(),
-    classes: v.array(v.string()),
-    invested: v.number(),
-    value: v.number(),
-    value1yAgo: v.number(),
-    startIso: v.string(),
-    maturityIso: v.optional(v.string()),
-    contribution: v.number(),
-    frequency: v.string(),
-    lastUpdateIso: v.string(),
-    risk: v.string(),
-    notes: v.string(),
-    importedAt: v.number(),
-  }).index("by_client", ["clientKey"]),
 
   pairing: defineTable({
     platform: v.string(),

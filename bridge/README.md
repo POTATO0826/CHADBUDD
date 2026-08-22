@@ -71,11 +71,34 @@ client.onUpdate(api.threads.list, {}, (threads) => { rebuild(threads); render();
 | `threads.list` | **`SeedThread[]`** — the exact `data/types.ts` shape. Windowed to 120 days. No reshaping needed. |
 | `threads.ideas` | agent recommendations shaped like `Idea` (`src/copy.ts:33`); every `cites` entry already passed the gate |
 | `threads.rejections` | how often the agent fabricated a citation, by reason |
+| `emotions.forAll` | grounded emotion spans per client — label, intensity, and the verbatim quote each was read from |
 | `chats.recent` | picker rows — `isBot`, `isGroup`, `spanDays`, `scorable`, `reason` |
 | `chats.pairing` | connection state; `qr` is a PNG data URL when the QR path is used |
 | `chats.tracked` | promoted clients with message counts |
 
 Mutations: `ingest.pickClients({sourceIds})`, `ingest.upsertChats`, `ingest.ingestBatch`, `ingest.setPairing`.
+
+## The emotion pass
+
+```bash
+bun run emotion       # every tracked client
+bun run emotion E     # one client
+```
+
+`bridge/emotion/extract.py`, run through `uv` (LangExtract is Python — the one
+non-Bun dependency in the repo, and `uv run` keeps it out of the toolchain).
+It reads each client's side of the thread, has LangExtract ground every
+emotion label to an exact character span, drops anything ungrounded, and
+writes the rest through `emotions.record` — which re-verifies each span
+against the message text Convex actually holds, with the same gate the ideas
+pass. Fabrications land in `rejected` alongside the agent's.
+
+The UI shows the result twice: the latest read across the book as a chip in
+the dashboard's top-right orb cluster (tooltip carries the client, the
+verbatim span, and the message id), and a per-message chip in the
+conversation pane — the slot the design reserved and derive.ts:268 declined
+to fake. Seed mode shows the hatch in both places: no pass has run against
+those threads, and not-measured is never rendered as calm.
 
 ## Three things the frontend has to change
 

@@ -139,15 +139,6 @@ export const autoQueue = internalMutation({
  * Rejections accumulate. They are the record of how often the model fabricated
  * a citation, and a rate you reset every run is a rate you cannot read.
  */
-/** Clients with an email on file, for the inbound mail poll. */
-export const clientEmails = internalQuery({
-  args: {},
-  handler: async (ctx) =>
-    (await ctx.db.query("clients").collect())
-      .filter((c) => (c.email ?? "") !== "")
-      .map((c) => ({ key: c.key, email: c.email! })),
-});
-
 export const recordAnalysis = internalMutation({
   args: {
     clientId: v.id("clients"),
@@ -170,7 +161,6 @@ export const recordAnalysis = internalMutation({
         cites: v.array(v.string()),
       }),
     ),
-    notes: v.array(v.object({ text: v.string(), cite: v.string() })),
     rejected: v.array(
       v.object({
         claim: v.string(),
@@ -184,7 +174,7 @@ export const recordAnalysis = internalMutation({
       }),
     ),
   },
-  handler: async (ctx, { clientId, model, ideas, notes, rejected }) => {
+  handler: async (ctx, { clientId, model, ideas, rejected }) => {
     const now = Date.now();
 
     for (const stale of await ctx.db
@@ -192,18 +182,6 @@ export const recordAnalysis = internalMutation({
       .withIndex("by_client", (q) => q.eq("clientId", clientId))
       .collect()) {
       await ctx.db.delete(stale._id);
-    }
-
-    /* Notes are a reading of the thread as it stands, not an archive —
-       replaced wholesale, same as ideas. */
-    for (const stale of await ctx.db
-      .query("notes")
-      .withIndex("by_client", (q) => q.eq("clientId", clientId))
-      .collect()) {
-      await ctx.db.delete(stale._id);
-    }
-    for (const n of notes) {
-      await ctx.db.insert("notes", { ...n, clientId, updatedAt: now });
     }
 
     for (const i of ideas) {

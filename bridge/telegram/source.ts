@@ -17,7 +17,7 @@ import type { NewMessageEvent } from "telegram/events/index.js";
 import type { Api } from "telegram";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
-import { DAY, WANTED_DAYS, type BridgeCall, type BridgeChat, type BridgeMessage, type Source } from "../types.ts";
+import { DAY, WANTED_DAYS, type BridgeChat, type BridgeMessage, type Source } from "../types.ts";
 
 const SESSION_FILE = ".tg/session.txt";
 
@@ -165,44 +165,6 @@ export class TelegramSource implements Source {
       const chatId = m.chatId?.toString();
       if (chatId) cb(chatId, message);
     }, new NewMessage({}));
-  }
-
-  /**
-   * Calls surface as service messages carrying MessageActionPhoneCall.
-   *
-   * A raw handler rather than NewMessage, because event builders filter for
-   * content messages and a service message is exactly not one. The reason
-   * field is how Telegram says what happened: Missed and Busy are a call
-   * that never connected; anything else ended after connecting and carries
-   * a duration.
-   */
-  onCall(cb: (chatId: string, call: BridgeCall) => void): void {
-    const client = this.#need();
-    client.addEventHandler((update: {
-      className?: string;
-      message?: {
-        action?: { className?: string; duration?: number; reason?: { className?: string } };
-        out?: boolean;
-        date?: number;
-        peerId?: { userId?: { toString(): string } };
-      };
-    }) => {
-      if (update.className !== "UpdateNewMessage") return;
-      const msg = update.message;
-      const action = msg?.action;
-      if (action?.className !== "MessageActionPhoneCall") return;
-
-      const chatId = msg?.peerId?.userId?.toString();
-      if (!chatId) return;
-
-      const reason = action.reason?.className ?? "";
-      cb(chatId, {
-        outgoing: msg?.out === true,
-        missed: reason.includes("Missed") || reason.includes("Busy"),
-        durationSec: action.duration ?? 0,
-        ts: (msg?.date ?? Math.floor(Date.now() / 1000)) * 1000,
-      });
-    });
   }
 
   async sendMessage(chatId: string, text: string): Promise<void> {

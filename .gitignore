@@ -43,5 +43,5 @@ convex/_generated/ai/
 # local database exports — real client conversations, never commit
 backups/
 
-# the advisor's real book — never committed
-data/import/holdings.csv
+# python sidecar (bridge/emotion) — uv manages the environment out of tree
+__pycache__/

@@ -3,7 +3,6 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/bun": "latest",
-    "@types/nodemailer": "^8.0.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "typescript": "^5"
@@ -31,20 +30,19 @@
     "tauri:build": "tauri build",
     "seed:load": "bun run bridge/seed-load.ts",
     "agent:run": "bunx convex run agent:analyzeAll",
+    "emotion": "uv run bridge/emotion/extract.py",
     "agent:verify": "bun run bridge/agent/verify-cites.ts",
     "demo": "bun run demo/serve.ts",
     "demo:decay": "bun run bridge/demo-client.ts"
   },
   "type": "module",
   "dependencies": {
-    "clsx": "^2.1.1",
     "convex": "^1.44.0",
-    "imapflow": "^1.7.1",
+    "telegram": "^2.26.22",
+    "clsx": "^2.1.1",
     "motion": "^13.1.0",
-    "nodemailer": "^9.0.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "tailwind-merge": "^3.6.0",
-    "telegram": "^2.26.22"
+    "tailwind-merge": "^3.6.0"
   }
 }

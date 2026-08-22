@@ -32,7 +32,7 @@
  */
 
 import { v } from "convex/values";
-import { action, internalAction } from "./_generated/server";
+import { action } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { gate, type Claim } from "./verbatim";
@@ -81,22 +81,8 @@ const MIN_MESSAGES = 3;
 const IDEA_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["ideas", "notes"],
+  required: ["ideas"],
   properties: {
-    notes: {
-      type: "array",
-      description: "Durable facts about the person, each with verbatim evidence.",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["note", "sourceId", "quote"],
-        properties: {
-          note: { type: "string", description: "The fact, under 15 words, no advice" },
-          sourceId: { type: "string", description: "A message id exactly as shown" },
-          quote: { type: "string", description: "Copied character-for-character from that message" },
-        },
-      },
-    },
     ideas: {
       type: "array",
       items: {
@@ -164,14 +150,7 @@ RULES, in order of importance:
 5. \`draft\` is a message the advisor could send as-is. No placeholders, no
    [square brackets], no product pitches unless the client raised it first.
 
-At most 3 ideas. Fewer is better than padded.
-
-Separately, fill \`notes\`: durable facts about the PERSON, not the thread —
-family, dates that matter, stated preferences, money facts, things they are
-proud or worried about. These are what let the advisor open the next call
-like someone who remembered. Same evidence rule: each note carries the
-message id and an EXACT quote, or it is discarded. At most 6, each under 15
-words, no advice, no sentiment-guessing. An empty list is fine.`;
+At most 3 ideas. Fewer is better than padded.`;
 
 interface ModelIdea {
   rank: string;
@@ -261,7 +240,7 @@ async function runPass(
     const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const raw = body.choices?.[0]?.message?.content ?? "";
 
-    let parsed: { ideas?: ModelIdea[]; notes?: Array<{ note: string; sourceId: string; quote: string }> };
+    let parsed: { ideas?: ModelIdea[] };
     try {
       parsed = JSON.parse(raw) as typeof parsed;
     } catch {
@@ -297,26 +276,10 @@ async function runPass(
       keptIdeas.push({ ...rest, cites: [...new Set(kept.map((c) => c.sourceId))] });
     }
 
-    /* Notes pass the same gate as claims — a note is a claim about a person,
-       and a personalisation fact the client never said is worse than none:
-       it gets repeated back to them at the exact moment trust is being built. */
-    const keptNotes: Array<{ text: string; cite: string }> = [];
-    for (const n of parsed.notes ?? []) {
-      const { kept, rejected } = gate(
-        [{ statement: n.note, sourceId: n.sourceId, quote: n.quote }],
-        byId,
-      );
-      if (kept.length > 0) keptNotes.push({ text: n.note, cite: n.sourceId });
-      for (const r of rejected) {
-        rejections.push({ claim: r.statement, sourceId: r.sourceId, quote: r.quote, reason: r.reason });
-      }
-    }
-
     await ctx.runMutation(internal.agentData.recordAnalysis, {
       clientId: thread.clientId,
       model: MODEL,
       ideas: keptIdeas,
-      notes: keptNotes,
       rejected: rejections,
     });
 
@@ -361,219 +324,6 @@ export const analyze = action({
 });
 
 /** Analyse every tracked client — what `bun run agent:run` calls. */
-/* ── the shared model call ──────────────────────────────────────────
-   One place that knows how to talk to the provider, so the new seats below
-   cannot drift from the pass above in auth, model or failure shape. */
-async function callModel<T>(system: string, user: string, name: string, schema: object): Promise<T> {
-  if (API_KEY === "") throw new Error("No AGENT_API_KEY or OPENAI_API_KEY set for the Convex backend.");
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      response_format: { type: "json_schema", json_schema: { name, strict: true, schema } },
-    }),
-  });
-  if (!res.ok) throw new Error(`${MODEL} returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const raw = body.choices?.[0]?.message?.content ?? "";
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    throw new Error(`${MODEL} returned non-JSON despite a schema: ${raw.slice(0, 200)}`);
-  }
-}
-
-/* ── ask: the panel answers from the thread, for real ───────────────
-   This used to be canned classification in the page, dressed as the agent.
-   Now it is the agent: the model reads the actual thread and answers the
-   actual question, under the same evidence rule as everything else — claims
-   carry exact quotes or they are discarded, and an answer whose evidence all
-   died is returned flagged as uncited rather than dressed up. */
-
-const ASK_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["answer", "claims"],
-  properties: {
-    answer: { type: "string", description: "Direct answer to the advisor's question, 2-5 sentences, grounded in the thread." },
-    claims: {
-      type: "array",
-      description: "Evidence for every factual assertion in the answer.",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["statement", "sourceId", "quote"],
-        properties: {
-          statement: { type: "string" },
-          sourceId: { type: "string" },
-          quote: { type: "string", description: "Copied character-for-character. Never paraphrased." },
-        },
-      },
-    },
-  },
-} as const;
-
-const SYSTEM_ASK = `You are a financial advisor's assistant. You are given one client's full
-message thread ([ID] sender: text, one per line) and a question from the
-advisor about this client.
-
-Answer ONLY from the thread. Every factual assertion needs an entry in
-\`claims\` with the message id and an EXACT character-for-character quote.
-If the thread cannot answer the question, say so plainly — that is a good
-answer. Never invent a fact, a date, or a sentiment. 2-5 sentences.`;
-
-export const ask = action({
-  args: { key: v.string(), question: v.string() },
-  handler: async (
-    ctx,
-    { key, question },
-  ): Promise<{ answer: string; cites: string[]; uncited: boolean }> => {
-    const thread = await ctx.runQuery(internal.agentData.threadFor, { key });
-    if (!thread) throw new Error(`No client ${key}`);
-
-    const rendered = thread.messages.map((m) => `[${m.externalId}] ${m.sender}: ${m.text}`).join("\n");
-    const parsed = await callModel<{ answer: string; claims: Claim[] }>(
-      SYSTEM_ASK,
-      `Client: ${thread.name}\n\n${rendered}\n\nQuestion from the advisor: ${question}`,
-      "ask",
-      ASK_SCHEMA,
-    );
-
-    const byId = new Map(thread.messages.map((m) => [m.externalId, m.text]));
-    const { kept } = gate(parsed.claims ?? [], byId);
-
-    return {
-      answer: parsed.answer,
-      cites: [...new Set(kept.map((c) => c.sourceId))],
-      // Claims were made and none survived: the answer is a guess wearing a
-      // suit. The page says so instead of hiding it.
-      uncited: (parsed.claims ?? []).length > 0 && kept.length === 0,
-    };
-  },
-});
-
-/* ── brief: the model writes the desk's prose, never its numbers ─────
-   The desk's whys and drafts were templates wearing the assistant's name.
-   Now the model writes them — against a hard rule the template never needed:
-   every figure in the output must already appear in the FACTS block, or the
-   whole draft is refused and the template stands. A model that is allowed to
-   write numbers will eventually write one that is wrong by RM 40,000, and a
-   digit-guard is cheaper than an apology. */
-
-const BRIEF_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["text"],
-  properties: {
-    text: { type: "string" },
-  },
-} as const;
-
-const SYSTEM_BRIEF = `You write short client-facing messages and working notes for a Malaysian
-financial advisor, in his voice: warm, plain, no jargon, no exclamation
-marks, no emoji. Never pitch a product.
-
-HARD RULES:
-- Use ONLY figures that appear in the FACTS block. Do not compute, round,
-  or invent any number, date or percentage.
-- If recent messages are provided, you may echo the client's own phrasing
-  and concerns, and should.
-- Output is the finished text only. No preamble, no placeholders.`;
-
-/** Every digit-run in the text must already exist in the facts. */
-function digitsGuard(text: string, facts: string): string | null {
-  const normal = (x: string): string => x.replace(/[,\s]/g, "");
-  const pool = normal(facts);
-  for (const m of text.matchAll(/\d[\d,.]*/g)) {
-    const token = normal(m[0]).replace(/\.$/, "");
-    if (token.length > 0 && !pool.includes(token)) return m[0];
-  }
-  return null;
-}
-
-export const brief = action({
-  args: {
-    kind: v.string(),
-    facts: v.string(),
-    ask: v.string(),
-    key: v.optional(v.string()),
-  },
-  handler: async (ctx, a): Promise<{ text: string; refused: string | null }> => {
-    let context = "";
-    if (a.key) {
-      const thread = await ctx.runQuery(internal.agentData.threadFor, { key: a.key });
-      if (thread) {
-        const recent = thread.messages.slice(-12);
-        context = `\n\nRECENT MESSAGES:\n${recent.map((m) => `${m.sender}: ${m.text}`).join("\n")}`;
-      }
-    }
-
-    const parsed = await callModel<{ text: string }>(
-      SYSTEM_BRIEF,
-      `TASK (${a.kind}): ${a.ask}\n\nFACTS:\n${a.facts}${context}`,
-      "brief",
-      BRIEF_SCHEMA,
-    );
-
-    const bad = digitsGuard(parsed.text, a.facts);
-    if (bad !== null) return { text: "", refused: `invented figure "${bad}"` };
-    return { text: parsed.text.trim(), refused: null };
-  },
-});
-
-/* ── extractTime: the schedule reader's second pass ─────────────────
-   The regex reader is the fast path and stays first: deterministic, free,
-   and incapable of hallucinating a booking. This is the fallback for the
-   sentences it cannot parse — "same time as last week works", "let's do the
-   morning after Raya" — and it inherits every guard the regex path has: the
-   output is only ever a TENTATIVE block, deduped per message, future-only.
-   A wrong extraction costs the advisor one tap; a missed one costs nothing
-   the regex path was catching anyway. */
-
-const EXTRACT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["intent", "date", "time", "confident"],
-  properties: {
-    intent: { type: "string", enum: ["none", "agree", "move", "cancel"] },
-    date: { type: "string", description: "YYYY-MM-DD in Asia/Kuala_Lumpur, or empty if none stated" },
-    time: { type: "string", description: "HH:MM 24h, or empty if none stated" },
-    confident: { type: "boolean", description: "true only if a reasonable person would read it the same way" },
-  },
-} as const;
-
-const SYSTEM_EXTRACT = `You read one chat message and decide if it schedules something.
-
-"agree": the sender is agreeing to meet at a stated day and time.
-"move": asking to shift an existing appointment to a stated time.
-"cancel": calling an appointment off.
-"none": everything else — including vague interest with no concrete time.
-
-Resolve relative dates against NOW (given). Timezone Asia/Kuala_Lumpur.
-Set confident=true ONLY when both the intent and the moment are unambiguous.
-When in doubt: intent "none". A missed booking costs nothing; an invented
-one costs trust.`;
-
-export const extractTime = internalAction({
-  args: { text: v.string(), nowIso: v.string() },
-  handler: async (
-    _ctx,
-    { text, nowIso },
-  ): Promise<{ intent: string; date: string; time: string; confident: boolean }> => {
-    return await callModel(
-      SYSTEM_EXTRACT,
-      `NOW: ${nowIso}\n\nMESSAGE: ${text}`,
-      "extract",
-      EXTRACT_SCHEMA,
-    );
-  },
-});
-
 export const analyzeAll = action({
   args: { force: v.optional(v.boolean()) },
   handler: async (ctx, { force }): Promise<PassResult[]> => {

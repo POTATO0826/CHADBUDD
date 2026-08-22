@@ -38,11 +38,6 @@ export interface ScheduleSlot {
   /** Stable citation key, same idea as a message externalId. */
   id: string;
   kind: SlotKind;
-  /**
-   * Advisor-set weight, where the advisor has set one. Absent means unrated —
-   * a real state the UI shows, never silently treated as routine.
-   */
-  importance?: "routine" | "important" | "key";
   title: string;
   /** ISO 8601 with the +08:00 offset the day actually happened in. */
   at: string;
@@ -86,7 +81,6 @@ export const schedule: ScheduleSlot[] = [
   {
     id: "S-003",
     kind: "meeting",
-    importance: "important",
     title: "Priya Ramasamy — gold switch",
     at: "2026-08-17T09:45:00+08:00",
     minutes: 45,
@@ -144,9 +138,6 @@ export const schedule: ScheduleSlot[] = [
   {
     id: "S-008",
     kind: "meeting",
-    // The 104-day promise finally lands in a room. If any meeting on this day
-    // deserves preparing the night before, it is this one.
-    importance: "key",
     title: "Adrian Lim — the comparison, finally",
     at: "2026-08-17T13:15:00+08:00",
     minutes: 60,
@@ -171,7 +162,6 @@ export const schedule: ScheduleSlot[] = [
   {
     id: "S-010",
     kind: "call",
-    importance: "routine",
     title: "Michelle Tan — check-in",
     at: "2026-08-17T14:45:00+08:00",
     minutes: 20,

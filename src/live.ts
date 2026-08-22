@@ -28,6 +28,8 @@ import type { ClientKey, SeedThread } from "../data/types.ts";
 import { initialsOf, rebuild, setDecayTempo } from "./derive.ts";
 import { rebuildAgenda, shiftAgendaToDay } from "./agenda.ts";
 import { setIdeas } from "./copy.ts";
+import { setEmotions } from "./emotions.ts";
+import type { EmotionSpan } from "./emotions.ts";
 import { isTauri } from "./shell.ts";
 import type { Idea } from "./copy.ts";
 
@@ -116,163 +118,6 @@ export async function queueSend(key: ClientKey, text: string, ideaRank?: string)
     ...(ideaRank === undefined ? {} : { ideaRank }),
   })) as { to: string };
   return res.to;
-}
-
-/**
- * Per-client facts that ride threads:list but are not messages: the platform
- * sourceId (for the Telegram deep link) and the email on file. Held here so
- * the render path can ask synchronously.
- */
-const meta = new Map<string, { sourceId: string; email: string | null }>();
-
-export function clientMeta(key: ClientKey): { sourceId: string; email: string | null } | null {
-  return meta.get(key) ?? null;
-}
-
-/**
- * What the agent noticed about each person, verbatim-gated server-side.
- * Null means live mode is off or nothing has arrived yet — the seed notes
- * render instead. An empty array is a real answer: analysed, nothing noted.
- */
-const notesLive = new Map<ClientKey, Array<{ text: string; cite: string; updatedAt: number }>>();
-let notesReady = false;
-
-export function liveNotes(key: ClientKey): Array<{ text: string; cite: string; updatedAt: number }> | null {
-  if (!notesReady) return null;
-  return notesLive.get(key) ?? [];
-}
-
-/**
- * The imported book, shaped exactly like data/holdings.ts rows so the desk
- * and importance pre-fill cannot tell which answered. Null until an import
- * exists — the seed remains the demo's book.
- */
-interface HoldingRow {
-  hid: string;
-  clientKey: string;
-  name: string;
-  kind: string;
-  classes: string[];
-  invested: number;
-  value: number;
-  value1yAgo: number;
-  maturityIso?: string;
-  lastUpdateIso: string;
-}
-let holdingRows: HoldingRow[] = [];
-
-export function liveHoldings(): Array<{
-  id: string;
-  client: ClientKey;
-  name: string;
-  kind: "fund" | "structured" | "prs" | "plan";
-  classes: string[];
-  value: number;
-  invested: number;
-  series: number[];
-  maturesAtIso?: string;
-  lastUpdateDaysAgo: number;
-}> | null {
-  if (holdingRows.length === 0) return null;
-  const now = Date.now();
-  return holdingRows.map((r) => ({
-    id: r.hid,
-    client: r.clientKey as ClientKey,
-    name: r.name,
-    kind: (["fund", "structured", "prs", "plan"].includes(r.kind) ? r.kind : "plan") as
-      | "fund"
-      | "structured"
-      | "prs"
-      | "plan",
-    classes: r.classes,
-    value: r.value,
-    invested: r.invested,
-    // Twelve points, linear from a year ago to now. Honest about what it is:
-    // a 12-month change with a straight line between the endpoints, because
-    // the CSV carries endpoints, not a NAV history.
-    series: Array.from({ length: 12 }, (_, i) => r.value1yAgo + ((r.value - r.value1yAgo) * i) / 11),
-    ...(r.maturityIso ? { maturesAtIso: r.maturityIso } : {}),
-    lastUpdateDaysAgo: Math.max(
-      0,
-      Math.floor((now - (Date.parse(r.lastUpdateIso) || now)) / 86_400_000),
-    ),
-  }));
-}
-
-/** The Ask panel's real backend. Throws plainly when live mode is off. */
-export async function askAgent(
-  key: ClientKey,
-  question: string,
-): Promise<{ answer: string; cites: string[]; uncited: boolean }> {
-  if (!convex) throw new Error("Not connected to the backend.");
-  const lookupA = anyApi as unknown as Record<string, Record<string, unknown>>;
-  return (await convex.action(
-    lookupA["agent"]?.["ask"] as FunctionReference<"action">,
-    { key, question },
-  )) as { answer: string; cites: string[]; uncited: boolean };
-}
-
-/**
- * The live market feed, when the hourly sweep has produced one.
- *
- * Null means "no live rows" — the desk falls back to the curated seed, so an
- * RSS outage can never blank the section. Shaped here into the exact type
- * data/market.ts exports, which is what lets the desk not care.
- */
-let marketRows: Array<{
-  _id: string;
-  ts: number;
-  headline: string;
-  summary: string;
-  lean: string;
-  classes: string[];
-  sourceName: string;
-  sourceUrl: string;
-  impactNote: string;
-}> = [];
-
-export function liveMarketEvents(): Array<{
-  id: string;
-  agoHours: number;
-  headline: string;
-  summary: string;
-  lean: "pressure" | "relief" | "watch";
-  classes: string[];
-  source: { name: string; url: string };
-  impactNote: string;
-}> | null {
-  if (marketRows.length === 0) return null;
-  const now = Date.now();
-  return marketRows.map((r) => ({
-    id: r._id,
-    agoHours: Math.max(1, Math.round((now - r.ts) / 3_600_000)),
-    headline: r.headline,
-    summary: r.summary,
-    lean: r.lean === "pressure" ? "pressure" : r.lean === "relief" ? "relief" : "watch",
-    classes: r.classes,
-    source: { name: r.sourceName, url: r.sourceUrl },
-    impactNote: r.impactNote,
-  }));
-}
-
-/** Send an email through the deployment. Throws plainly when not connected. */
-export async function sendEmail(key: ClientKey, subject: string, text: string): Promise<void> {
-  if (!convex) throw new Error("Not connected to the backend — email needs live mode.");
-  const to = meta.get(key)?.email;
-  if (!to) throw new Error("No email on file for this client — add one in Basic information.");
-  const lookup2 = anyApi as unknown as Record<string, Record<string, unknown>>;
-  await convex.action(
-    lookup2["email"]?.["send"] as FunctionReference<"action">,
-    { to, subject, text },
-  );
-}
-
-/** Store the client's email on the backend, where it survives reinstalls. */
-export async function setClientEmail(key: ClientKey, email: string): Promise<void> {
-  if (!convex) throw new Error("Not connected to the backend — saving needs live mode.");
-  await convex.mutation(mut("ingest", "setEmail"), { key, email });
-  const m2 = meta.get(key);
-  if (m2) meta.set(key, { ...m2, email: email.trim() === "" ? null : email.trim() });
 }
 
 /**
@@ -395,10 +240,6 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
   client.onUpdate(q("threads", "list"), {}, (value) => {
     const next = value as SeedThread[];
 
-    for (const row of value as Array<{ key: string; sourceId?: string; email?: string | null }>) {
-      meta.set(row.key, { sourceId: row.sourceId ?? "", email: row.email ?? null });
-    }
-
     if (!primed) {
       for (const t of next) for (const m of t.messages) seen.add(m.externalId);
       primed = true;
@@ -442,24 +283,6 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
     apply();
   });
 
-  client.onUpdate(q("holdings", "list"), {}, (value) => {
-    holdingRows = value as HoldingRow[];
-    apply();
-  });
-
-  client.onUpdate(q("news", "list"), {}, (value) => {
-    marketRows = value as typeof marketRows;
-    apply();
-  });
-
-  client.onUpdate(q("threads", "notes"), {}, (value) => {
-    const rows = value as Array<{ key: string; notes: Array<{ text: string; cite: string; updatedAt: number }> }>;
-    notesLive.clear();
-    for (const row of rows) notesLive.set(row.key, row.notes);
-    notesReady = true;
-    apply();
-  });
-
   client.onUpdate(q("threads", "ideas"), {}, (value) => {
     const rows = value as Array<{ key: string; ideas: IdeaRow[] }>;
     const next: Record<ClientKey, Idea[]> = {};
@@ -482,6 +305,14 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
         }));
     }
     setIdeas(next);
+    apply();
+  });
+
+  client.onUpdate(q("emotions", "forAll"), {}, (value) => {
+    const rows = value as Array<{ key: string; rows: EmotionSpan[] }>;
+    const next: Record<string, EmotionSpan[]> = {};
+    for (const row of rows) next[row.key] = row.rows;
+    setEmotions(next);
     apply();
   });
 

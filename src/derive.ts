@@ -22,6 +22,7 @@ import type { LedgerEntry } from "./ledger.ts";
 import type { Score, SignalScore } from "./score.ts";
 import { fmtMinutes, score } from "./score.ts";
 import { callStats, fmtGap } from "./contact.ts";
+import { emotionAt, emotionTone } from "./emotions.ts";
 import { conversationStarts, isQuestion, windows } from "./signals.ts";
 import type { Windows } from "./signals.ts";
 
@@ -265,14 +266,19 @@ export interface RecMessage {
 }
 
 /**
- * Derived chips only. The design had emotion labels ("warm", "appreciative")
- * from an extraction pass that does not exist yet, so these are the things the
- * messages themselves can prove: a question mark, a cited promise, a reply that
- * opened nothing, a two-word answer.
+ * Derived chips, plus the extraction pass this comment used to say did not
+ * exist. It does now — bridge/emotion/extract.py grounds an emotion label to
+ * an exact span of a real message and convex/emotions.ts re-verifies the span
+ * before storing it — so a "curt" or "appreciative" chip here meets the same
+ * bar as the derived ones: the message itself is the evidence, and the seed
+ * threads (no pass run against them) simply show no such chip.
  */
 function chipsFor(m: SeedMessage, cited: Map<string, LedgerEntry>, starts: Set<string>, avg: number): Chip[] {
   const out: Chip[] = [];
   const entry = cited.get(m.externalId);
+
+  const emo = emotionAt(m.externalId);
+  if (emo) out.push({ label: emo.label, tone: emotionTone(emo.label), dashed: false });
 
   if (entry) {
     out.push({
