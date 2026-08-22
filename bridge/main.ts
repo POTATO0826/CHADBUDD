@@ -19,6 +19,7 @@ import type { FunctionReference } from "convex/server";
 
 import { TelegramSource } from "./telegram/source.ts";
 import { DAY, WANTED_DAYS, type BridgeChat, type BridgeMessage, type Source } from "./types.ts";
+import { readHoldingsCsv } from "../shared/holdingsCsv.ts";
 import { MISSING_CONVEX, convexUrl as resolveConvexUrl } from "../scripts/convex-url.ts";
 
 /** Must match BATCH_LIMIT in convex/ingest.ts — mutations get one second. */
@@ -82,6 +83,9 @@ const m = (module: string, name: string): FunctionReference<"mutation"> =>
 
 const API = {
   pickClients: m("ingest", "pickClients"),
+  telegramCall: m("calls", "fromTelegram"),
+  replaceHoldings: m("holdings", "replaceAll"),
+  setEmail: m("ingest", "setEmail"),
   pendingSends: q("outbox", "pending"),
   markSent: m("outbox", "markSent"),
   markFailed: m("outbox", "markFailed"),
@@ -117,6 +121,45 @@ async function publishChats(): Promise<BridgeChat[]> {
   await convex.mutation(API.upsertChats, { chats });
   console.log(`[bridge] published ${chats.length} chats to the picker`);
   return chats;
+}
+
+/**
+ * The book, synced at startup.
+ *
+ * The import used to be a command someone ran before each demo, which is a
+ * step that gets forgotten exactly once, on stage. The bridge already has to
+ * be running for a demo, so its startup is the import: the advisor's real
+ * file if data/import/holdings.csv exists, the sample otherwise. replaceAll
+ * is idempotent — nine rows re-imported on every start cost nothing.
+ */
+async function syncHoldings(): Promise<void> {
+  const real = "data/import/holdings.csv";
+  const sample = "data/import/holdings.sample.csv";
+  const file = (await Bun.file(real).exists()) ? real : sample;
+
+  try {
+    const { rows, emails, problems } = readHoldingsCsv(await Bun.file(file).text());
+    if (rows.length === 0) {
+      console.log(`[book] nothing importable in ${file}`);
+      for (const p of problems) console.log(`  ! ${p}`);
+      return;
+    }
+    await convex.mutation(API.replaceHoldings, { rows });
+    let set = 0;
+    for (const [key, email] of emails) {
+      try {
+        await convex.mutation(API.setEmail, { key, email });
+        set++;
+      } catch {
+        /* a key with no tracked client yet — the row still imported */
+      }
+    }
+    console.log(`[book] ${rows.length} holdings synced from ${file} · ${set} emails set`);
+    for (const p of problems) console.log(`  ! ${p}`);
+  } catch (err) {
+    // A broken book file must not stop messages flowing.
+    console.error(`[book] sync failed: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 /* ── auto-promotion ──────────────────────────────────────────────────
@@ -254,6 +297,7 @@ async function main(): Promise<void> {
   await say("open");
   console.log("[bridge] connected");
 
+  await syncHoldings();
   const chats = await publishChats();
   await sweepMissed(chats);
   await backfill();
@@ -309,6 +353,29 @@ async function main(): Promise<void> {
       }
     })();
   });
+  /* Voice calls, into the same store the phone webhook feeds. This is the
+     iPhone answer: the phone's own call log is sealed, but Telegram calls
+     ride the socket this process already holds — ended or missed, any
+     device, nothing installed anywhere. */
+  source.onCall((chatId, call) => {
+    void convex
+      .mutation(API.telegramCall, {
+        sourceId: chatId,
+        outgoing: call.outgoing,
+        missed: call.missed,
+        durationSec: call.durationSec,
+        ts: call.ts,
+      })
+      .then((r) => {
+        const res = r as { matched: boolean };
+        console.log(
+          `[call] ${call.outgoing ? "outgoing" : call.missed ? "MISSED" : "incoming"} · ${chatId}` +
+            ` · ${call.durationSec}s${res.matched ? "" : " · not a tracked client"}`,
+        );
+      })
+      .catch((err) => console.error(`[call] record failed: ${err instanceof Error ? err.message : err}`));
+  });
+
   console.log("[bridge] listening for new messages. Ctrl+C to stop.");
 
   /**

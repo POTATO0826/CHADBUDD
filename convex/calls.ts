@@ -13,7 +13,7 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 
 const digitsOf = (s: string): string => s.replace(/\D/g, "");
 const tail = (s: string): string => digitsOf(s).slice(-8);
@@ -52,6 +52,45 @@ export const record = internalMutation({
       ...(clientId ? { clientId } : {}),
     });
     return { recorded: true, matched: clientId !== undefined };
+  },
+});
+
+/**
+ * A Telegram voice call, reported by the bridge.
+ *
+ * Public like the bridge's other mutations. The client is known exactly —
+ * calls arrive with the chat's sourceId — so there is no digit matching to
+ * go wrong, and an untracked caller is stored unmatched like any other.
+ */
+export const fromTelegram = mutation({
+  args: {
+    sourceId: v.string(),
+    outgoing: v.boolean(),
+    missed: v.boolean(),
+    durationSec: v.number(),
+    ts: v.number(),
+  },
+  handler: async (ctx, a) => {
+    const client = await ctx.db
+      .query("clients")
+      .withIndex("by_source", (q) => q.eq("sourceId", a.sourceId))
+      .unique();
+
+    const dupe = await ctx.db
+      .query("phoneCalls")
+      .withIndex("by_ts", (q) => q.gte("ts", a.ts - 5_000).lte("ts", a.ts + 5_000))
+      .collect();
+    if (dupe.some((d) => d.number === `tg:${a.sourceId}`)) return { recorded: false, matched: client !== null };
+
+    await ctx.db.insert("phoneCalls", {
+      number: `tg:${a.sourceId}`,
+      digits: "",
+      direction: a.outgoing ? "outgoing" : a.missed ? "missed" : "incoming",
+      durationSec: a.durationSec,
+      ts: a.ts,
+      ...(client ? { clientId: client._id } : {}),
+    });
+    return { recorded: true, matched: client !== null };
   },
 });
 

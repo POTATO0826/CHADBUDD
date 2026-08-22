@@ -44,6 +44,21 @@ export interface BridgeMessage {
   text: string;
 }
 
+/**
+ * A voice call, as the platform reported it.
+ *
+ * Telegram writes calls into the chat history as service messages — which is
+ * what makes call tracking possible on an iPhone at all: the phone's own call
+ * log is sealed, but the Telegram socket the bridge already holds sees every
+ * Telegram call, ended or missed, on any device.
+ */
+export interface BridgeCall {
+  outgoing: boolean;
+  missed: boolean;
+  durationSec: number;
+  ts: number;
+}
+
 export interface BridgeChat {
   /** Platform-native chat id: a WhatsApp jid, a Telegram peer id. */
   sourceId: string;
@@ -99,6 +114,9 @@ export interface Source {
 
   /** Live arrivals. Called once; the adapter owns the subscription. */
   onMessage(cb: (chatId: string, message: BridgeMessage) => void): void;
+
+  /** Voice calls, as they end. Same chatId convention as onMessage. */
+  onCall(cb: (chatId: string, call: BridgeCall) => void): void;
 
   /**
    * Send a message as the account holder.
