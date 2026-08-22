@@ -421,6 +421,12 @@ html[data-shell="tauri"] #desk{ display: none; }
 .island[data-state="idle"]{ width: 232px; height: 38px; border-radius: 999px; }
 /* Hover acknowledges the cursor without moving a single pixel: the ring picks
    up the accent, the geometry holds. Expansion is click-only. */
+/* Idle skips the shadow transition entirely: a crossing recolors the edge
+   instantly instead of running a 300ms composite-shadow repaint in and
+   another out — a swept-past pill must cost nothing. */
+.island[data-state="idle"]{
+  transition: width .44s var(--morph), height .44s var(--morph), border-radius .44s var(--morph);
+}
 .island[data-state="idle"]:hover{
   --isl-edge: inset 0 0 0 1px color-mix(in oklab, var(--primary) 45%, transparent);
 }

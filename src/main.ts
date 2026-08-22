@@ -4192,7 +4192,7 @@ const LEAVE_GRACE = 140;
  * never expands the island at all, and a deliberate hover — which always ends
  * in stopping — still does.
  */
-const HOVER_DWELL = 150;
+const HOVER_DWELL = 260;
 
 /**
  * Movement below this is not movement.
@@ -4203,6 +4203,10 @@ const HOVER_DWELL = 150;
 const JITTER = 4;
 
 let lastPoint: { x: number; y: number } | null = null;
+
+/* The last pointer sighting over this window, wherever it landed. Presence
+   checks read THIS, not :hover — see pointerIsOnIsland. */
+const lastSeen = { x: 0, y: 0, t: 0 };
 
 /** The states a deliberate hover may expand out of. */
 const COMPACT = new Set<IslandState>(["idle", "alert", "call"]);
@@ -4218,11 +4222,16 @@ const COMPACT = new Set<IslandState>(["idle", "alert", "call"]);
  * island nobody is pointing at, with no matching leave to collapse it again.
  * Sweeping across repeatedly is exactly the gesture that produces it.
  *
- * :hover is the browser's own answer to the same question, and it does not
- * depend on an event having been delivered.
+ * :hover turned out to share the failure: with no leave delivered it stays
+ * stale-true and the phantom expand fires anyway. Recency is the honest
+ * answer — a departed cursor stops producing events the moment the shell
+ * resumes ignoring the window, so a fresh sighting inside the pill's real
+ * box is the only state that counts as "on it".
  */
 function pointerIsOnIsland(): boolean {
-  return island.matches(":hover");
+  if (performance.now() - lastSeen.t > 150) return false;
+  const r = island.getBoundingClientRect();
+  return lastSeen.x >= r.left && lastSeen.x <= r.right && lastSeen.y >= r.top && lastSeen.y <= r.bottom;
 }
 
 function armHover(): void {
@@ -4248,7 +4257,7 @@ window.setInterval(() => {
   if (pointerIsOnIsland()) return;
   window.clearTimeout(leaveTimer);
   if (!resumeParked()) setState("idle");
-}, 300);
+}, 120);
 
 island.addEventListener("pointerenter", (ev) => {
   // Back before the grace ran out: the leave never really happened.
@@ -4265,6 +4274,9 @@ island.addEventListener("pointerenter", (ev) => {
   // Resting expands from any compact state. Restricting this to idle meant a
   // notification made the island stop responding to the pointer entirely.
   if (!COMPACT.has(state.st)) return;
+  lastSeen.x = ev.clientX;
+  lastSeen.y = ev.clientY;
+  lastSeen.t = performance.now();
   lastPoint = { x: ev.clientX, y: ev.clientY };
   armHover();
 });
@@ -4272,10 +4284,12 @@ island.addEventListener("pointerenter", (ev) => {
 /* Every real movement restarts the clock, so it can only elapse where the
    pointer has stopped. This is what makes a sweep cost nothing. */
 island.addEventListener("pointermove", (ev) => {
+  lastSeen.x = ev.clientX;
+  lastSeen.y = ev.clientY;
+  lastSeen.t = performance.now();
   if (!COMPACT.has(state.st)) return;
-  const p = { x: ev.clientX, y: ev.clientY };
-  if (lastPoint && Math.hypot(p.x - lastPoint.x, p.y - lastPoint.y) < JITTER) return;
-  lastPoint = p;
+  if (lastPoint && Math.hypot(ev.clientX - lastPoint.x, ev.clientY - lastPoint.y) < JITTER) return;
+  lastPoint = { x: ev.clientX, y: ev.clientY };
   armHover();
 });
 

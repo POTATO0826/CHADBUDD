@@ -39,12 +39,19 @@ export function initTrail(): void {
     canvas.style.height = `${window.innerHeight}px`;
   };
   fit();
-  window.addEventListener("resize", fit);
+  window.addEventListener("resize", () => {
+    fit();
+    readHue();
+  });
 
-  // The hue is read off the stylesheet, not duplicated here — retheme the
-  // token and the trail follows.
-  const hue = (): string =>
-    getComputedStyle(document.documentElement).getPropertyValue("--glacial").trim() || "#a8c8dc";
+  // The hue is read off the stylesheet once (and again on resize), not per
+  // frame — getComputedStyle every 16ms was the priciest line in the loop.
+  let hueCache = "#a8c8dc";
+  const readHue = (): void => {
+    hueCache = getComputedStyle(document.documentElement).getPropertyValue("--glacial").trim() || "#a8c8dc";
+  };
+  readHue();
+  const hue = (): string => hueCache;
 
   const pts: Pt[] = [];
   let running = false;
