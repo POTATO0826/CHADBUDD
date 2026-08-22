@@ -26,7 +26,7 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
-import { acceptProposal, askAgent, autoStats, clientMeta, declineProposal, initLive, liveHoldings, liveNotes, queueSend, sendEmail, sendEmailWithFile, setClientEmail, uploadFile } from "./live.ts";
+import { acceptProposal, askAgent, autoStats, clientMeta, declineProposal, initLive, liveHoldings, liveNotes, queueSend, sendEmail, sendEmailWithFile, uploadFile } from "./live.ts";
 import type { AutoStats } from "./live.ts";
 import { aiText, initDeskAi } from "./deskAi.ts";
 import type { Task } from "./tasks.ts";
@@ -3313,43 +3313,22 @@ function callButton(c: ClientView): string {
 }
 
 /**
- * The email on file, editable in place.
+ * The email on file — read-only, like every other fact beside it.
  *
- * Advisor-entered because no platform we read carries it. An empty save
- * clears it — a wrong address is worse than none.
+ * This used to be a text input with a Save button, the one editable thing in
+ * a column of statements. It is a statement too now, and the address arrives
+ * the way the rest of this screen's contents do: convex/emailCapture.ts takes
+ * an address a client states in their own thread, judged by a name heuristic
+ * and by the model reading the sentence, with the model's claim gated against
+ * the verbatim message before anything is written. A missed capture costs a
+ * paste into the database; a wrong one misdirects a client's money.
  */
-/**
- * Commit the email on file.
- *
- * There is no Save button beside the field any more. A two-control row for a
- * single value made the rail's tidiest line its busiest, and the button was
- * pure ceremony — the field already knows when you are done with it. Blur and
- * Enter both land here; an unchanged value is dropped before it reaches the
- * network. An empty save still clears, deliberately: a wrong address on file
- * is worse than none.
- */
-function saveEmail(who: ClientKey, value: string): void {
-  const next = value.trim();
-  if (next === (clientMeta(who)?.email ?? "")) return;
-  void setClientEmail(who, next)
-    .then(() => render())
-    .catch((err) => {
-      console.error("[chadbuddy] email save failed", err);
-      showNotif({ kind: "reminder", client: null, title: "Not saved", body: String(err instanceof Error ? err.message : err).slice(0, 60), meta: "", tag: "EMAIL", tone: "critical", dwell: 6000 });
-    });
-}
-
 function emailRow(c: ClientView): string {
-  const meta = clientMeta(c.key);
-  const email = meta?.email ?? "";
+  const email = clientMeta(c.key)?.email ?? "";
   return `
-    <div class="fact emailrow">
-      <span class="g">✉</span><span class="k">Email</span><span class="d"></span>
-      <span class="v">
-        <input class="emailbox" id="emailbox" type="email" value="${e(email)}" placeholder="none on file"
-               data-act="email-field" data-client="${e(c.key)}"
-               title="Saves when you leave the field or press Enter">
-      </span>
+    <div class="rfact">
+      <span class="k">Email</span>
+      <span class="v${email === "" ? " none" : ""}">${email === "" ? "none on file" : e(email)}</span>
     </div>`;
 }
 
@@ -4923,13 +4902,6 @@ island.addEventListener("click", (ev) => {
       return;
     }
 
-    case "email-save": {
-      const who = hit.dataset.client;
-      const box = document.getElementById("emailbox") as HTMLInputElement | null;
-      if (who && box) saveEmail(who, box.value);
-      return;
-    }
-
     case "reply-via": {
       state.replyVia = hit.dataset.via === "em" ? "em" : "tg";
       // The room draft is being edited in place — a channel change must not
@@ -5538,16 +5510,6 @@ island.addEventListener("change", (ev) => {
     });
 });
 
-/* `change` on a text input fires when the value differs and focus leaves, so
-   this is the blur-save for the email field. Enter is handled in the keydown
-   listener below, which also blurs so the two paths cannot double-fire. */
-island.addEventListener("change", (ev) => {
-  const el = ev.target as HTMLInputElement;
-  if (el.dataset.act !== "email-field") return;
-  const who = el.dataset.client;
-  if (who) saveEmail(who as ClientKey, el.value);
-});
-
 island.addEventListener("input", (ev) => {
   const el = ev.target as HTMLInputElement;
   if (el.dataset["keep"] !== undefined && el.id !== "") keepEdits.set(el.id, el.value);
@@ -5581,13 +5543,6 @@ island.addEventListener("input", (ev) => {
 island.addEventListener("keydown", (ev) => {
   const el = ev.target as HTMLElement;
   const act = el.dataset?.act;
-  if (act === "email-field" && ev.key === "Enter") {
-    ev.preventDefault();
-    // Blur rather than saving here: leaving the field fires `change`, which is
-    // the one place the save lives. Two callers would send it twice.
-    el.blur();
-    return;
-  }
   if (act !== "draft" && act !== "search") return;
 
   if (ev.key === "Enter" && act === "draft") {

@@ -493,8 +493,10 @@ html[data-shell="tauri"] #desk{ display: none; }
   animation: spin 2.1s linear infinite;
 }
 /* Taller than the old 104px, which the stat row already overflowed, and wider
-   to carry the fifth column without crushing the labels. */
-.island[data-state="peek"]{ width: 496px; height: 122px; border-radius: var(--r-2xl); }
+   to carry the fifth column without crushing the labels. The width is capped
+   by the viewport as well as by the design: the island is fixed-position and
+   a 496px pill on a 400px screen is clipped, not scrolled. */
+.island[data-state="peek"]{ width: min(496px, calc(100vw - 24px)); height: 122px; border-radius: var(--r-2xl); }
 .island[data-state="open"]{
   width: min(1360px, calc(100vw - 24px));
   height: min(860px, calc(100vh - 20px));
@@ -556,14 +558,28 @@ html[data-shell="tauri"] #desk{ display: none; }
 .peek .top{ display: flex; align-items: baseline; gap: 9px; }
 .peek .nm{ font-family: var(--display); font-size: 13px; font-weight: 500; letter-spacing: -.016em; }
 .peek .sc-n{ margin-left: auto; font-family: var(--mono); font-size: 9.5px; color: var(--t4); }
-.peek .stats{ display: flex; align-items: stretch; justify-content: space-between; gap: 10px; }
-.peek .st{ display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/* Five columns across on a wide island, two rows when there is not room for
+   five. `flex: 1 1 auto` with a floor lets them share the row evenly and then
+   break rather than compress past legibility — the previous rule had no floor
+   at all, so a fifth column squeezed the other four until the labels clipped
+   instead of wrapping. */
+.peek .stats{ display: flex; align-items: stretch; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+.peek .st{ display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 auto; }
+.peek .st .lbl{ line-height: 1.25; }
 .peek .st .hd{ display: flex; align-items: center; gap: 5px; }
 .peek .st .dt{ width: 5px; height: 5px; border-radius: 50%; flex: none; display: block; }
 .peek .st .v{ font-size: 19px; line-height: 1; letter-spacing: -.02em; font-weight: 500; color: var(--t1); }
 .peek .div{ width: 1px; background: var(--hair); display: block; margin: 1px 0; }
 .peek .strip{ display: flex; gap: 4px; }
 .peek .strip i{ height: 4px; flex: 1; display: block; border-radius: 2px; }
+/* Narrow: the five metrics break onto two rows and the island grows to hold
+   them. The hairlines go — a divider that wraps to the start of the next row
+   separates nothing, and reads as a stray mark. */
+@media (max-width: 560px){
+  .island[data-state="peek"]{ height: 176px; }
+  .peek .div{ display: none; }
+  .peek .st{ flex: 1 1 40%; }
+}
 
 /* status chip — the word always travels with the colour */
 .chip{ font-family: var(--label); font-weight: 500; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
