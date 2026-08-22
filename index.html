@@ -149,12 +149,21 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
                                 color-mix(in oklab, var(--background) 90%, transparent));
   /* The boxes carry their own card backing now — the glassy look lives in
      the plane BETWEEN tiles, not through them, so text never fights the
-     desktop wallpaper behind the window. */
-  --tile:      color-mix(in oklab, var(--foreground) 5%, color-mix(in oklab, var(--card) 58%, transparent));
-  --tile-2:    color-mix(in oklab, var(--foreground) 6%, color-mix(in oklab, var(--card) 66%, transparent));
+     desktop wallpaper behind the window.
+
+     And the boxes are GLACIAL: the ground stays Rosé Pine, the tiles sit on
+     it in a pale powder blue of the same low-chroma temperament — colder
+     hue, same quietness — so a box reads as a box without needing a border.
+     Surface tint only, never an ink. */
+  --glacial:   #a8c8dc;
+  --tile:      color-mix(in oklab, var(--glacial) 11%, color-mix(in oklab, var(--card) 58%, transparent));
+  --tile-2:    color-mix(in oklab, var(--glacial) 12%, color-mix(in oklab, var(--card) 66%, transparent));
   /* wells — a step *down* from the plane, which on the light ramp means ink */
-  --deep:      color-mix(in oklab, var(--foreground) 7%, transparent);
-  --deep-2:    color-mix(in oklab, var(--foreground) 11%, transparent);
+  /* Wells go DARK glacial — glacial is a light hue, so an inset surface
+     mixes only a whisper of it into the base and reads colder, not
+     brighter. Measured: every ink on these stays over 4.6:1. */
+  --deep:      color-mix(in oklab, var(--glacial) 7%, var(--background));
+  --deep-2:    color-mix(in oklab, var(--glacial) 11%, var(--background));
   --chip-dark: var(--secondary);
 
   /* ── bridge: edges ──
@@ -895,8 +904,8 @@ html[data-shell="tauri"] #desk{ display: none; }
 /* ── the calendar sidebar cards ── */
 .scard{ display: flex; flex-direction: column; gap: 7px; padding: 11px 12px;
   border-radius: var(--r-md);
-  background: color-mix(in oklab, var(--foreground) 4%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent); }
+  background: color-mix(in oklab, var(--glacial) 8%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 14%, transparent); }
 .frow{ display: flex; align-items: center; gap: 8px; background: none; border: 0;
   padding: 4px 3px; cursor: pointer; color: var(--t2); font-family: var(--mono);
   font-size: 10.5px; text-align: left; border-radius: var(--r-sm); }
@@ -941,13 +950,16 @@ html[data-shell="tauri"] #desk{ display: none; }
 .aplan > .lbl{ width: 100%; }
 .apitem{ display: inline-flex; align-items: center; gap: 1px; }
 
+/* the mouse trail: an overlay that draws and never intercepts */
+#mousetrail{ position: fixed; inset: 0; pointer-events: none; z-index: 9999; }
+
 /* the peek stats are doors now — say so on hover */
 .peek .st{ border-radius: var(--r-sm); padding: 2px 5px; margin: -2px -1px; }
 .peek .st:hover{ background: color-mix(in oklab, var(--foreground) 9%, transparent); }
 .ccard{ display: flex; flex-direction: column; gap: 7px; padding: 11px 12px;
   border-radius: var(--r-md);
-  background: color-mix(in oklab, var(--foreground) 4%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent); }
+  background: color-mix(in oklab, var(--glacial) 8%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 14%, transparent); }
 .ccard.tent{ background: color-mix(in oklab, var(--iris) 4%, transparent);
   box-shadow: none; border: 1px dashed var(--iris-b); }
 .ccard .ct{ font-size: 13px; color: var(--t1); }
@@ -979,7 +991,7 @@ html[data-shell="tauri"] #desk{ display: none; }
   border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); padding: 14px; }
 .dslot{ display: flex; flex-direction: column; gap: 8px; padding: 11px 12px;
   border-radius: var(--r-md);
-  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+  background: color-mix(in oklab, var(--glacial) 8%, var(--background)); }
 .dslot.tent{ background: color-mix(in oklab, var(--iris) 4%, transparent);
   border: 1px dashed var(--iris-b); }
 .dslot .dsl{ display: flex; flex-direction: column; gap: 2px; }
@@ -1036,7 +1048,7 @@ html[data-shell="tauri"] #desk{ display: none; }
 /* The day page plan. */
 .dtasks{ display: flex; flex-direction: column; gap: 5px; padding: 11px 12px;
   border-radius: var(--r-md);
-  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+  background: color-mix(in oklab, var(--glacial) 8%, var(--background)); }
 .trow{ display: flex; align-items: center; gap: 7px; min-width: 0; }
 .trow .tchip{ flex: 1; min-width: 0; }
 .trow .thard{ font-family: var(--mono); font-size: 9px; color: var(--t4); flex: none; }

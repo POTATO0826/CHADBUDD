@@ -32,6 +32,7 @@ import { aiText, initDeskAi } from "./deskAi.ts";
 import type { Task } from "./tasks.ts";
 import { initTasks, taskCreate, taskDone, taskMove, taskRemove, tasks, tasksOn, urgencyOf } from "./tasks.ts";
 import { initSuggest, resolveSuggestion, runSuggest, suggestions } from "./suggest.ts";
+import { initTrail } from "./trail.ts";
 import { openProposals, proposalReply, proposalWhen } from "./proposals.ts";
 import { digestFor, emotionTone, keyPointsFor, latestEmotion } from "./emotions.ts";
 import type { KeyPoint } from "./emotions.ts";
@@ -4325,6 +4326,7 @@ const live = initLive(
    — the browser demo needs no backend. */
 initTasks(render);
 initSuggest(render);
+initTrail();
 initDeskAi(render);
 
 if (live) {
