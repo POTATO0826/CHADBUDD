@@ -55,7 +55,14 @@ export function untilText(minutes: number): string {
   const m = Math.round(minutes);
   if (m === 0) return "now";
   const a = Math.abs(m);
-  const body = a < 60 ? `${a} min` : a % 60 === 0 ? `${a / 60}h` : `${Math.floor(a / 60)}h ${a % 60}m`;
+  const body =
+    a < 60
+      ? `${a} min`
+      : a < 1440
+        ? a % 60 === 0
+          ? `${a / 60}h`
+          : `${Math.floor(a / 60)}h ${a % 60}m`
+        : `${Math.floor(a / 1440)}d ${Math.floor((a % 1440) / 60)}h`;
   return m > 0 ? `in ${body}` : `${body} ago`;
 }
 

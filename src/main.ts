@@ -738,11 +738,11 @@ function aheadCard(n: NonNullable<ReturnType<typeof nextAhead>>, doneToday: numb
         <span class="grain" aria-hidden="true"></span>
         <span class="glow" aria-hidden="true" style="background:radial-gradient(closest-side, ${tint("var(--m-good)", 18)}, transparent)"></span>
         <span class="flag">next up · ${e(dayWord)}</span>
-        <span class="cd" style="color:var(--i-good)">${n.kind === "event" ? `${e(dayWord)} ${e(hhmmOf(n.when))}` : `${e(dayWord)} · task due`}</span>
+        <span class="cd" style="color:var(--i-good)">${e(untilText((n.when - nowMs()) / 60_000))}</span>
         <span class="btm">
           <span style="display:flex;flex-direction:column;gap:3px;min-width:0">
             <span class="nm">${e(n.who)}</span>
-            <span class="sub">${n.kind === "event" ? `${e(hhmmOf(n.when))} · ${e(n.title)}` : e(n.title)}</span>
+            <span class="sub">${e(dayWord)} ${n.kind === "event" ? `${e(hhmmOf(n.when))} · ` : "· task due · "}${e(n.title)}</span>
           </span>
         </span>
         ${doneToday > 0 ? `<span class="nowline">today is clear — ${doneToday} commitment${doneToday === 1 ? "" : "s"} done</span>` : ""}
@@ -791,9 +791,10 @@ function upNextTile(): string {
   // the next one with a strange countdown attached to it.
   const flag = at === nextUpIndex ? "next up" : s.past ? "earlier today" : "later today";
 
+  const aheadAvail = list.every((x) => x.past) && nextAhead() !== null;
   const arrow = (dir: number, glyph: string, label: string): string => {
     const to = at + dir;
-    const off = to < 0 || to > list.length - 1;
+    const off = to < 0 || (to > list.length - 1 && !aheadAvail);
     return `<button class="ar" data-act="up-step" data-dir="${dir}"${off ? " disabled" : ""}
       aria-label="${e(label)}">${glyph}</button>`;
   };
@@ -801,11 +802,11 @@ function upNextTile(): string {
   return `
     <div class="upnext">
       <button class="face" data-act="open-slot" data-slot="${e(s.id)}"
-        aria-label="${e(flag)}: ${e(s.title)}${s.past ? ` ended ${e(hhmmOf(s.end))}` : `, ${e(untilText(s.inMinutes))}`}. Open its context.">
+        aria-label="${e(flag)}: ${e(s.title)}, ${e(untilText(s.inMinutes))}. Open its context.">
         <span class="grain" aria-hidden="true"></span>
         <span class="glow" aria-hidden="true" style="background:radial-gradient(closest-side, ${tint(markOf(tone), 20)}, transparent)"></span>
         <span class="flag">${e(flag)}</span>
-        <span class="cd" style="color:${inkOf(tone)}">${s.past ? `ended ${e(hhmmOf(s.end))}` : e(untilText(s.inMinutes))}</span>
+        <span class="cd" style="color:${inkOf(tone)}">${e(untilText(s.inMinutes))}</span>
         <span class="btm">
           <span style="display:flex;flex-direction:column;gap:3px;min-width:0">
             <span class="nm">${e(who)}</span>
@@ -4272,7 +4273,9 @@ island.addEventListener("click", (ev) => {
     case "up-step": {
       const dir = Number(hit.dataset.dir ?? 0);
       const at = state.up ?? nextUpIndex;
-      state.up = Math.min(bigSlots.length - 1, Math.max(0, at + dir));
+      const to = at + dir;
+      // Stepping past the end of today hands the tile back to the look-ahead.
+      state.up = to > bigSlots.length - 1 ? null : Math.max(0, to);
       render();
       return;
     }
