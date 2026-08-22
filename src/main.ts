@@ -3096,7 +3096,7 @@ function insightPanel(c: ClientView): string {
 
   return `
     <div class="panel">
-      <div class="pbody sc">
+      <div class="pbody sc" id="asklog">
         <div class="pin">
           <span class="kick" style="color:${inkOf(c.turn.tone)}">${e(c.turn.head)}</span>
           <p class="pq">${e(c.turn.quote)}</p>
@@ -3108,7 +3108,7 @@ function insightPanel(c: ClientView): string {
               : ""
           }
         </div>
-        ${log.length ? `<div class="plog" id="asklog">${log.map((t) => askTurn(t, c)).join("")}</div>` : ""}
+        ${log.length ? `<div class="plog">${log.map((t) => askTurn(t, c)).join("")}</div>` : ""}
       </div>
       <div class="pask">
         <input data-act="draft" type="text" value="${e(state.draft)}" placeholder="Ask about ${e(c.name.split(" ")[0]!)}…" aria-label="Ask the agent about ${e(c.name)}">
@@ -3931,21 +3931,16 @@ function stageRoom(key: ClientKey, stage: Stage): string {
     </div>`;
 }
 
-/**
- * Demo-grade receipts: after a human-approved send, pull the channel up in
- * the OS browser so the message can be seen landing — Telegram Web on the
- * chat, Gmail on the sent thread. Human sends only; nothing automatic
- * opens windows.
+/*
+ * Sending no longer opens anything.
+ *
+ * This used to pull Telegram Web or Gmail up in the OS browser after every
+ * send, as a receipt that the message had landed. It was a demo affordance
+ * and it aged badly: the bridge's echo already puts the sent message back
+ * into this thread a second later, so the receipt was redundant — and it
+ * threw the window out of focus on every single reply, which is the whole
+ * reason to have a composer in here rather than alt-tabbing.
  */
-function showSendExternally(who: ClientKey, via: "tg" | "em"): void {
-  if (via === "tg") {
-    const src = clientMeta(who)?.sourceId ?? "";
-    openExternal(src !== "" ? `https://web.telegram.org/a/#${src}` : "https://web.telegram.org/a/");
-  } else {
-    const em = clientMeta(who)?.email ?? "";
-    openExternal(`https://mail.google.com/mail/u/0/#search/${encodeURIComponent(em !== "" ? `in:sent to:${em}` : "in:sent")}`);
-  }
-}
 
 function openStage(stage: Stage): void {
   state.stage = state.stage === stage ? null : stage;
@@ -4089,8 +4084,22 @@ function openClient(key: ClientKey): void {
   state.cview = "detail";
 }
 
+/**
+ * Whoever is open, or nobody.
+ *
+ * Deliberately not `clientById`, whose fallback returns clients[0] when the
+ * lookup misses. That fallback is right for prose — a stale name inside a
+ * sentence degrades politely — and catastrophic here: it silently pointed the
+ * agent at the first client in the list, so a question typed on one person's
+ * page came back answered about somebody else entirely.
+ */
+function selected(): ClientView | undefined {
+  return findClient(state.sel.toLowerCase());
+}
+
 /** Put a question to the agent and append both halves of the exchange. */
-function ask(c: ClientView, q: string): void {
+function ask(c: ClientView | undefined, q: string): void {
+  if (!c) return;
   const text = q.trim();
   if (!text) return;
   const log = (state.ask[c.key] ??= []);
@@ -4429,7 +4438,6 @@ island.addEventListener("click", (ev) => {
           }
           btn.textContent = "Replying…";
           await queueSend(p.key as ClientKey, proposalReply(p));
-          showSendExternally(p.key as ClientKey, "tg");
         })
         .catch((err: unknown) => {
           btn.disabled = false;
@@ -4691,7 +4699,6 @@ island.addEventListener("click", (ev) => {
             state.replyDraft = "";
             render();
             done("Queued", "the bridge delivers it in about a second", "butter");
-            showSendExternally(who, "tg");
           })
           .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       } else {
@@ -4700,7 +4707,6 @@ island.addEventListener("click", (ev) => {
             state.replyDraft = "";
             render();
             done("Email sent", clientMeta(who)?.email ?? "", "butter");
-            showSendExternally(who, "em");
           })
           .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       }
@@ -4942,7 +4948,6 @@ island.addEventListener("click", (ev) => {
           .then(() => {
             sent();
             finish("Queued", `the bridge delivers it${attachment ? " with the file" : ""} in about a second`, "butter");
-            showSendExternally(who, "tg");
           })
           .catch((err) => finish("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       } else {
@@ -4950,7 +4955,6 @@ island.addEventListener("click", (ev) => {
           .then(() => {
             sent();
             finish("Email sent", clientMeta(who)?.email ?? "", "butter");
-            showSendExternally(who, "em");
           })
           .catch((err) => finish("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       }
@@ -5093,10 +5097,10 @@ island.addEventListener("click", (ev) => {
       render();
       return;
     case "ask":
-      ask(clientById(state.sel.toLowerCase()), state.draft);
+      ask(selected(), state.draft);
       return;
     case "ask-preset":
-      ask(clientById(state.sel.toLowerCase()), hit.dataset.q ?? "");
+      ask(selected(), hit.dataset.q ?? "");
       return;
     /* Answer: open the owned Telegram window on the caller, no dial intent. */
     case "ring-answer": {
