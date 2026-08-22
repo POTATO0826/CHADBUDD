@@ -129,6 +129,14 @@ function Funnel({ onStage }: Props): React.JSX.Element {
 
 let host: HTMLElement | null = null;
 let root: Root | null = null;
+let ver = 0;
+let renderNow: (() => void) | null = null;
+
+/** Redraw with the current funnelStages — called when live stages arrive. */
+export function refreshFunnel(): void {
+  ver++;
+  renderNow?.();
+}
 
 /**
  * The element carrying the chart. Created once, never recreated.
@@ -142,10 +150,13 @@ export function funnelElement(onStage: (stage: Stage) => void): HTMLElement {
   host = document.createElement("div");
   host.className = "cb-funnel-host";
   root = createRoot(host);
-  root.render(
-    <StrictMode>
-      <Funnel onStage={onStage} />
-    </StrictMode>,
-  );
+  renderNow = () => {
+    root?.render(
+      <StrictMode>
+        <Funnel key={ver} onStage={onStage} />
+      </StrictMode>,
+    );
+  };
+  renderNow();
   return host;
 }

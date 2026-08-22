@@ -57,6 +57,27 @@ export default defineSchema({
     .index("by_active", ["active"])
     .index("by_source", ["sourceId"]),
 
+  /**
+   * Each client's lifecycle stage as the model last read it from their own
+   * messages — agreement to a proposal moves them forward, a completed
+   * purchase moves them on, all without a hand touching it. Only confident,
+   * verbatim-cited readings land here; the authored book is the floor.
+   */
+  clientStages: defineTable({
+    clientKey: v.string(),
+    stage: v.union(
+      v.literal("inquiring"),
+      v.literal("proposing"),
+      v.literal("completed"),
+      v.literal("maturing"),
+      v.literal("renewing"),
+    ),
+    why: v.string(),
+    /** externalId of the message that proves the move. Verbatim-gated. */
+    cite: v.string(),
+    ts: v.number(),
+  }).index("by_client", ["clientKey"]),
+
   /** A chat the advisor has explicitly promoted to a tracked client. */
   clients: defineTable({
     /** Citation prefix — "A". Assigned in pick order, stable for life. */

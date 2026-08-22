@@ -36,8 +36,13 @@ export interface BookRow extends BookEntry {
 
 let dropped = 0;
 
-const rows: BookRow[] = book
-  .map((e) => {
+/** Live stage overrides, read from the chats server-side. Key → proof. */
+let liveOver = new Map<ClientKey, { stage: Stage; cite: string }>();
+
+function computeRows(): BookRow[] {
+  dropped = 0;
+  const base = book
+    .map((e) => {
     // Same gate the ledger applies to a promise.
     const cites = e.cites.filter((id) => findVerbatim(id, "") !== null);
     const ms = e.maturesAt ? Date.parse(e.maturesAt) : NaN;
@@ -54,6 +59,28 @@ const rows: BookRow[] = book
     console.warn(`[chadbuddy] ${e.client} dropped from the book — no citation resolved`);
     return false;
   });
+
+  // The chats outrank the authored floor: a proven agreement moves the
+  // stage, and a client the authors never wrote still gets a row.
+  const out = base.map((r) => {
+    const o = liveOver.get(r.client);
+    return o ? { ...r, stage: o.stage, cites: [...r.cites, o.cite] } : r;
+  });
+  for (const [client, o] of liveOver) {
+    if (!out.some((r) => r.client === client)) {
+      out.push({
+        client,
+        stage: o.stage,
+        product: "read from the chats",
+        cites: [o.cite],
+        daysToMaturity: null,
+      });
+    }
+  }
+  return out;
+}
+
+const rows: BookRow[] = computeRows();
 
 export const bookRows: BookRow[] = rows;
 
@@ -83,15 +110,18 @@ export interface StageBucket {
  * "nobody is here" reads as a book with no gaps in it, and the gap is usually
  * the finding — nothing in `renewing` means nothing came back last quarter.
  */
-export const buckets: StageBucket[] = STAGES.map((stage) => {
-  const clients = rows.filter((r) => r.stage === stage).map((r) => r.client);
-  return {
-    stage,
-    count: clients.length,
-    clients,
-    share: rows.length ? clients.length / rows.length : 0,
-  };
-});
+function computeBuckets(): StageBucket[] {
+  return STAGES.map((stage) => {
+    const clients = rows.filter((r) => r.stage === stage).map((r) => r.client);
+    return {
+      stage,
+      count: clients.length,
+      clients,
+      share: rows.length ? clients.length / rows.length : 0,
+    };
+  });
+}
+export const buckets: StageBucket[] = computeBuckets();
 
 export interface FunnelRow {
   stage: Stage;
@@ -120,11 +150,32 @@ export interface FunnelRow {
  * filters to. Reached tells you the shape of the book; here tells you who is
  * standing still in it.
  */
-export const funnelStages: FunnelRow[] = STAGES.map((stage, i) => {
-  const clients = rows.filter((r) => r.stage === stage).map((r) => r.client);
-  const reached = rows.filter((r) => STAGES.indexOf(r.stage) >= i).length;
-  return { stage, reached, here: clients.length, clients };
-});
+function computeFunnel(): FunnelRow[] {
+  return STAGES.map((stage, i) => {
+    const clients = rows.filter((r) => r.stage === stage).map((r) => r.client);
+    const reached = rows.filter((r) => STAGES.indexOf(r.stage) >= i).length;
+    return { stage, reached, here: clients.length, clients };
+  });
+}
+export const funnelStages: FunnelRow[] = computeFunnel();
+
+/**
+ * The live stages arriving. Everything derived from `rows` is rebuilt in
+ * place, so every importer of these arrays sees the new book on its next
+ * render — no call site changes, no stale funnel.
+ */
+export function applyLiveStages(
+  over: Array<{ clientKey: string; stage: string; cite: string }>,
+): void {
+  liveOver = new Map(
+    over
+      .filter((r) => (STAGES as readonly string[]).includes(r.stage))
+      .map((r) => [r.clientKey as ClientKey, { stage: r.stage as Stage, cite: r.cite }]),
+  );
+  rows.splice(0, rows.length, ...computeRows());
+  buckets.splice(0, buckets.length, ...computeBuckets());
+  funnelStages.splice(0, funnelStages.length, ...computeFunnel());
+}
 
 /**
  * Maturities inside the window, soonest first.

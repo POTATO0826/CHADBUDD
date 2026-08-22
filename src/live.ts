@@ -24,6 +24,8 @@ import { anyApi } from "convex/server";
 import type { FunctionReference } from "convex/server";
 
 import { setNow } from "../data/clock.ts";
+import { applyLiveStages } from "./book.ts";
+import { refreshFunnel } from "./funnel.tsx";
 import type { ClientKey, SeedThread } from "../data/types.ts";
 import { initialsOf, rebuild, setDecayTempo } from "./derive.ts";
 import { rebuildAgenda, shiftAgendaToDay } from "./agenda.ts";
@@ -478,6 +480,13 @@ export function initLive(
 
     threads = next;
     ready = true;
+    apply();
+  });
+
+  client.onUpdate(q("stages", "list"), {}, (value) => {
+    const rows = value as Array<{ clientKey: string; stage: string; why: string; cite: string }>;
+    applyLiveStages(rows);
+    refreshFunnel();
     apply();
   });
 

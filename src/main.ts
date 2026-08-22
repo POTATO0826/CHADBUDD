@@ -385,7 +385,34 @@ let shownAt = 0;
  */
 let parked: { notif: Notif; left: number | null } | null = null;
 
+/**
+ * Feedback while the dashboard is open: a toast at the bottom of the plane.
+ * The pill states are for the desk across the room; collapsing an open
+ * dashboard to show "Sent" was the bug, not the feature.
+ */
+function toast(n: Notif): void {
+  let holder = document.getElementById("toasts");
+  if (!holder) {
+    holder = document.createElement("div");
+    holder.id = "toasts";
+    island.append(holder);
+  }
+  const el = document.createElement("div");
+  el.className = `toast${n.tone === "critical" ? " bad" : ""}`;
+  const b = document.createElement("b");
+  b.textContent = n.title;
+  const sp = document.createElement("span");
+  sp.textContent = n.body;
+  el.append(b, sp);
+  holder.append(el);
+  window.setTimeout(() => el.remove(), 5200);
+}
+
 function showNotif(n: Notif): void {
+  if (state.st === "open") {
+    toast(n);
+    return;
+  }
   current = n;
   shownAt = Date.now();
   if (n.kind === "message") {
@@ -3480,11 +3507,12 @@ function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
         `Matures: ${matStr}${days !== undefined ? ` (in ${days} days)` : ""}. Change vs a year ago: ${pct1y}%.` +
         noteFacts,
       ask:
-        "Write the maturity outreach message: name the product, the maturity date and days remaining, one line on how it did, and ask to talk this week about what's next (renew, roll over, or release). Warm, plain, short.",
+        "Write the maturity outreach as a friendly, competent relationship manager: open with the client's first name, name the product, its maturity date and days remaining, the current value with the 12-month change and the change since inception, then propose taking 15 minutes before the date to decide what the money should do next rather than letting it roll by default — and close with a short agenda drawn from the facts and their notes (safety, income, anything specific they hold). 4-6 sentences, warm, concrete, no jargon, no pressure.",
       template:
-        `Hi ${first} — ${h.name} matures on ${matStr}${days !== undefined ? ` (${days} days away)` : ""}. ` +
-        `It stands at ${RM(h.value)} against the ${RM(h.invested)} you put in. ` +
-        `Before it lands, worth a quick word on what the money does next — renew as-is, roll into something matched to your plans, or release it. When suits you this week?`,
+        `Hi ${first}, your ${h.name} matures on ${matStr}${days !== undefined ? ` — ${days} day${days === 1 ? "" : "s"} from now` : ""}. ` +
+        `Current value is ${RM(h.value)}, ${pct1y >= 0 ? "up" : "down"} ${Math.abs(pct1y)}% over 12 months and ${grew ? "+" : "−"}${RM(Math.abs(h.value - h.invested))} since inception. ` +
+        `Worth taking 15 minutes before then to decide what the money should do next, rather than letting it sit by default. ` +
+        `We can cover safety, income, and whether the current mix still fits your plans — when suits you this week?`,
     };
   }
 
@@ -3538,7 +3566,7 @@ function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
       template:
         options.length <= 3
           ? `Hi ${first} — as promised, the choices side by side:\n\n${lines}\n\nIf it were me: ${recName}${outcome ? ` — it fits what you said about ${outcome.horizon === "short" ? "needing the money sooner" : "being able to sit long"}` : ""}. Happy to talk any of them through — no rush.`
-          : `Hi ${first} — before I list everything, two quick questions so I only show you what fits: when do you want this money back in your hands, and what is it for? That narrows it to two or three worth your time.`,
+          : `Hi ${first}, before I put every option in front of you, two quick questions so I only show you what actually fits: when would you want this money back in your hands, and what is it working towards? With those answered I can narrow it to two or three genuinely worth your time — and tell you plainly which one I'd pick in your position, and why.`,
     };
   }
 
@@ -3556,7 +3584,7 @@ function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
       facts: `Client: ${c.name}. Their question: "${q}".` + noteFacts,
       ask:
         "Answer their question briefly from the thread, then ask ONE qualifying question — what the money is for and roughly when they need it back. Never pitch a product yet.",
-      template: `Hi ${first} — good question, and the honest answer depends on one thing I don't know yet: what's this money for, and when would you want it back in your hands? Tell me that and I can point you somewhere specific instead of somewhere general.`,
+      template: `Hi ${first}, good question — and the honest answer depends on two things I don't know yet: what this money is working towards, and when you'd want it back in your hands. A fund that suits a house deposit in two years is the wrong home for retirement money, and vice versa. Tell me those two and I'll point you somewhere specific rather than somewhere general — with the actual numbers side by side.`,
     };
   }
 
@@ -3574,7 +3602,7 @@ function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
       options: null,
       facts: `Client: ${c.name}. Open items: ${c.open.map((o) => o.text).join("; ") || "none"}.` + noteFacts,
       ask: "Write a short, warm nudge to finish the renewal — name what is still outstanding and offer to make it easy (a call, a pre-filled form). Deadline-aware, never pushy.",
-      template: `Hi ${first} — the renewal is nearly done, ${open > 0 ? `just ${open} thing${open === 1 ? "" : "s"} outstanding on the paperwork` : "nothing outstanding on my side"}. Want me to call and walk it through, or shall I send the form pre-filled? Two minutes either way.`,
+      template: `Hi ${first}, the renewal is nearly across the line — ${open > 0 ? `just ${open} item${open === 1 ? "" : "s"} outstanding on the paperwork` : "nothing outstanding on my side"}. I can call and walk it through with you, or send the form pre-filled so it's one signature and done. Either way it's two minutes, and then it's off your desk — which would you prefer?`,
     };
   }
 
@@ -3617,7 +3645,7 @@ function stageRoom(key: ClientKey, stage: Stage): string {
   const draft = ai.status === "ready" && ai.text ? ai.text : kit.template;
   const draftLabel =
     ai.status === "ready"
-      ? "chadbuddy wrote this from the book and their thread — review, then send"
+      ? "drafted by chadbuddy · model, figures table-checked — review, then send"
       : ai.status === "pending"
         ? "chadbuddy is writing from their thread… meanwhile, the honest template"
         : "template — the model is off, every figure is from the book";
