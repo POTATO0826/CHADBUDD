@@ -197,7 +197,7 @@ export function urgencyOf(t: Task): Urgency {
   const days = Math.floor((startOfDayMs(t.dueMs) - startOfDayMs(nowMs())) / DAY);
   if (days < 0) return "over";
   if (days === 0) return "today";
-  if (days <= 2) return "soon";
+  if (days <= 1) return "soon";
   if (days <= 7) return "week";
   return "far";
 }

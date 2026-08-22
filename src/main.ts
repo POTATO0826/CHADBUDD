@@ -990,7 +990,12 @@ const IMP_LEGEND = `
     <span class="sw" style="--fill:${impTint("routine")}"></span>
     <span class="sw" style="--fill:${impTint("important")}"></span>
     <span class="sw" style="--fill:${impTint("key")}"></span>
-    <span class="rt">routine · important · key — shading is importance, not volume · ? = unrated</span>
+    <span class="rt">routine · important · key — meeting importance</span>
+    <span class="lbl" style="margin-left:14px">tasks</span>
+    <span class="sw" style="--fill:color-mix(in oklab, var(--mint) 16%, transparent)"></span>
+    <span class="sw" style="--fill:color-mix(in oklab, var(--gold) 18%, transparent)"></span>
+    <span class="sw" style="--fill:color-mix(in oklab, var(--love) 18%, transparent)"></span>
+    <span class="rt">on track · due within a day · overdue — deeper = more tasks · ? = unrated</span>
   </div>`;
 
 /**
@@ -1057,10 +1062,22 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
             : true,
       );
 
+    const URG_RANK = { over: 4, today: 3, soon: 2, week: 1, far: 0 } as const;
+    const worst = cellTasks.reduce<keyof typeof URG_RANK | null>((acc, t) => {
+      const u = urgencyOf(t);
+      return acc === null || URG_RANK[u] > URG_RANK[acc] ? u : acc;
+    }, null);
+    const taskTint =
+      worst === null
+        ? null
+        : `color-mix(in oklab, ${
+            worst === "over" ? "var(--love)" : worst === "today" || worst === "soon" ? "var(--gold)" : "var(--mint)"
+          } ${Math.min(9 + cellTasks.length * 5, 26)}%, transparent)`;
+
     cells.push(`
       <button class="cell${isToday ? " today" : ""}${state.calDay === at ? " on" : ""}${weekend ? " wk" : ""}"
         data-act="cal-day" data-day="${at}" data-drop-day="${at}"
-        style="--fill:${impTint(imp)}"
+        style="--fill:${taskTint ?? impTint(imp)}"
         aria-current="${isToday ? "date" : "false"}"
         aria-label="${e(new Date(at).toDateString())}, ${n} ${n === 1 ? "entry" : "entries"}, ${cellTasks.length} task${cellTasks.length === 1 ? "" : "s"}">
         <span class="top">
@@ -4398,6 +4415,28 @@ const live = initLive(
 /* Tasks after live is decided: the seam subscribes to Convex when there is
    a client to subscribe to, and falls back to localStorage when there is not
    — the browser demo needs no backend. */
+if (location.port === "4321") {
+  const beacon = (msg: string): void => {
+    try {
+      void fetch("/__diag?m=" + encodeURIComponent(msg)).catch(() => undefined);
+    } catch {
+      /* diagnostics must never take the page down */
+    }
+  };
+  window.addEventListener("error", (ev) => beacon(`pageerr: ${ev.message} @${ev.filename ?? ""}:${ev.lineno ?? 0}`));
+  window.addEventListener("unhandledrejection", (ev) => beacon(`pagerej: ${String(ev.reason).slice(0, 160)}`));
+  document.addEventListener(
+    "click",
+    (ev) => {
+      const t = ev.target as HTMLElement;
+      const hit = t.closest?.("[data-act]") as HTMLElement | null;
+      beacon(`click ${t.tagName.toLowerCase()}.${String(t.className).split(" ")[0] ?? ""} → ${hit?.dataset["act"] ?? "NO-ACT"}`);
+    },
+    true,
+  );
+  document.addEventListener("dragstart", () => beacon("dragstart fired"), true);
+}
+
 initTasks(render);
 initSuggest(render);
 initTrail();

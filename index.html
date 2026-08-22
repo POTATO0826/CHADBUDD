@@ -156,6 +156,8 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
      hue, same quietness — so a box reads as a box without needing a border.
      Surface tint only, never an ink. */
   --glacial:   #a8c8dc;
+  --mint:      #a9d9b6;   /* task on track — green means nothing else here */
+  --mint-hi:   #d6eedd;
   --tile:      color-mix(in oklab, var(--glacial) 11%, color-mix(in oklab, var(--card) 72%, transparent));
   --tile-2:    color-mix(in oklab, var(--glacial) 12%, color-mix(in oklab, var(--card) 80%, transparent));
   /* wells — a step *down* from the plane, which on the light ramp means ink */
@@ -819,7 +821,7 @@ html[data-shell="tauri"] #desk{ display: none; }
 .calwrap.withrail .calmain{ flex: 1 1 auto; }
 
 /* ── the week: Mon–Sun in a line, hours down the side ── */
-.wgrid{ display: grid; grid-template-columns: 30px repeat(7, 1fr); gap: 3px;
+.wgrid{ display: grid; grid-template-columns: 30px repeat(7, minmax(0, 1fr)); gap: 3px;
   flex: 1; min-height: 0; }
 .wrail{ position: relative; }
 .whr{ position: absolute; right: 4px; transform: translateY(-50%);
@@ -829,7 +831,8 @@ html[data-shell="tauri"] #desk{ display: none; }
    the same offset to line up with the tracks beside it. */
 .wrail{ margin-top: 34px; }
 
-.wcol{ display: flex; flex-direction: column; min-height: 0; }
+.wcol{ display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.wtasks .tchip{ max-width: 100%; }
 .whead{ display: flex; align-items: baseline; justify-content: center; gap: 5px;
   height: 28px; margin-bottom: 6px; border-radius: var(--r-sm);
   transition: background .16s var(--ease); }
@@ -1017,8 +1020,11 @@ html[data-shell="tauri"] #desk{ display: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tchip .tlate{ font-family: var(--mono); font-size: 10px; color: var(--alarm-hi); flex: none; }
 
-.tchip.urg-week{ background: var(--deep); }
-.tchip.urg-soon{ background: var(--deep-2); }
+.tchip.urg-week, .tchip.urg-far{ background: color-mix(in oklab, var(--mint) 16%, var(--background)); }
+.tchip.urg-week .tt, .tchip.urg-far .tt,
+.tchip.urg-week .tk, .tchip.urg-far .tk{ color: var(--mint-hi); }
+.tchip.urg-soon{ background: color-mix(in oklab, var(--gold) 20%, var(--background)); }
+.tchip.urg-soon .tt, .tchip.urg-soon .tk{ color: var(--gold-hi); }
 .tchip.urg-today{ background: var(--gold); box-shadow: none; }
 .tchip.urg-today .tt, .tchip.urg-today .tk{ color: var(--background); }
 .tchip.urg-today .tk:hover{ background: color-mix(in oklab, var(--background) 18%, transparent); color: var(--background); }

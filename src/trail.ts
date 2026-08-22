@@ -48,9 +48,21 @@ export function initTrail(): void {
 
   const pts: Pt[] = [];
   let running = false;
+  let lastFrameAt = 0;
+
+  const wipe = (): void => {
+    pts.length = 0;
+    running = false;
+    ctx?.clearRect(0, 0, canvas.width, canvas.height);
+  };
+  // A suspended rAF (window occluded, webview throttled) would otherwise
+  // leave the last stroke painted forever and the flag stuck.
+  window.addEventListener("blur", wipe);
+  document.addEventListener("visibilitychange", wipe);
 
   function frame(now: number): void {
     if (!ctx) return;
+    lastFrameAt = now;
     while (pts.length > 0 && now - pts[0]!.t > LIFE_MS) pts.shift();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -84,7 +96,9 @@ export function initTrail(): void {
   window.addEventListener("pointermove", (ev) => {
     pts.push({ x: ev.clientX, y: ev.clientY, t: performance.now() });
     if (pts.length > MAX_POINTS) pts.shift();
-    if (!running) {
+    // Watchdog restart: if the loop stalled with the flag still up, a
+    // fresh movement revives it rather than trusting stale state.
+    if (!running || performance.now() - lastFrameAt > 300) {
       running = true;
       requestAnimationFrame(frame);
     }
