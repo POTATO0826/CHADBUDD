@@ -270,38 +270,50 @@ pub fn run() {
                         let _ = w.eval("try{fetch('http://localhost:4321/__diag?m=boot-ok',{mode:'no-cors'})}catch(e){}");
                         return;
                     }
+                    /* ONE dial per click, mechanically. The first version
+                       re-pressed whatever it matched every 300ms, and left
+                       the cbcall marker in the URL — so a call that ended
+                       inside the retry window was redialled, and any SPA
+                       reload redialled with nobody clicking anything. Two
+                       fixes: the marker is consumed (stripped from the URL)
+                       the moment the script arms, and the hunt is a stage
+                       machine where every stage fires exactly once and the
+                       confirm press ends the loop outright. */
                     let _ = w.eval(concat!(
                         "(function(){",
                         "var diag=function(m){try{fetch('http://localhost:4321/__diag?m='+encodeURIComponent('call: '+String(m).slice(0,380)),{mode:'no-cors'}).catch(function(){});}catch(e){}};",
+                        "if(window.__cbCalled){diag('already-armed-this-load');return;}window.__cbCalled=1;",
+                        "try{history.replaceState(null,'',location.pathname+location.hash);}catch(e){}",
                         "var press=function(el){['mousedown','mouseup','click'].forEach(function(k){",
                         "el.dispatchEvent(new MouseEvent(k,{bubbles:true,cancelable:true,view:window}));});};",
                         "if(document.querySelector('#auth-phone-number-form,#auth-qr-form')){diag('auth-screen');return;}",
                         "diag('armed '+location.hash);",
-                        "var tries=0,stage='start';",
+                        "var tries=0,dialed=false,menued=false,confirmTicks=0;",
                         "var t=setInterval(function(){tries++;",
-                        /* A modal confirm anywhere with a bare "Call" label wins outright. */
+                        /* After the dial press, the only remaining job is one
+                           confirm-modal press if Telegram asks — then out. */
+                        "if(dialed){confirmTicks++;",
                         "var m=Array.prototype.find.call(document.querySelectorAll('.Modal button'),",
                         "function(b){return /^\\s*call\\s*$/i.test(b.textContent);});",
                         "if(m){press(m);diag('confirm-pressed');clearInterval(t);return;}",
-                        /* An open menu with a "Call" item is one press from ringing. */
+                        "if(confirmTicks>10){diag('done-no-confirm-needed');clearInterval(t);}",
+                        "return;}",
+                        /* The dial itself: menu item or phone icon, once. */
                         "var item=Array.prototype.find.call(document.querySelectorAll('.MenuItem,[role=menuitem]'),",
                         "function(b){return /^\\s*call\\s*$/i.test(b.textContent||'');});",
-                        "if(item){press(item);stage='item';diag('menu-item-pressed');return;}",
-                        /* Desktop layout: the phone icon in the chat header. */
+                        "if(item){press(item);dialed=true;diag('menu-item-pressed');return;}",
                         "var ph=document.querySelector('.icon-phone');var pb=ph&&ph.closest('button');",
-                        "if(pb){press(pb);stage='phone';diag('phone-pressed');return;}",
-                        /* Mobile layout: the chat header's own more-menu. */
-                        "if(stage==='start'){",
+                        "if(pb){press(pb);dialed=true;diag('phone-pressed');return;}",
+                        /* Mobile layout: open the chat header's menu, once. */
+                        "if(!menued){",
                         "var col=document.getElementById('MiddleColumn')||document.querySelector('.MiddleHeader');",
                         "var mi=col&&col.querySelector('.icon-more');var mb=mi&&mi.closest('button');",
-                        "if(mb){press(mb);stage='menu';diag('menu-opened');return;}",
-                        /* Nothing recognised: dump what the column actually holds so the
-                           next build aims at reality instead of memory. */
+                        "if(mb){press(mb);menued=true;diag('menu-opened');return;}",
                         "if(tries===10||tries===25){",
                         "var btns=Array.prototype.slice.call((col||document).querySelectorAll('button'),0,12)",
                         ".map(function(b){return (b.className||'').slice(0,36);});",
                         "diag('probe t'+tries+' col='+!!col+' btns='+btns.join(' ; '));}}",
-                        "if(tries>45){clearInterval(t);diag('gave-up stage='+stage);}",
+                        "if(tries>45){clearInterval(t);diag('gave-up dialed='+dialed+' menued='+menued);}",
                         "},300);})();",
                     ));
                 })
