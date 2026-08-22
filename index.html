@@ -2109,8 +2109,13 @@ html[data-shell="tauri"] #desk{ display: none; }
 .cpage .qbox{ border-radius: var(--rc-1); background: color-mix(in oklab, var(--foreground) 5%, transparent); box-shadow: none; }
 .cpage .thread.sm .msgs{ padding: 16px 0; gap: 12px; }
 .cpage .thread.sm .bub{ border-radius: var(--rc-1); padding: 8px 12px; gap: 4px; max-width: 84%; }
-.cpage .msg[data-who="advisor"] .bub{ background: color-mix(in oklab, var(--foreground) 6%, transparent); box-shadow: none; }
-.cpage .msg[data-who="client"] .bub{ background: none; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 14%, transparent); }
+/* Mine: a fill and no border. Theirs: a border and no fill. The fill was 6%
+   of the foreground, which on this ground is very nearly nothing — your own
+   half of the conversation was on screen and invisible, so the thread read as
+   the client talking to themselves. It carries the accent at a weight you can
+   actually see now; the rule it obeys is unchanged. */
+.cpage .msg[data-who="advisor"] .bub{ background: color-mix(in oklab, var(--primary) 15%, transparent); box-shadow: none; }
+.cpage .msg[data-who="client"] .bub{ background: none; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 20%, transparent); }
 /* one muted mono line per bubble: time, id, and — on exactly one message in
    the thread — the annotation that costs money to ignore */
 .cpage .thread.sm .bub .meta{ gap: 8px; }
