@@ -680,28 +680,30 @@ const byIntent = (want: Idea["intent"]): number =>
 /* Computed per render inside overviewPage — as module constants they froze
    the seed before live ideas arrived, and the pills lied all day. */
 
-/* The advisor's live ticks on the authored approval queue, persisted so a
-   demo approval survives a refresh. The authored done flags stay the floor. */
-const APPROVED_STORE = "cb-approved-v1";
-const approvedLive = new Set<string>(
-  ((): string[] => {
+/* The advisor's live verdicts on the authored approval queue, persisted so
+   they survive a refresh. Two-way: the override OUTRANKS the authored done
+   flag, so un-ticking Priya's pre-approved row genuinely un-strikes it. */
+const APPROVED_STORE = "cb-approved-v2";
+const approvedOverride = new Map<string, boolean>(
+  ((): Array<[string, boolean]> => {
     try {
-      return JSON.parse(localStorage.getItem(APPROVED_STORE) ?? "[]") as string[];
+      return Object.entries(JSON.parse(localStorage.getItem(APPROVED_STORE) ?? "{}") as Record<string, boolean>);
     } catch {
       return [];
     }
   })(),
 );
 function apDone(a: (typeof approvals)[number]): boolean {
-  return a.done || approvedLive.has(a.title);
+  return approvedOverride.get(a.title) ?? a.done;
 }
 function toggleApproval(title: string): void {
-  if (approvedLive.has(title)) approvedLive.delete(title);
-  else approvedLive.add(title);
+  const row = approvals.find((a) => a.title === title);
+  const cur = approvedOverride.get(title) ?? row?.done ?? false;
+  approvedOverride.set(title, !cur);
   try {
-    localStorage.setItem(APPROVED_STORE, JSON.stringify([...approvedLive]));
+    localStorage.setItem(APPROVED_STORE, JSON.stringify(Object.fromEntries(approvedOverride)));
   } catch {
-    /* private mode: ticks last the session */
+    /* private mode: verdicts last the session */
   }
 }
 function pendingApprovals(): Array<(typeof approvals)[number]> {
