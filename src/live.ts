@@ -30,6 +30,8 @@ import { rebuildAgenda, shiftAgendaToDay } from "./agenda.ts";
 import { setIdeas } from "./copy.ts";
 import { setEmotions } from "./emotions.ts";
 import type { Digest, EmotionSpan, KeyPoint } from "./emotions.ts";
+import { setProposals } from "./proposals.ts";
+import type { Proposal } from "./proposals.ts";
 import { isTauri } from "./shell.ts";
 import type { Idea } from "./copy.ts";
 
@@ -95,6 +97,8 @@ const q = (m: string, n: string): FunctionReference<"query"> =>
   lookup[m]?.[n] as FunctionReference<"query">;
 const mut = (m: string, n: string): FunctionReference<"mutation"> =>
   lookup[m]?.[n] as FunctionReference<"mutation">;
+const act = (m: string, n: string): FunctionReference<"action"> =>
+  lookup[m]?.[n] as FunctionReference<"action">;
 
 /**
  * Held so a mutation can be issued outside the subscription callbacks.
@@ -110,6 +114,22 @@ let convex: ConvexClient | undefined;
  * bridge picks up, which keeps the one irreversible step in the one process
  * that holds the socket — and leaves a record of what was approved.
  */
+/**
+ * Answer a proposal. Accepting books the slot server-side (Google when it is
+ * connected, the local mirror when not) — the reply to the client is a
+ * separate queueSend the caller makes, so the one irreversible act stays in
+ * the same approval path every outgoing message takes.
+ */
+export async function acceptProposal(id: string): Promise<{ booked: boolean; reason?: string }> {
+  if (!convex) throw new Error("Not connected to the backend — proposals need live mode.");
+  return (await convex.action(act("scheduling", "accept"), { id })) as { booked: boolean; reason?: string };
+}
+
+export async function declineProposal(id: string): Promise<void> {
+  if (!convex) throw new Error("Not connected to the backend — proposals need live mode.");
+  await convex.mutation(mut("scheduling", "decline"), { id });
+}
+
 export async function queueSend(key: ClientKey, text: string, ideaRank?: string): Promise<string> {
   if (!convex) throw new Error("Not connected to the backend — sending needs live mode.");
   const res = (await convex.mutation(mut("outbox", "queueSend"), {
@@ -324,6 +344,11 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
       if (row.digest) digests[row.key] = row.digest;
     }
     setEmotions(next, points, digests);
+    apply();
+  });
+
+  client.onUpdate(q("scheduling", "proposals"), {}, (value) => {
+    setProposals(value as Proposal[]);
     apply();
   });
 

@@ -72,6 +72,7 @@ client.onUpdate(api.threads.list, {}, (threads) => { rebuild(threads); render();
 | `threads.ideas` | agent recommendations shaped like `Idea` (`src/copy.ts:33`); every `cites` entry already passed the gate |
 | `threads.rejections` | how often the agent fabricated a citation, by reason |
 | `emotions.forAll` | grounded emotion spans per client — label, intensity, and the verbatim quote each was read from |
+| `scheduling.proposals` | times clients have offered, awaiting the advisor — with the clash if the slot is taken |
 | `chats.recent` | picker rows — `isBot`, `isGroup`, `spanDays`, `scorable`, `reason` |
 | `chats.pairing` | connection state; `qr` is a PNG data URL when the QR path is used |
 | `chats.tracked` | promoted clients with message counts |

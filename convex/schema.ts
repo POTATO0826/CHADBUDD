@@ -170,6 +170,34 @@ export default defineSchema({
   }).index("by_client", ["clientId"]),
 
   /**
+   * A time a client offered, waiting for the advisor to answer.
+   *
+   * The deliberate opposite of the agree path. "Thursday 4pm works" becomes a
+   * tentative block immediately, because it is agreement and a wrong block is
+   * one tap to undo. "Is it possible to meet at 6pm" is a question — nothing
+   * was agreed, so nothing touches the calendar until the advisor accepts,
+   * and accepting is also how the client gets their answer. Same cite rule as
+   * events: one sentence proposes once, forever.
+   */
+  proposals: defineTable({
+    clientId: v.id("clients"),
+    /** externalId of the message that asked. The citation, and the dedupe key. */
+    cite: v.string(),
+    /** The sentence, verbatim, so the card shows what was actually asked. */
+    text: v.string(),
+    /** The instant asked for, resolved in Asia/Kuala_Lumpur. */
+    at: v.number(),
+    minutes: v.number(),
+    status: v.union(v.literal("open"), v.literal("accepted"), v.literal("declined")),
+    /** The asking message's own timestamp. */
+    ts: v.number(),
+    decidedAt: v.optional(v.number()),
+  })
+    .index("by_cite", ["cite"])
+    .index("by_status", ["status"])
+    .index("by_client", ["clientId"]),
+
+  /**
    * Agent output that did NOT survive the gate. Kept, not discarded.
    *
    * Note `reason`: the gate can only prove a quote exists, not that the quote

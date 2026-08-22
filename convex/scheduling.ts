@@ -29,7 +29,7 @@
  */
 
 import { v } from "convex/values";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { action, internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { dayOf, readSchedule, whenOf } from "../shared/scheduletalk";
@@ -40,15 +40,20 @@ const DEFAULT_MINUTES = 45;
 /** How far ahead to look for the meeting a "can we move it" refers to. */
 const LOOKAHEAD_MS = 45 * 86_400_000;
 
-/** Has this sentence already been acted on? */
+/** Has this sentence already been acted on — as a booking or as a proposal? */
 export const actedOn = internalQuery({
   args: { cite: v.string() },
   handler: async (ctx, { cite }) => {
-    const hit = await ctx.db
+    const booked = await ctx.db
       .query("events")
       .withIndex("by_cite", (q) => q.eq("inferredCite", cite))
       .first();
-    return hit !== null;
+    if (booked) return true;
+    const proposed = await ctx.db
+      .query("proposals")
+      .withIndex("by_cite", (q) => q.eq("cite", cite))
+      .first();
+    return proposed !== null;
   },
 });
 
@@ -124,6 +129,8 @@ export const consider = internalAction({
     cite: v.string(),
     text: v.string(),
     ts: v.number(),
+    /** Optional so in-flight invocations from before this arg survive a deploy. */
+    sender: v.optional(v.string()),
   },
   handler: async (ctx: ActionCtx, a): Promise<void> => {
     const reading = readSchedule(a.text, a.ts);
@@ -137,6 +144,35 @@ export const consider = internalAction({
     if (!client) return;
 
     const now = Date.now();
+
+    /**
+     * A client offering a time. Nothing was agreed, so nothing touches the
+     * calendar — a proposal row appears on the calls page and waits for the
+     * advisor. Client side only: the advisor offering 6pm is a question the
+     * CLIENT answers, and their "6pm works" reply comes back through the
+     * agree path above like any other assent.
+     */
+    const propose = async (): Promise<void> => {
+      if (a.sender !== "client") return;
+      // "6pm?" with no day named, asked at 7pm, means tomorrow — resolve
+      // against the message's own day first, then bump past times forward.
+      let at = whenOf(reading, dayOf(a.ts));
+      if (at === null) return;
+      if (at <= a.ts) at += 86_400_000;
+      if (at <= now) return; // resolved into the past — history scrolling by
+      await ctx.runMutation(internal.scheduling.recordProposal, {
+        clientId: a.clientId,
+        cite: a.cite,
+        text: reading.phrase,
+        at,
+        ts: a.ts,
+      });
+    };
+
+    if (reading.intent === "propose") {
+      await propose();
+      return;
+    }
 
     if (reading.intent === "agree") {
       const at = whenOf(reading);
@@ -161,9 +197,15 @@ export const consider = internalAction({
       name: client.name,
       afterMs: now,
     });
-    // Nothing on the diary to move or cancel. Booking something new off a
-    // "can we push it" would invent the meeting it claims to be rescheduling.
-    if (!target) return;
+    /* Nothing on the diary to move or cancel. Booking something new off a
+       "can we push it" would invent the meeting it claims to be rescheduling —
+       but "can we do 6pm?" with nothing to move is not a reschedule at all,
+       it is an offered time that used to die right here. It becomes a
+       proposal: the advisor answers it, the calendar does not. */
+    if (!target) {
+      if (reading.intent === "move") await propose();
+      return;
+    }
 
     if (reading.intent === "cancel") {
       await ctx.runMutation(internal.scheduling.flagCancel, { eventId: target._id, cite: a.cite });
@@ -188,5 +230,187 @@ export const consider = internalAction({
         booking: "tentative",
       });
     }
+  },
+});
+
+/* ── proposals: the confirm-first path ───────────────────────────────── */
+
+export const recordProposal = internalMutation({
+  args: {
+    clientId: v.id("clients"),
+    cite: v.string(),
+    text: v.string(),
+    at: v.number(),
+    ts: v.number(),
+  },
+  handler: async (ctx, a) => {
+    /* Max asked for 6pm three times in a row. Three cites, one question —
+       so one open card per client per instant, and the first sentence to ask
+       keeps the citation. actedOn() already stops the same cite twice. */
+    const open = await ctx.db
+      .query("proposals")
+      .withIndex("by_client", (q) => q.eq("clientId", a.clientId))
+      .collect();
+    if (open.some((p) => p.status === "open" && p.at === a.at)) return;
+
+    await ctx.db.insert("proposals", {
+      clientId: a.clientId,
+      cite: a.cite,
+      text: a.text,
+      at: a.at,
+      minutes: DEFAULT_MINUTES,
+      status: "open",
+      ts: a.ts,
+    });
+  },
+});
+
+/**
+ * Open proposals, with the one thing the advisor needs before saying yes:
+ * whether the slot collides with something already on the diary.
+ */
+export const proposals = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("proposals")
+      .withIndex("by_status", (q) => q.eq("status", "open"))
+      .collect();
+
+    return await Promise.all(
+      rows.map(async (p) => {
+        const client = await ctx.db.get(p.clientId);
+        const clash = (
+          await ctx.db
+            .query("events")
+            .withIndex("by_start", (q) => q.gte("startsAt", p.at - 4 * 3_600_000).lt("startsAt", p.at + p.minutes * 60_000))
+            .collect()
+        ).find((e) => e.booking !== "cancelled" && e.startsAt + e.minutes * 60_000 > p.at);
+
+        return {
+          id: p._id,
+          key: client?.key ?? "",
+          name: client?.name ?? "",
+          cite: p.cite,
+          text: p.text,
+          at: p.at,
+          minutes: p.minutes,
+          conflict: clash ? clash.title : null,
+        };
+      }),
+    );
+  },
+});
+
+export const decline = mutation({
+  args: { id: v.id("proposals") },
+  handler: async (ctx, { id }) => {
+    const p = await ctx.db.get(id);
+    if (!p || p.status !== "open") return;
+    await ctx.db.patch(id, { status: "declined", decidedAt: Date.now() });
+  },
+});
+
+/** For accept: everything it needs in one read. */
+export const proposalById = internalQuery({
+  args: { id: v.id("proposals") },
+  handler: async (ctx, { id }) => {
+    const p = await ctx.db.get(id);
+    if (!p) return null;
+    const client = await ctx.db.get(p.clientId);
+    return client ? { ...p, clientKey: client.key, clientName: client.name } : null;
+  },
+});
+
+/** The mirror row, when there is no Google to write to. */
+export const bookLocal = internalMutation({
+  args: {
+    title: v.string(),
+    startsAt: v.number(),
+    minutes: v.number(),
+    clientKey: v.string(),
+    cite: v.string(),
+  },
+  handler: async (ctx, a) => {
+    await ctx.db.insert("events", {
+      calendarId: "local",
+      title: a.title,
+      startsAt: a.startsAt,
+      minutes: a.minutes,
+      kind: "meeting",
+      where: "",
+      booking: "confirmed",
+      clientKey: a.clientKey,
+      inferredSource: "telegram",
+      inferredCite: a.cite,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Remove a locally-booked block. Local rows have no Google id, so nothing in
+ * calendar.ts can touch them once made — this is their one exit, kept
+ * internal so removing a booking stays an operator's deliberate act.
+ */
+export const discardLocal = internalMutation({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, { eventId }) => {
+    const e = await ctx.db.get(eventId);
+    if (e && e.calendarId === "local") await ctx.db.delete(eventId);
+  },
+});
+
+export const markDecided = internalMutation({
+  args: { id: v.id("proposals"), status: v.union(v.literal("accepted"), v.literal("declined")) },
+  handler: async (ctx, { id, status }) => {
+    await ctx.db.patch(id, { status, decidedAt: Date.now() });
+  },
+});
+
+/**
+ * The advisor said yes. THIS is where the calendar is first touched — booked
+ * as confirmed, not tentative, because a person just confirmed it. Google
+ * when it is connected, the local mirror when it is not; either way the row
+ * carries the asking message's cite, so the block can always say why it
+ * exists. The reply to the client is the page's job — it goes through the
+ * same outbox approval every outgoing message goes through.
+ */
+export const accept = action({
+  args: { id: v.id("proposals") },
+  handler: async (ctx: ActionCtx, { id }): Promise<{ booked: boolean; reason?: string }> => {
+    const p = await ctx.runQuery(internal.scheduling.proposalById, { id });
+    if (!p) return { booked: false, reason: "no such proposal" };
+    if (p.status !== "open") return { booked: false, reason: `already ${p.status}` };
+    if (p.at <= Date.now()) {
+      await ctx.runMutation(internal.scheduling.markDecided, { id, status: "declined" });
+      return { booked: false, reason: "that time has passed" };
+    }
+
+    const title = `${p.clientName.split(" ")[0] ?? p.clientName} — asked in chat`;
+
+    const connected = (await ctx.runQuery(api.calendar.connected, {})) as { connected: boolean };
+    if (connected.connected) {
+      await ctx.runAction(api.calendar.createEvent, {
+        title,
+        startsAt: p.at,
+        minutes: p.minutes,
+        kind: "meeting",
+        clientKey: p.clientKey,
+        tentative: false,
+        inferredCite: p.cite,
+      });
+    } else {
+      await ctx.runMutation(internal.scheduling.bookLocal, {
+        title,
+        startsAt: p.at,
+        minutes: p.minutes,
+        clientKey: p.clientKey,
+        cite: p.cite,
+      });
+    }
+
+    await ctx.runMutation(internal.scheduling.markDecided, { id, status: "accepted" });
+    return { booked: true };
   },
 });

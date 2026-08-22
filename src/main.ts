@@ -27,7 +27,8 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
-import { initLive, queueSend } from "./live.ts";
+import { acceptProposal, declineProposal, initLive, queueSend } from "./live.ts";
+import { openProposals, proposalReply, proposalWhen } from "./proposals.ts";
 import { digestFor, emotionTone, keyPointsFor, latestEmotion } from "./emotions.ts";
 import type { KeyPoint } from "./emotions.ts";
 import { connectCalendar } from "./convexCalendar.ts";
@@ -441,7 +442,10 @@ const BRAND_MARK = `
 function header(): string {
   const nav = NAV.map((n) => {
     const on = n.page === state.page;
-    const badge = n.count > 0 ? `<span class="badge">${n.count}</span>` : "";
+    // NAV is built once at load; proposals arrive by subscription afterwards,
+    // so the calls badge has to pick them up at render time or sit at zero.
+    const count = n.page === "calls" ? n.count + openProposals().length : n.count;
+    const badge = count > 0 ? `<span class="badge">${count}</span>` : "";
     return `<button data-act="page" data-page="${n.page}"${on ? ' aria-current="page"' : ""}>
               <span>${e(n.label)}</span>${badge}
             </button>`;
@@ -1977,6 +1981,54 @@ function queueRow(r: QueueRow): string {
     </div>`;
 }
 
+/**
+ * A client offered a time; these cards are the advisor answering.
+ *
+ * Rendered in the same .lrow language as the queue under them, on the calls
+ * page because that is where "who needs a decision from me about talking to
+ * them" already lives. Nothing here has touched the calendar: the whole
+ * point of the proposal path is that accepting IS the first write. The card
+ * shows the sentence verbatim with its cite, the exact reply that will go
+ * out, and the clash if the slot is already taken — the three things a yes
+ * needs to be an informed one.
+ */
+function proposalCards(): string {
+  const open = openProposals();
+  if (open.length === 0) return "";
+
+  return open
+    .map((p) => {
+      const initials = p.name.split(" ").map((w) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
+      return `
+    <div class="lrow" style="box-shadow:inset 2px 0 0 var(--butter)">
+      <span class="sq" style="background:${tint("var(--butter)", 16)};color:var(--butter)">${e(initials)}</span>
+      <span class="who">
+        <span class="n">${e(p.name)}</span>
+        <span class="w">${e(proposalWhen(p))}</span>
+      </span>
+      <span class="kindcol">
+        <span class="kind" style="color:var(--butter);background:transparent;border:1px dashed ${tint("var(--butter)", 50)}">asked in chat</span>
+      </span>
+      <span class="bodycol">
+        <span class="tx" style="color:var(--t1)">“${e(p.text)}”</span>
+        <span class="cites">${citeChips([p.cite], p.key as ClientKey)}<span class="why">${
+          p.conflict
+            ? `clashes with “${e(p.conflict)}”`
+            : `reply on accept: “${e(proposalReply(p))}”`
+        }</span></span>
+      </span>
+      <span class="actcol">
+        <span class="st" style="color:${p.conflict ? "var(--i-warn)" : "var(--t3)"}">${p.conflict ? "slot taken" : "awaiting you"}</span>
+        <span class="acts">
+          <button class="btn acc" data-act="proposal-book" data-pid="${e(p.id)}">Book &amp; reply</button>
+          <button class="btn ghost" data-act="proposal-decline" data-pid="${e(p.id)}">Decline</button>
+        </span>
+      </span>
+    </div>`;
+    })
+    .join("");
+}
+
 function queuePage(kind: QueueKind): string {
   const q = queues[kind];
   return `
@@ -1986,6 +2038,7 @@ function queuePage(kind: QueueKind): string {
         <span class="mt">${e(q.meta)}</span>
       </div>
       <div class="qlist sc">
+        ${kind === "calls" ? proposalCards() : ""}
         ${q.rows.map(queueRow).join("")}
         <p class="qfoot">${e(q.foot)}</p>
       </div>
@@ -2358,6 +2411,44 @@ island.addEventListener("click", (ev) => {
       if (state.page === "clients") state.cview = "grid";
       setState("open");
       return;
+    /* Answering a proposal. Book first, reply second, in that order on
+       purpose: a booked slot with the reply still unsent is a card the
+       advisor can see and finish; a sent "6pm works" with the booking failed
+       is a promise the diary doesn't hold. The card leaves the page by
+       subscription when the status flips, not by anything here. */
+    case "proposal-book": {
+      const pid = hit.dataset.pid;
+      const p = openProposals().find((x) => x.id === pid);
+      if (!p) return;
+      const btn = hit as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = "Booking…";
+      void acceptProposal(p.id)
+        .then(async (res) => {
+          if (!res.booked) {
+            btn.textContent = res.reason ?? "not booked";
+            return;
+          }
+          btn.textContent = "Replying…";
+          await queueSend(p.key as ClientKey, proposalReply(p));
+        })
+        .catch((err: unknown) => {
+          btn.disabled = false;
+          btn.textContent = "Book & reply";
+          console.error("[chadbuddy] proposal failed", err);
+        });
+      return;
+    }
+    case "proposal-decline": {
+      const pid = hit.dataset.pid;
+      if (!pid) return;
+      (hit as HTMLButtonElement).disabled = true;
+      void declineProposal(pid).catch((err: unknown) => {
+        (hit as HTMLButtonElement).disabled = false;
+        console.error("[chadbuddy] decline failed", err);
+      });
+      return;
+    }
     /* Every route into a client — a card, an overview tile, a queue row, a
        notification, a citation — lands on the same detail screen. There is no
        longer a profile/record split to choose between. */

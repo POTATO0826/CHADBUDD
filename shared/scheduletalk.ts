@@ -25,7 +25,7 @@
 /** Asia/Kuala_Lumpur. Fixed all year — Malaysia has no daylight saving. */
 export const OFFSET_MIN = 8 * 60;
 
-export type Intent = "agree" | "move" | "cancel";
+export type Intent = "agree" | "move" | "cancel" | "propose";
 
 export interface Reading {
   intent: Intent;
@@ -55,6 +55,22 @@ const MOVE = [
 ];
 
 const CANCEL = ["cancel", "call it off", "can't make", "cant make", "cannot make", "won't make", "wont make"];
+
+/**
+ * An offer of a time, not agreement to one. "Is it possible to meet at 6pm"
+ * books nothing — someone asked a question, and the calendar answering it
+ * would put words in the advisor's mouth. It becomes a proposal: a card the
+ * advisor accepts or declines, which is the confirmation step everything
+ * here refuses to skip.
+ */
+const PROPOSE = [
+  "is it possible", "how about", "what about", "are you free", "you free",
+  "u free", "available", "shall we", "can we meet", "could we meet",
+  "can i come", "meet up", "meet at", "call at", "call you at", "call u at",
+];
+
+/** Words that make a bare "…at 6pm?" question clearly about meeting. */
+const MEETING_WORDS = /\b(meet|meeting|call|session|appointment|zoom|come by|drop by)\b/;
 
 /** Wall-clock parts of an instant, in the fixed offset. */
 function partsOf(ms: number): { y: number; m: number; d: number; dow: number } {
@@ -163,6 +179,16 @@ export function readSchedule(text: string, fromMs: number): Reading | null {
 
   if (ASSENT.some((w) => s.includes(w)) && minutesOfDay !== null && day !== null) {
     return { intent: "agree", minutesOfDay, day, phrase };
+  }
+
+  /* Last, so assent and moves win when a sentence carries both. Needs a real
+     clock time, same bar as everything else; "can we meet next week?" stays a
+     question for a person. */
+  if (
+    minutesOfDay !== null &&
+    (PROPOSE.some((w) => s.includes(w)) || (s.includes("?") && MEETING_WORDS.test(s)))
+  ) {
+    return { intent: "propose", minutesOfDay, day, phrase };
   }
 
   return null;

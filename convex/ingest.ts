@@ -177,6 +177,10 @@ export const ingestBatch = mutation({
         cite: externalId,
         text: m.text,
         ts: m.ts,
+        // Proposals need to know who asked: a client offering 6pm is a card
+        // for the advisor; the advisor offering 6pm is a question the CLIENT
+        // answers, and carding it would have the advisor confirm to themselves.
+        sender: m.from,
       });
 
       seq++;
