@@ -951,6 +951,12 @@ html[data-shell="tauri"] #desk{ display: none; }
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 22%, transparent); }
 .msg[data-via="call"] .tx{ font-style: italic; color: var(--t3); }
 
+/* the day-page nav: the base .ico is a flex block with margin-left auto
+   (built for tile corners), which inside an inline span stacks the three
+   controls vertically down the page edge. The wrapper pins them in a row. */
+.dnav{ display: inline-flex; align-items: center; gap: 6px; }
+.dnav .ico{ margin-left: 0; border-radius: var(--r-sm); }
+
 /* ── the task, opened ── */
 .tctx{ display: flex; flex-direction: column; gap: 8px; padding: 13px 14px;
   border-radius: var(--r-md);
