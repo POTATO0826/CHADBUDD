@@ -328,6 +328,66 @@ pub fn run() {
                                 let _ = tg2.hide();
                             }
                         });
+
+                        /* Microphone, answered. WebView2 raises
+                           PermissionRequested for getUserMedia and treats an
+                           unanswered request as a denial — no prompt, no
+                           error, a call with no audio in either direction.
+                           So the request is answered in COM: mic and camera
+                           allowed, for the one Telegram origin, everything
+                           else left to the default deny. */
+                        #[cfg(windows)]
+                        {
+                            use webview2_com::PermissionRequestedEventHandler;
+                            use webview2_com::Microsoft::Web::WebView2::Win32::{
+                                COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+                                COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+                                COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                            };
+
+                            let hooked = tg.with_webview(|platform| unsafe {
+                                let Ok(core) = platform.controller().CoreWebView2() else {
+                                    eprintln!("[tgweb] no CoreWebView2 to hook");
+                                    return;
+                                };
+                                let mut token = Default::default();
+                                let handler = PermissionRequestedEventHandler::create(
+                                    Box::new(|_sender, args| {
+                                        if let Some(args) = args {
+                                            let mut kind = Default::default();
+                                            let _ = args.PermissionKind(&mut kind);
+                                            let mut uri = windows::core::PWSTR::null();
+                                            let _ = args.Uri(&mut uri);
+                                            let origin = if uri.is_null() {
+                                                String::new()
+                                            } else {
+                                                uri.to_string().unwrap_or_default()
+                                            };
+                                            let media = kind
+                                                == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                                                || kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA;
+                                            if media && origin.starts_with("https://web.telegram.org")
+                                            {
+                                                let _ = args.SetState(
+                                                    COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                                                );
+                                                println!("[tgweb] media permission granted to {origin}");
+                                            } else {
+                                                println!("[tgweb] permission left to default: kind={} origin={origin}", kind.0);
+                                            }
+                                        }
+                                        Ok(())
+                                    }),
+                                );
+                                match core.add_PermissionRequested(&handler, &mut token) {
+                                    Ok(()) => println!("[tgweb] permission hook installed"),
+                                    Err(e) => eprintln!("[tgweb] permission hook failed: {e}"),
+                                }
+                            });
+                            if let Err(e) = hooked {
+                                eprintln!("[tgweb] with_webview failed: {e}");
+                            }
+                        }
                     }
                     Err(e) => eprintln!("[tgweb] startup build failed: {e}"),
                 }

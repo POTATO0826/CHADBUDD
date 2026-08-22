@@ -16,6 +16,14 @@ tauri-build = { version = "2.6.3", features = [] }
 # macos-private-api is what allows a transparent NSWindow.
 tauri = { version = "2.11.5", features = ["macos-private-api"] }
 
+# The Telegram call window needs the microphone, and WebView2 treats an
+# unanswered permission request as a denial — silently, which is how a call
+# connects with no audio in either direction. These two pin to the versions
+# wry already ships, so no second copy of the COM bindings enters the tree.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+
 [profile.release]
 codegen-units = 1
 lto = true
