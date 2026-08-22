@@ -114,14 +114,16 @@ console.log("\ncounters shown on the overview");
 {
   const owed = clients.reduce((n, c) => n + c.open.filter((x) => x.owedBy === "advisor").length, 0);
   if (owed !== totals.owedByAdvisor) fail(`owed-by-you counter (${totals.owedByAdvisor}) disagrees with the ledger (${owed})`);
-  const tips = weekBars.days.filter((d) => d.isPeak).length;
+  const wb = weekBars();
+  const rc = replyClock();
+  const tips = wb.days.filter((d) => d.isPeak).length;
   if (tips > 1) fail(`engagement chart labels ${tips} bars — label one, never every mark`);
-  if (!replyClock.value) fail("reply clock has no value");
-  const worstMins = replyClock.worst.windows.recent.medianLatencyMin ?? 0;
+  if (!rc.value) fail("reply clock has no value");
+  const worstMins = rc.worst.windows.recent.medianLatencyMin ?? 0;
   for (const c of clients) {
-    if ((c.windows.recent.medianLatencyMin ?? 0) > worstMins) fail(`reply clock names ${replyClock.worst.name} but ${c.name} is slower`);
+    if ((c.windows.recent.medianLatencyMin ?? 0) > worstMins) fail(`reply clock names ${rc.worst.name} but ${c.name} is slower`);
   }
-  pass(`owed ${owed} · ${tips} chart label · worst median ${replyClock.value} (${replyClock.worst.name})`);
+  pass(`owed ${owed} · ${tips} chart label · worst median ${rc.value} (${rc.worst.name})`);
 }
 
 console.log(`\n${"─".repeat(66)}`);

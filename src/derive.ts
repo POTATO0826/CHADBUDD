@@ -652,7 +652,7 @@ export function clientById(id: string): ClientView {
  * this build, so the tile plots the thing that actually exists — how much the
  * clients said, day by day.
  */
-export const weekBars = (() => {
+export function weekBars() {
   const days: Array<{ day: string; count: number; label: string }> = [];
   for (let i = 6; i >= 0; i--) {
     const ms = NOW - i * DAY;
@@ -680,10 +680,12 @@ export const weekBars = (() => {
     peak,
     quietDays: days.filter((d) => d.count === 0).length,
   };
-})();
+}
+
+
 
 /** Worst median reply latency across the book, for the reply-clock tile. */
-export const replyClock = (() => {
+export function replyClock() {
   const ranked = [...clients].sort(
     (a, b) => (b.windows.recent.medianLatencyMin ?? 0) - (a.windows.recent.medianLatencyMin ?? 0),
   );
@@ -700,6 +702,7 @@ export const replyClock = (() => {
       mark: c === worst ? "var(--butter)" : severityMark(c.score.signals.find((s) => s.name === "latency")!.severity),
     })),
   };
-})();
+}
+
 
 export type { Score, SignalScore };

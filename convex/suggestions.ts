@@ -29,6 +29,10 @@ import { gate } from "./verbatim";
 
 const DAY = 86_400_000;
 
+/** "Book condo-area review" and "Book condo area review" are one idea. */
+const normTitle = (t: string): string =>
+  t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
 /* ── the review queue ─────────────────────────────────────────────── */
 
 export const pending = query({
@@ -139,20 +143,19 @@ export const record = internalMutation({
     for (const p of pendingAll) {
       pendingPerClient.set(p.clientKey, (pendingPerClient.get(p.clientKey) ?? 0) + 1);
     }
+    // Normalised titles across EVERY status: the model re-words the same
+    // idea ("condo-area" vs "condo area"), and an exact-match index cannot
+    // see through that. The table is small; reading it whole is fine.
+    const all = await ctx.db.query("taskSuggestions").collect();
+    const seen = new Set(all.map((r) => `${r.clientKey}::${normTitle(r.title)}`));
     for (const row of rows) {
       // Two pending per client is the ceiling. The model re-words the same
       // idea across runs, and a queue that grows every half hour is nagging,
       // not helping.
       if ((pendingPerClient.get(row.clientKey) ?? 0) >= 2) continue;
-      // One suggestion per (client, title), across every status — a dismissal
-      // is a decision, and re-suggesting over it would nag.
-      const dupe = await ctx.db
-        .query("taskSuggestions")
-        .withIndex("by_client_title", (q) =>
-          q.eq("clientKey", row.clientKey).eq("title", row.title),
-        )
-        .first();
-      if (dupe) continue;
+      const nkey = `${row.clientKey}::${normTitle(row.title)}`;
+      if (seen.has(nkey)) continue;
+      seen.add(nkey);
       await ctx.db.insert("taskSuggestions", {
         ...row,
         status: "pending",
@@ -252,7 +255,20 @@ export const prune = internalMutation({
     let dropped = 0;
     for (const list of byClient.values()) {
       list.sort((a, b) => a.dueMs - b.dueMs);
-      for (const extra of list.slice(2)) {
+      // Reworded twins collapse first — the soonest-due phrasing survives.
+      const kept = [];
+      const norms = new Set();
+      for (const row of list) {
+        const nkey = normTitle(row.title);
+        if (norms.has(nkey)) {
+          await ctx.db.patch(row._id, { status: "dismissed" });
+          dropped++;
+        } else {
+          norms.add(nkey);
+          kept.push(row);
+        }
+      }
+      for (const extra of kept.slice(2)) {
         await ctx.db.patch(extra._id, { status: "dismissed" });
         dropped++;
       }

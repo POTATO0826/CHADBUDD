@@ -281,18 +281,17 @@ function idleLayer(): string {
     dot = "var(--iris)";
     live = minsToNext <= 15;
     far = "";
-  } else if (owed.overdue > 0) {
-    line = `${owed.overdue} overdue task${owed.overdue === 1 ? "" : "s"}`;
-    dot = "var(--love)";
-  } else if (owed.unreplied > 0 || owed.toReturn > 0) {
-    const bits: string[] = [];
-    if (owed.unreplied > 0) bits.push(`↩ ${owed.unreplied} unreplied`);
-    if (owed.toReturn > 0) bits.push(`☏ ${owed.toReturn} to return`);
-    line = bits.join(" · ");
-    dot = "var(--foam)";
-  } else if (owed.tasksLeft > 0) {
-    line = `○ ${owed.tasksLeft} task${owed.tasksLeft === 1 ? "" : "s"} left`;
-    dot = "var(--gold)";
+  } else if (owed.overdue > 0 || owed.unreplied > 0 || owed.toReturn > 0 || owed.tasksLeft > 0) {
+    // Everything owed, in urgency order; the pill carries the two heaviest
+    // and the dot wears the heaviest one's colour.
+    const bits: Array<{ t: string; c: string }> = [];
+    if (owed.overdue > 0) bits.push({ t: `! ${owed.overdue} overdue`, c: "var(--love)" });
+    if (owed.unreplied > 0) bits.push({ t: `↩ ${owed.unreplied} unreplied`, c: "var(--foam)" });
+    if (owed.toReturn > 0) bits.push({ t: `☏ ${owed.toReturn} to return`, c: "var(--foam)" });
+    const open = owed.tasksLeft - owed.overdue;
+    if (open > 0) bits.push({ t: `○ ${open} task${open === 1 ? "" : "s"}`, c: "var(--gold)" });
+    line = bits.slice(0, 2).map((b) => b.t).join(" · ");
+    dot = bits[0]!.c;
   } else if (upcoming) {
     line = `✓ clear · next ${untilText(minsToNext ?? 0)}`;
     far = "";
@@ -573,13 +572,20 @@ function citeChips(ids: string[], client: ClientKey): string {
 
 /* ── open: chrome ────────────────────────────────────────────────── */
 
-const NAV: Array<{ page: Page; label: string; count: number }> = [
-  { page: "home", label: "overview", count: 0 },
-  { page: "agenda", label: "day", count: dayTotals.left },
-  { page: "calendar", label: "calendar", count: 0 },
-  { page: "clients", label: "clients", count: totals.clients },
-  { page: "calls", label: "calls", count: queues.calls.rows.filter((r) => r.btn !== "").length },
-];
+/* Computed per render — as a module constant every badge froze at boot,
+   the same staleness the idle pill had. Each badge mirrors its page:
+   day = what is left today (slots and open tasks), clients = the book,
+   calls = calls to return plus open proposals. */
+function navItems(): Array<{ page: Page; label: string; count: number }> {
+  const owed = owedNow();
+  return [
+    { page: "home", label: "overview", count: 0 },
+    { page: "agenda", label: "day", count: dayTotals.left },
+    { page: "calendar", label: "calendar", count: owed.overdue + tasksOn(startOfDay(nowMs())).filter((t) => !t.done).length },
+    { page: "clients", label: "clients", count: totals.clients },
+    { page: "calls", label: "calls", count: owed.toReturn + openProposals().length },
+  ];
+}
 
 /**
  * The mark: a squircle with two bars cut out of it.
@@ -602,11 +608,9 @@ const BRAND_MARK = `
   </svg>`;
 
 function header(): string {
-  const nav = NAV.map((n) => {
+  const nav = navItems().map((n) => {
     const on = n.page === state.page;
-    // NAV is built once at load; proposals arrive by subscription afterwards,
-    // so the calls badge has to pick them up at render time or sit at zero.
-    const count = n.page === "calls" ? n.count + openProposals().length : n.count;
+    const count = n.count;
     const badge = count > 0 ? `<span class="badge">${count}</span>` : "";
     return `<button data-act="page" data-page="${n.page}"${on ? ' aria-current="page"' : ""}>
               <span>${e(n.label)}</span>${badge}
@@ -2415,7 +2419,9 @@ function assistPage(): string {
 
 function overviewPage(): string {
 
-  const bars = weekBars.days
+  const wb = weekBars();
+  const rc = replyClock();
+  const bars = wb.days
     .map(
       (d) => `
       <div class="col" title="${e(d.label)}: ${d.count} client message${d.count === 1 ? "" : "s"}">
@@ -2426,7 +2432,7 @@ function overviewPage(): string {
     )
     .join("");
 
-  const clockKey = replyClock.key
+  const clockKey = rc.key
     .map((k) => `<div><i style="background:${k.mark}"></i><span>${e(k.name)} ${e(k.value)}</span></div>`)
     .join("");
 
@@ -2518,25 +2524,25 @@ function overviewPage(): string {
             <button class="ico" data-act="page" data-page="clients" title="Open clients">↗</button>
           </div>
           <div style="display:flex;align-items:baseline;gap:9px">
-            <span class="num" style="font-size:30px;line-height:1;letter-spacing:-.03em">${weekBars.total}</span>
-            <span class="m" style="font-size:10px;line-height:1.35;color:var(--t3)">in 7 days<br>${weekBars.quietDays} silent days</span>
+            <span class="num" style="font-size:30px;line-height:1;letter-spacing:-.03em">${wb.total}</span>
+            <span class="m" style="font-size:10px;line-height:1.35;color:var(--t3)">in 7 days<br>${wb.quietDays} silent days</span>
           </div>
           <div class="bars">${bars}</div>
         </div>
 
-        <div class="tile" data-act="open-profile" data-client="${replyClock.worst.key}" role="button" style="cursor:pointer">
+        <div class="tile" data-act="open-profile" data-client="${rc.worst.key}" role="button" style="cursor:pointer">
           <div class="tile-h">
             <span class="t">Reply clock</span>
-            <button class="ico" data-act="open-profile" data-client="${replyClock.worst.key}" title="Open ${e(replyClock.worst.name)}">↗</button>
+            <button class="ico" data-act="open-profile" data-client="${rc.worst.key}" title="Open ${e(rc.worst.name)}">↗</button>
           </div>
           <div class="clock">
-            <div class="dial" role="img" aria-label="Worst median reply latency ${e(replyClock.value)}">
+            <div class="dial" role="img" aria-label="Worst median reply latency ${e(rc.value)}">
               <!-- The swept arc is a severity reading, not an affordance, so it
                    takes the MARK ramp rather than the accent — on the light
                    ramp the accent is near-black and the dial went to a blob. -->
-              <div class="ring" style="background:conic-gradient(var(--m-warn) 0deg ${replyClock.degrees}deg, color-mix(in oklab, var(--foreground) 8%, transparent) ${replyClock.degrees}deg 360deg)">
+              <div class="ring" style="background:conic-gradient(var(--m-warn) 0deg ${rc.degrees}deg, color-mix(in oklab, var(--foreground) 8%, transparent) ${rc.degrees}deg 360deg)">
                 <div class="hole">
-                  <span class="v">${e(replyClock.value)}</span>
+                  <span class="v">${e(rc.value)}</span>
                   <span class="lbl" style="font-size:8.5px">worst median</span>
                 </div>
               </div>
