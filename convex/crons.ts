@@ -51,6 +51,14 @@ crons.interval("presence cleanup", { hours: 24 }, internal.presenceLive.clearOld
 crons.interval("market news", { hours: 1 }, api.news.refresh, {});
 
 /**
+ * The task-suggestion pass: read the chats, propose dated work into the
+ * review queue. Half-hourly because a suggestion is never urgent — it waits
+ * for a person either way — and the per-(client,title) dedupe makes a
+ * no-news pass free. Nothing in this pass can create a task by itself.
+ */
+crons.interval("task suggestions", { minutes: 30 }, internal.suggestions.run, {});
+
+/**
  * Inbound email. Ten minutes, because nobody expects an email answered
  * faster and IMAP IDLE would mean holding a socket — the bridge problem
  * again. No credentials configured, the action no-ops silently.

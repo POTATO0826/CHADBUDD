@@ -363,12 +363,38 @@ export default defineSchema({
     /** Dedupe key: prep:<eventId>, mature:<holdingId>. One task per fact. */
     ref: v.optional(v.string()),
     cite: v.optional(v.string()),
+    /** What kind of work, for the calendar's filters. Absent = uncategorised. */
+    kind: v.optional(v.union(v.literal("email"), v.literal("outreach"), v.literal("prep"))),
     done: v.boolean(),
     doneTs: v.optional(v.number()),
     createdTs: v.number(),
   })
     .index("by_due", ["dueMs"])
     .index("by_ref", ["ref"]),
+
+  /**
+   * Dated work the model read out of the chats, waiting for a person.
+   *
+   * A suggestion is not a task: it becomes one only when the advisor accepts
+   * it, and a dismissed one stays here so the same reading of the same
+   * message cannot come back tomorrow wearing a fresh id. Every suggestion
+   * carries the verbatim quote that convinced the model, gated against the
+   * real message before it is ever stored.
+   */
+  taskSuggestions: defineTable({
+    clientKey: v.string(),
+    title: v.string(),
+    dueMs: v.number(),
+    /** One line of why, in the model's words. */
+    why: v.string(),
+    /** externalId of the message it read this from. Verbatim-gated. */
+    cite: v.optional(v.string()),
+    kind: v.optional(v.union(v.literal("email"), v.literal("outreach"), v.literal("prep"))),
+    status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("dismissed")),
+    createdTs: v.number(),
+  })
+    .index("by_status", ["status"])
+    .index("by_client_title", ["clientKey", "title"]),
 
   /**
    * The live market feed: Google News, filtered and tagged by the model

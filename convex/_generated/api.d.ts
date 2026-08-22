@@ -25,6 +25,7 @@ import type * as outbox from "../outbox.js";
 import type * as presenceLive from "../presenceLive.js";
 import type * as scheduling from "../scheduling.js";
 import type * as seed from "../seed.js";
+import type * as suggestions from "../suggestions.js";
 import type * as tasks from "../tasks.js";
 import type * as threads from "../threads.js";
 import type * as verbatim from "../verbatim.js";
@@ -53,6 +54,7 @@ declare const fullApi: ApiFromModules<{
   presenceLive: typeof presenceLive;
   scheduling: typeof scheduling;
   seed: typeof seed;
+  suggestions: typeof suggestions;
   tasks: typeof tasks;
   threads: typeof threads;
   verbatim: typeof verbatim;

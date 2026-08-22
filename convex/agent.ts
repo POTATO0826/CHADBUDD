@@ -364,7 +364,7 @@ export const analyze = action({
 /* ── the shared model call ──────────────────────────────────────────
    One place that knows how to talk to the provider, so the new seats below
    cannot drift from the pass above in auth, model or failure shape. */
-async function callModel<T>(system: string, user: string, name: string, schema: object): Promise<T> {
+export async function callModel<T>(system: string, user: string, name: string, schema: object): Promise<T> {
   if (API_KEY === "") throw new Error("No AGENT_API_KEY or OPENAI_API_KEY set for the Convex backend.");
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: "POST",

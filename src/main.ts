@@ -31,6 +31,7 @@ import { acceptProposal, askAgent, clientMeta, declineProposal, initLive, liveHo
 import { aiText, initDeskAi } from "./deskAi.ts";
 import type { Task } from "./tasks.ts";
 import { initTasks, taskCreate, taskDone, taskMove, taskRemove, tasks, tasksOn, urgencyOf } from "./tasks.ts";
+import { initSuggest, resolveSuggestion, runSuggest, suggestions } from "./suggest.ts";
 import { openProposals, proposalReply, proposalWhen } from "./proposals.ts";
 import { digestFor, emotionTone, keyPointsFor, latestEmotion } from "./emotions.ts";
 import type { KeyPoint } from "./emotions.ts";
@@ -130,6 +131,8 @@ interface State {
   calOverlay: boolean;
   /** Calendar page: the single-day page, or null for the main view. */
   calDay: number | null;
+  /** Month view: which layers are drawn. A filter hides, it never deletes. */
+  calFilters: { meetings: boolean; emails: boolean; outreach: boolean };
   /** Week view: Monday of the week shown. Null follows the clock. */
   wk: number | null;
   /** Desk: the expanded row, by brief id. Null is everything collapsed. */
@@ -187,6 +190,16 @@ const state: State = {
   })(),
   calOverlay: false,
   calDay: null,
+  calFilters: ((): { meetings: boolean; emails: boolean; outreach: boolean } => {
+    const all = { meetings: true, emails: true, outreach: true };
+    try {
+      const saved = localStorage.getItem("cb-calfilters");
+      if (saved) return { ...all, ...(JSON.parse(saved) as Partial<typeof all>) };
+    } catch {
+      /* private mode: everything shows */
+    }
+    return all;
+  })(),
   wk: null,
   desk: null,
   deskHit: null,
@@ -427,8 +440,9 @@ function peekLayer(): string {
 
   // Numbers stay in ink; the status colour rides a small dot beside the label,
   // so colour never carries meaning alone and the numerals line up cleanly.
-  const stat = (label: string, value: number | string, dot?: string): string => `
-    <span class="st">
+  // Each stat opens the page that can clear it — the number is the door.
+  const stat = (label: string, value: number | string, page: Page, dot?: string): string => `
+    <span class="st" data-act="peek-go" data-page="${page}" role="link" title="Open ${page}">
       <span class="hd">${dot ? `<i class="dt" style="background:${dot}"></i>` : ""}<span class="lbl">${e(label)}</span></span>
       <span class="v num">${e(String(value))}</span>
     </span>`;
@@ -440,13 +454,13 @@ function peekLayer(): string {
         <span class="sc-n">${e(dateShort.format(NOW))} · ${totals.clients} clients</span>
       </span>
       <span class="stats">
-        ${stat("tasks left", tasksLeft, tasksLeft > 0 ? "var(--butter)" : undefined)}
+        ${stat("tasks left", tasksLeft, "calendar", tasksLeft > 0 ? "var(--butter)" : undefined)}
         <i class="div"></i>
-        ${stat("unreplied", unreplied, unreplied > 0 ? "var(--foam)" : undefined)}
+        ${stat("unreplied", unreplied, "clients", unreplied > 0 ? "var(--foam)" : undefined)}
         <i class="div"></i>
-        ${stat("calls to return", toReturn, toReturn > 0 ? "var(--m-crit)" : "var(--m-good)")}
+        ${stat("calls to return", toReturn, "calls", toReturn > 0 ? "var(--m-crit)" : "var(--m-good)")}
         <i class="div"></i>
-        ${stat("meetings left", meetingsLeft)}
+        ${stat("meetings left", meetingsLeft, "agenda")}
       </span>
       <span class="strip" aria-hidden="true">${strip}</span>
     </button>`;
@@ -832,10 +846,37 @@ function agendaPage(): string {
         <span class="mt">${dayTotals.meetings} commitments · ${dayTotals.travelMinutes} min on the road ·
           ${dayTotals.breakMinutes} min of break the assistant is protecting. These are the plan, not a guess.</span>
       </div>
+      ${agendaPlanStrip()}
       <div class="daycols">
         <div class="daylist sc" id="daylist">${agenda.map((x) => slotRow(x, x.id === sel.id)).join("")}</div>
         <div class="dayctx sc" id="dayctx">${slotContext(sel)}</div>
       </div>
+    </div>`;
+}
+
+/**
+ * Today's dated work on the day page — checkable and clearable where the
+ * advisor is already looking. Overdue rides along: it is today's load too.
+ */
+function agendaPlanStrip(): string {
+  const today = startOfDay(nowMs());
+  const overdue = tasks().filter((t) => !t.done && startOfDay(t.dueMs) < today);
+  const due = tasksOn(today);
+  const rows = [...overdue, ...due];
+  if (rows.length === 0) return "";
+  const open = rows.filter((t) => !t.done).length;
+  return `
+    <div class="aplan">
+      <span class="lbl">today's work · ${open} open</span>
+      ${rows
+        .map(
+          (t) => `
+        <span class="apitem">
+          ${taskChip(t)}
+          <button class="trm" data-act="task-remove" data-task="${e(t.id)}" title="Clear it">✕</button>
+        </span>`,
+        )
+        .join("")}
     </div>`;
 }
 
@@ -984,7 +1025,9 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
 
   for (let d = 1; d <= daysInMonth; d++) {
     const at = new Date(first.getFullYear(), first.getMonth(), d).getTime();
-    const list = byDay.get(at) ?? [];
+    const list = (byDay.get(at) ?? []).filter(
+      (ev) => state.calFilters.meetings || !BIG.has(ev.kind),
+    );
     const { imp, unrated } = dayImportance(list);
     const isToday = at === today;
     const weekend = [5, 6].includes((new Date(at).getDay() + 6) % 7);
@@ -1004,7 +1047,15 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
 
     const over = n - CHIPS_PER_CELL;
 
-    const cellTasks = tasksOn(at).filter((t) => !t.done);
+    const cellTasks = tasksOn(at)
+      .filter((t) => !t.done)
+      .filter((t) =>
+        t.kind === "email"
+          ? state.calFilters.emails
+          : t.kind === "outreach"
+            ? state.calFilters.outreach
+            : true,
+      );
 
     cells.push(`
       <button class="cell${isToday ? " today" : ""}${state.calDay === at ? " on" : ""}${weekend ? " wk" : ""}"
@@ -1480,15 +1531,189 @@ function railPrep(ev: CalendarEvent, carried: string[]): string {
     ${lines.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>`;
 }
 
-function calRail(): string {
+/* ── the calendar sidebar ─────────────────────────────────────────
+   Three cards in the order a glance wants them: what the month is showing
+   (the filters), what ChadBuddy makes of the load (advice that recomputes
+   from the real calendar and task book every render), and what waits for a
+   verdict — the model's suggested tasks, the next deadlines, and then the
+   meetings nobody has rated yet. */
+
+const FILTER_META: Array<{ f: "meetings" | "emails" | "outreach"; glyph: string; label: string }> = [
+  { f: "meetings", glyph: "◍", label: "meetings & appointments" },
+  { f: "emails", glyph: "✉", label: "email work" },
+  { f: "outreach", glyph: "☏", label: "client outreach" },
+];
+
+function calFilterCard(): string {
+  return `
+    <div class="scard">
+      <span class="lbl">show on the month</span>
+      ${FILTER_META.map(({ f, glyph, label }) => {
+        const on = state.calFilters[f];
+        return `
+          <button class="frow" data-act="cal-filter" data-f="${f}" aria-pressed="${on}">
+            <span class="fg">${glyph}</span>
+            <span class="fl">${label}</span>
+            <span class="fpill${on ? " on" : ""}">${on ? "on" : "off"}</span>
+          </button>`;
+      }).join("")}
+    </div>`;
+}
+
+/**
+ * ChadBuddy on the load. Every clause of the fallback sentence is a computed
+ * fact; when live, the model rephrases those same facts — the digit-guard in
+ * convex/agent.ts refuses any figure the facts block does not contain, so
+ * the polish can never smuggle in a number.
+ */
+function calAdviceCard(): string {
+  const today = startOfDay(nowMs());
+  const seen = new Map<string, CalendarEvent>();
+  for (const ev of [...calendarWeek(), ...calendarMonth(), ...calendarDay()]) seen.set(ev.id, ev);
+  const events = [...seen.values()].filter((ev) => BIG.has(ev.kind) && ev.booking !== "cancelled");
+
+  const todays = events.filter((ev) => startOfDay(Date.parse(ev.at)) === today);
+  const bookedMin = todays.reduce((n, ev) => n + ev.minutes, 0);
+  const undone = tasks().filter((t) => !t.done);
+  const overdue = undone.filter((t) => startOfDay(t.dueMs) < today).length;
+  const dueToday = undone.filter((t) => startOfDay(t.dueMs) === today).length;
+  const week = undone.filter((t) => {
+    const d = startOfDay(t.dueMs);
+    return d > today && d <= today + 7 * DAY_MS;
+  }).length;
+
+  // The heaviest day ahead, by real committed minutes — not by row count.
+  const load = new Map<number, number>();
+  for (const ev of events) {
+    const d = startOfDay(Date.parse(ev.at));
+    if (d > today && d <= today + 7 * DAY_MS) load.set(d, (load.get(d) ?? 0) + ev.minutes);
+  }
+  const busiest = [...load.entries()].sort((a, b) => b[1] - a[1])[0];
+
+  const hard = undone
+    .filter((t) => t.hardMs !== undefined && t.hardMs >= today)
+    .sort((a, b) => (a.hardMs ?? 0) - (b.hardMs ?? 0))[0];
+
+  const bits: string[] = [
+    todays.length === 0
+      ? "No meetings booked today"
+      : `${todays.length} meeting${todays.length === 1 ? "" : "s"} today, ${bookedMin} min committed`,
+  ];
+  if (dueToday > 0) bits.push(`${dueToday} task${dueToday === 1 ? "" : "s"} due today`);
+  if (overdue > 0) bits.push(`${overdue} overdue`);
+  if (week > 0) bits.push(`${week} due this week`);
+  let tail = "";
+  if (busiest) tail += ` Heaviest day ahead: ${shortDayFmt.format(busiest[0])}, ${busiest[1]} min booked.`;
+  if (hard?.hardMs !== undefined) tail += ` Nearest hard deadline: ${shortDayFmt.format(hard.hardMs)} — ${hard.title}.`;
+  const template = `${bits.join(" · ")}.${tail}`;
+
+  const facts =
+    `meetings_today=${todays.length}; minutes_committed_today=${bookedMin}; tasks_due_today=${dueToday}; ` +
+    `tasks_overdue=${overdue}; tasks_due_within_7_days=${week}` +
+    (busiest ? `; heaviest_day_ahead=${shortDayFmt.format(busiest[0])} with ${busiest[1]} minutes booked` : "") +
+    (hard?.hardMs !== undefined ? `; nearest_hard_deadline=${shortDayFmt.format(hard.hardMs)} for "${hard.title}"` : "");
+
+  const ai = aiText(`calads:${today}:${todays.length}:${bookedMin}:${dueToday}:${overdue}:${week}`, {
+    kind: "calendar",
+    facts,
+    ask: "In two short sentences, tell the advisor how loaded today and the coming week are and what to protect or move first. Plain speech, no list, no greeting.",
+  });
+
+  const text = ai.status === "ready" && ai.text ? ai.text : template;
+  const label =
+    ai.status === "ready"
+      ? "chadbuddy · from your calendar & plan"
+      : ai.status === "pending"
+        ? "chadbuddy is reading your calendar…"
+        : "from your calendar & plan";
+
+  return `
+    <div class="scard aicard">
+      <span class="lbl" style="color:var(--iris)">${e(label)}</span>
+      <p class="advice">${e(text)}</p>
+    </div>`;
+}
+
+/**
+ * The review queue: dated work the model read out of the chats, waiting for
+ * a person — then the next deadlines regardless of source. Accept files the
+ * task; dismiss is remembered so the same reading cannot come back.
+ */
+function needsReviewCard(): string {
+  const suggs = suggestions();
+  const today = startOfDay(nowMs());
+  const next = tasks()
+    .filter((t) => !t.done)
+    .sort((a, b) => a.dueMs - b.dueMs)
+    .slice(0, 5);
+
+  const sRows = suggs
+    .slice(0, 4)
+    .map((s) => {
+      const who = clientById(s.clientKey.toLowerCase()).name.split(" ")[0]!;
+      return `
+      <div class="srow">
+        <span class="st2">${e(s.title)}</span>
+        <span class="sw2">${e(who)} · due ${e(shortDayFmt.format(s.dueMs))}${s.kind ? ` · ${e(s.kind)}` : ""}</span>
+        <span class="swhy">${e(s.why)}</span>
+        ${s.cite ? `<div class="citerow">${citeChips([s.cite], s.clientKey)}</div>` : ""}
+        <div class="ctxacts">
+          <button class="btn acc sm" data-act="sugg-accept" data-sugg="${e(s.id)}">✓ Add to plan</button>
+          <button class="btn sm" data-act="sugg-dismiss" data-sugg="${e(s.id)}">✕ No</button>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  const nRows = next
+    .map((t) => {
+      const d = startOfDay(t.dueMs);
+      const when =
+        d < today
+          ? `<b class="odue">${e(shortDayFmt.format(t.dueMs))} — overdue</b>`
+          : e(shortDayFmt.format(t.dueMs));
+      const who = t.clientKey ? ` · ${e(clientById(t.clientKey.toLowerCase()).name.split(" ")[0]!)}` : "";
+      return `
+      <div class="nxrow">
+        <button class="tk2" data-act="task-done" data-task="${e(t.id)}" aria-label="Mark done">○</button>
+        <button class="nxgo" data-act="cal-day" data-day="${d}">
+          <span class="nxt">${e(t.title)}</span>
+          <span class="nxw">${when}${who}</span>
+        </button>
+        <button class="trm" data-act="task-remove" data-task="${e(t.id)}" title="Clear it">✕</button>
+      </div>`;
+    })
+    .join("");
+
+  return `
+    <div class="scard">
+      <div class="rhead">
+        <span class="lbl">needs review</span>
+        ${suggs.length ? `<span class="fig">${suggs.length}</span>` : ""}
+        <button class="btn sm" data-act="sugg-run" style="margin-left:auto">⟳ read the chats</button>
+      </div>
+      ${sRows || `<span class="sempty">Nothing suggested right now — ChadBuddy reads the chats every half hour and only proposes work the client's own words call for.</span>`}
+      ${suggs.length > 4 ? `<span class="dmore">+${suggs.length - 4} more suggested</span>` : ""}
+      <span class="lbl" style="margin-top:8px">next due</span>
+      ${nRows || `<span class="sempty">No open dated work. Genuinely clear.</span>`}
+    </div>`;
+}
+
+function calSide(): string {
   const pending = pendingEvents();
-  if (pending.length === 0) return "";
   const more = pending.length - RAIL_CAP;
   return `
     <div class="crail sc">
-      <span class="lbl">needs deciding · ${pending.length}</span>
+      ${calFilterCard()}
+      ${calAdviceCard()}
+      ${needsReviewCard()}
+      ${
+        pending.length > 0
+          ? `<span class="lbl">needs deciding · ${pending.length}</span>
       ${pending.slice(0, RAIL_CAP).map(railCard).join("")}
-      ${more > 0 ? `<span class="dmore">+${more} more, oldest first</span>` : ""}
+      ${more > 0 ? `<span class="dmore">+${more} more, oldest first</span>` : ""}`
+          : ""
+      }
     </div>`;
 }
 
@@ -1585,12 +1810,11 @@ function dayPlan(dayMs: number): string {
 function calendarPage(): string {
   if (state.calDay !== null) return dayPage(state.calDay);
 
-  const rail = calRail();
   return `
     <div class="page fixed">
-      <div class="calwrap${rail ? " withrail" : ""}">
+      <div class="calwrap withrail">
         <div class="calmain">${state.calView === "month" ? monthMain() : weekMain()}</div>
-        ${rail}
+        ${calSide()}
       </div>
       ${state.calOverlay ? calOverlay() : ""}
     </div>`;
@@ -3572,6 +3796,71 @@ island.addEventListener("click", (ev) => {
       return;
     }
 
+    /* A peek stat opens the page that can clear it. */
+    case "peek-go": {
+      const page = (hit.dataset.page ?? "home") as Page;
+      state.page = page;
+      if (page === "clients") state.cview = "grid";
+      if (page === "calendar") state.calDay = null;
+      setState("open");
+      return;
+    }
+
+    case "cal-filter": {
+      const f = hit.dataset.f as "meetings" | "emails" | "outreach" | undefined;
+      if (f) {
+        state.calFilters[f] = !state.calFilters[f];
+        try {
+          localStorage.setItem("cb-calfilters", JSON.stringify(state.calFilters));
+        } catch {
+          /* private mode: the choice lasts the session */
+        }
+        render();
+      }
+      return;
+    }
+
+    /* The person's verdict on a suggestion. Accept files the task with the
+       suggestion's cite riding along; dismiss is remembered so the same
+       reading cannot come back tomorrow wearing a fresh id. */
+    case "sugg-accept":
+    case "sugg-dismiss": {
+      const id = hit.dataset.sugg;
+      if (id) void resolveSuggestion(id, act === "sugg-accept").then(() => render());
+      return;
+    }
+
+    case "sugg-run": {
+      const btn = hit as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = "reading…";
+      void runSuggest()
+        .then((n) => {
+          showNotif({
+            kind: "reminder",
+            client: null,
+            title: n === null ? "Seed mode" : n === 0 ? "Nothing new" : `${n} new suggestion${n === 1 ? "" : "s"}`,
+            body:
+              n === null
+                ? "No live backend to read from"
+                : n === 0
+                  ? "The chats hold no dated work that is not already suggested"
+                  : "Waiting in needs review",
+            meta: "task suggestions",
+            tag: "AI",
+            tone: "butter",
+            dwell: 4500,
+          });
+          render();
+        })
+        .catch((err: unknown) => {
+          btn.disabled = false;
+          btn.textContent = "⟳ read the chats";
+          console.error("[chadbuddy] suggestion pass failed", err);
+        });
+      return;
+    }
+
     case "task-done": {
       const id = hit.dataset.task;
       const t = id ? tasks().find((x) => x.id === id) : undefined;
@@ -4035,6 +4324,7 @@ const live = initLive(
    a client to subscribe to, and falls back to localStorage when there is not
    — the browser demo needs no backend. */
 initTasks(render);
+initSuggest(render);
 initDeskAi(render);
 
 if (live) {

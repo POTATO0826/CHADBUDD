@@ -891,6 +891,59 @@ html[data-shell="tauri"] #desk{ display: none; }
 .crail{ width: 292px; flex: none; display: flex; flex-direction: column; gap: 8px;
   padding: 14px; border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge);
   overflow-y: auto; min-height: 0; }
+
+/* ── the calendar sidebar cards ── */
+.scard{ display: flex; flex-direction: column; gap: 7px; padding: 11px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent); }
+.frow{ display: flex; align-items: center; gap: 8px; background: none; border: 0;
+  padding: 4px 3px; cursor: pointer; color: var(--t2); font-family: var(--mono);
+  font-size: 10.5px; text-align: left; border-radius: var(--r-sm); }
+.frow:hover{ background: var(--deep); }
+.frow .fg{ width: 14px; text-align: center; color: var(--t4); }
+.frow .fl{ flex: 1; }
+.fpill{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em;
+  text-transform: uppercase; padding: 2px 8px; border-radius: 999px;
+  background: var(--deep); color: var(--t4); }
+.fpill.on{ background: color-mix(in oklab, var(--foam) 80%, var(--background)); color: var(--background); }
+.aicard .advice{ font-size: 11.5px; line-height: 1.55; color: var(--t2); margin: 0; }
+.rhead{ display: flex; align-items: center; gap: 8px; }
+.rhead .fig{ font-family: var(--mono); font-size: 10px; padding: 1px 6px;
+  border-radius: 999px; background: var(--deep-2); color: var(--t2); }
+.srow{ display: flex; flex-direction: column; gap: 4px; padding: 8px 9px;
+  border-radius: var(--r-md); background: var(--deep); }
+.srow .st2{ font-size: 11.5px; color: var(--t1); line-height: 1.35; }
+.srow .sw2{ font-family: var(--mono); font-size: 9.5px; color: var(--t4); }
+.srow .swhy{ font-size: 10.5px; color: var(--t3); line-height: 1.4; }
+.sempty{ font-size: 10.5px; color: var(--t4); line-height: 1.45; }
+.nxrow{ display: flex; align-items: center; gap: 5px; }
+.nxrow .tk2{ width: 15px; height: 15px; flex: none; border-radius: 50%; font-size: 9.5px;
+  display: grid; place-items: center; background: none; border: 0; cursor: pointer; color: var(--t4); }
+.nxrow .tk2:hover{ background: color-mix(in oklab, var(--foreground) 14%, transparent); color: var(--t1); }
+.nxgo{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;
+  background: none; border: 0; text-align: left; cursor: pointer; padding: 3px 4px;
+  border-radius: var(--r-sm); }
+.nxgo:hover{ background: var(--deep); }
+.nxt{ font-size: 11px; color: var(--t2); line-height: 1.3; }
+.nxw{ font-family: var(--mono); font-size: 9.5px; color: var(--t4); }
+.nxw .odue{ color: #f9cdd9; font-weight: 600; }
+.nxrow .trm, .apitem .trm{ width: 18px; height: 18px; flex: none; border-radius: var(--r-sm);
+  font-size: 9.5px; display: grid; place-items: center; background: none; border: 0;
+  cursor: pointer; color: var(--t4); }
+.nxrow .trm:hover, .apitem .trm:hover{ color: var(--alarm);
+  background: color-mix(in oklab, var(--foreground) 8%, transparent); }
+
+/* ── today's work on the day page ── */
+.aplan{ display: flex; flex-wrap: wrap; gap: 6px 4px; align-items: center;
+  padding: 10px 14px; border-radius: var(--r-xl); background: var(--tile);
+  box-shadow: var(--edge); }
+.aplan > .lbl{ width: 100%; }
+.apitem{ display: inline-flex; align-items: center; gap: 1px; }
+
+/* the peek stats are doors now — say so on hover */
+.peek .st{ border-radius: var(--r-sm); padding: 2px 5px; margin: -2px -1px; }
+.peek .st:hover{ background: color-mix(in oklab, var(--foreground) 9%, transparent); }
 .ccard{ display: flex; flex-direction: column; gap: 7px; padding: 11px 12px;
   border-radius: var(--r-md);
   background: color-mix(in oklab, var(--foreground) 4%, transparent);

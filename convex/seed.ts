@@ -120,3 +120,79 @@ export const clearSeed = mutation({
     return { clients: seeded.length, messages: removed };
   },
 });
+
+/**
+ * The demo book of dated work.
+ *
+ * Idempotent by construction — every task carries a `demo:` ref and every
+ * suggestion dedupes on (client, title) — so the bridge can call this at
+ * every startup and the second call costs nothing. Dates are relative to
+ * now, because a demo where everything went overdue last Tuesday is a demo
+ * of neglect.
+ */
+export const demoWork = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const DAY = 86_400_000;
+    const noon = new Date();
+    noon.setHours(12, 0, 0, 0);
+    const today = noon.getTime();
+
+    const TASKS: Array<{
+      ref: string; title: string; dueMs: number; clientKey?: string;
+      hardMs?: number; cite?: string; kind?: "email" | "outreach" | "prep";
+      done?: boolean;
+    }> = [
+      { ref: "demo:t1", title: "Send Michelle the written quarterly summary", dueMs: today, clientKey: "C", cite: "C-051", kind: "email" },
+      { ref: "demo:t2", title: "Rebook Faizal — he asked for next week", dueMs: today + 1 * DAY, clientKey: "B", cite: "B-041", kind: "outreach" },
+      { ref: "demo:t3", title: "Quarterly statements batch — send by Friday", dueMs: today + 3 * DAY, kind: "email" },
+      { ref: "demo:t4", title: "Call Priya about the 5% gold fund switch", dueMs: today + 2 * DAY, clientKey: "A", cite: "A-068", kind: "outreach" },
+      { ref: "demo:t5", title: "Renewal papers to Priya before her plan matures", dueMs: today + 6 * DAY, clientKey: "A", hardMs: today + 8 * DAY, kind: "email" },
+      { ref: "demo:t6", title: "Chase ops for the transfer confirmation", dueMs: today - 2 * DAY },
+      { ref: "demo:t7", title: "Morning book review", dueMs: today, done: true },
+      { ref: "demo:t8", title: "KYC refresh — compliance window closes", dueMs: today + 10 * DAY, kind: "email" },
+    ];
+
+    let tasks = 0;
+    for (const t of TASKS) {
+      const dupe = await ctx.db
+        .query("tasks")
+        .withIndex("by_ref", (q) => q.eq("ref", t.ref))
+        .first();
+      if (dupe) continue;
+      const { done, ...rest } = t;
+      await ctx.db.insert("tasks", {
+        ...rest,
+        done: done ?? false,
+        ...(done ? { doneTs: Date.now() } : {}),
+        source: "chadbuddy",
+        createdTs: Date.now(),
+      });
+      tasks++;
+    }
+
+    const SUGGS: Array<{
+      clientKey: string; title: string; dueMs: number; why: string;
+      cite: string; kind: "email" | "outreach" | "prep";
+    }> = [
+      { clientKey: "A", title: "Set up Priya's 5% gold fund allocation", dueMs: today + 2 * DAY, why: "She agreed to 5% in gold, held as a fund rather than physical.", cite: "A-068", kind: "outreach" },
+      { clientKey: "B", title: "Offer Faizal two slots for next week", dueMs: today + 4 * DAY, why: "He said this week is hard and next week is better.", cite: "B-041", kind: "outreach" },
+      { clientKey: "C", title: "Draft Michelle's written summary", dueMs: today + 1 * DAY, why: "She asked for a written summary instead of a call this quarter.", cite: "C-051", kind: "email" },
+    ];
+
+    let suggs = 0;
+    for (const s of SUGGS) {
+      const dupe = await ctx.db
+        .query("taskSuggestions")
+        .withIndex("by_client_title", (q) =>
+          q.eq("clientKey", s.clientKey).eq("title", s.title),
+        )
+        .first();
+      if (dupe) continue;
+      await ctx.db.insert("taskSuggestions", { ...s, status: "pending", createdTs: Date.now() });
+      suggs++;
+    }
+
+    return { tasks, suggs };
+  },
+});

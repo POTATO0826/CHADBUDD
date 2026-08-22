@@ -50,6 +50,7 @@ export const create = mutation({
     source: v.union(v.literal("advisor"), v.literal("chadbuddy")),
     ref: v.optional(v.string()),
     cite: v.optional(v.string()),
+    kind: v.optional(v.union(v.literal("email"), v.literal("outreach"), v.literal("prep"))),
   },
   handler: async (ctx, args) => {
     // One task per fact. A prep task for the same meeting, a reach-out for

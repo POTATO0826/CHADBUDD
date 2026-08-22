@@ -37,8 +37,12 @@ export interface Task {
   source: "advisor" | "chadbuddy";
   ref?: string;
   cite?: string;
+  /** What kind of work, for the calendar filters. Absent = uncategorised. */
+  kind?: TaskCat;
   done: boolean;
 }
+
+export type TaskCat = "email" | "outreach" | "prep";
 
 const DAY = 86_400_000;
 const STORE = "cb-tasks-v1";
@@ -80,12 +84,15 @@ function saveLocal(): void {
 }
 
 /**
- * Three seeded tasks, offsets from now so the demo always has a today.
- * Each is the kind of thing the rule admits: a real date underneath.
+ * The seeded book of dated work, offsets from now so the demo always has a
+ * today. Each is the kind of thing the rule admits — a real date underneath
+ * — and the spread is deliberate: something due now, something overdue,
+ * something finished, and work of every kind so the calendar filters have
+ * something to filter.
  */
 function seedTasks(): Task[] {
   const today = startOfDayMs(nowMs());
-  localSeq = 4;
+  localSeq = 10;
   return [
     {
       id: "T-1",
@@ -96,6 +103,7 @@ function seedTasks(): Task[] {
       hardMs: today + 13.25 * 3_600_000,
       source: "chadbuddy",
       cite: "D-014",
+      kind: "email",
       done: false,
     },
     {
@@ -105,6 +113,7 @@ function seedTasks(): Task[] {
       clientKey: "A",
       hardMs: today + 8 * DAY,
       source: "chadbuddy",
+      kind: "email",
       done: false,
     },
     {
@@ -112,6 +121,49 @@ function seedTasks(): Task[] {
       title: "Quarterly statements batch — send by Friday",
       dueMs: today + 3 * DAY,
       source: "advisor",
+      kind: "email",
+      done: false,
+    },
+    {
+      id: "T-4",
+      title: "Rebook Faizal — he asked for next week",
+      dueMs: today + 1 * DAY,
+      clientKey: "B",
+      source: "chadbuddy",
+      cite: "B-041",
+      kind: "outreach",
+      done: false,
+    },
+    {
+      id: "T-5",
+      title: "Call Priya about the 5% gold fund switch",
+      dueMs: today + 2 * DAY,
+      clientKey: "A",
+      source: "chadbuddy",
+      cite: "A-068",
+      kind: "outreach",
+      done: false,
+    },
+    {
+      id: "T-6",
+      title: "Chase ops for the transfer confirmation",
+      dueMs: today - 2 * DAY,
+      source: "advisor",
+      done: false,
+    },
+    {
+      id: "T-7",
+      title: "Morning book review",
+      dueMs: today,
+      source: "advisor",
+      done: true,
+    },
+    {
+      id: "T-8",
+      title: "KYC refresh — compliance window closes",
+      dueMs: today + 10 * DAY,
+      source: "advisor",
+      kind: "email",
       done: false,
     },
   ];
@@ -171,6 +223,7 @@ export function initTasks(onChange: () => void): void {
       source: "advisor" | "chadbuddy";
       ref?: string;
       cite?: string;
+      kind?: "email" | "outreach" | "prep";
       done: boolean;
     }>;
     rows = raw
@@ -183,6 +236,7 @@ export function initTasks(onChange: () => void): void {
         source: r.source,
         ...(r.ref ? { ref: r.ref } : {}),
         ...(r.cite ? { cite: r.cite } : {}),
+        ...(r.kind ? { kind: r.kind } : {}),
         done: r.done,
       }))
       .sort((a, b) => a.dueMs - b.dueMs);
@@ -198,6 +252,7 @@ export async function taskCreate(t: {
   source: "advisor" | "chadbuddy";
   ref?: string;
   cite?: string;
+  kind?: TaskCat;
 }): Promise<void> {
   const client = convexClient();
   if (live && client) {

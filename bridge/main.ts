@@ -129,6 +129,7 @@ const API = {
   upsertChats: m("ingest", "upsertChats"),
   ingestBatch: m("ingest", "ingestBatch"),
   tracked: q("chats", "tracked"),
+  demoWork: m("seed", "demoWork"),
   recentChats: q("chats", "recent"),
 } as const;
 
@@ -334,6 +335,13 @@ async function main(): Promise<void> {
   console.log("[bridge] connected");
 
   await syncHoldings();
+  // Demo book of dated work: idempotent (demo: refs), so every startup is free.
+  try {
+    const demo = (await convex.mutation(API.demoWork, {})) as { tasks: number; suggs: number };
+    if (demo.tasks + demo.suggs > 0) console.log(`[demo] seeded ${demo.tasks} tasks · ${demo.suggs} suggestions`);
+  } catch (err) {
+    console.warn("[demo] task seed skipped:", err instanceof Error ? err.message : String(err));
+  }
   const chats = await publishChats();
   await sweepMissed(chats);
   await backfill();
