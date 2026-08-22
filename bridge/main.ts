@@ -59,6 +59,42 @@ if (!Number.isInteger(apiId) || apiId <= 0 || apiHash === "") {
   process.exit(1);
 }
 
+/* ── the wrong-deployment guard ──────────────────────────────────────
+   Two developers, two deployments, one repo — and one override variable
+   (CONVEX_URL) that exists so a PAGE can read a teammate's deployment
+   during a demo. The hazard is that the bridge resolves through the same
+   variable: set it, forget it, run the bridge, and your entire Telegram
+   account auto-promotes into someone else's client list. So when the
+   override disagrees with your own CONVEX_DEPLOYMENT, the bridge refuses
+   to start rather than writes. Self-hosted is exempt — pointing there is
+   always deliberate — and BRIDGE_ALLOW_REMOTE=1 exists for the rare day
+   the cross-write is actually intended. */
+{
+  const dep = process.env["CONVEX_DEPLOYMENT"] ?? "";
+  const selfHosted = (process.env["CONVEX_SELF_HOSTED_URL"] ?? "") !== "";
+  if (dep !== "" && !selfHosted && process.env["BRIDGE_ALLOW_REMOTE"] !== "1") {
+    const own = `https://${dep.includes(":") ? dep.split(":").pop() : dep}.convex.cloud`;
+    if (convexUrl.replace(new RegExp("/+$"), "") !== own) {
+      console.error(
+        `The bridge is about to WRITE to ${convexUrl}
+` +
+          `but your own deployment (CONVEX_DEPLOYMENT) is ${own}.
+
+` +
+          `This usually means CONVEX_URL is set as a demo override for the page.
+` +
+          `Running the bridge like this would pour YOUR Telegram account into a
+` +
+          `TEAMMATE'S database. If that is genuinely what you want:
+` +
+          `  BRIDGE_ALLOW_REMOTE=1 bun run bridge
+`,
+      );
+      process.exit(1);
+    }
+  }
+}
+
 const convex = new ConvexHttpClient(convexUrl);
 const source: Source = new TelegramSource(apiId, apiHash);
 

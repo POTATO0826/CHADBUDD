@@ -63,6 +63,10 @@ Google Calendar is optional and set up separately — see
 [convex/CALENDAR.md](convex/CALENDAR.md). Without it the app runs on the seeded
 day exactly as before; `src/daysource.ts` is the one seam that decides which.
 
+Working on this with someone? Read [TEAMWORK.md](TEAMWORK.md) first — it is
+the answer to "I pulled main and nothing changed": git carries the code, not
+the deployment it talks to.
+
 ## Where the stages stand
 
 | Stage | State |
