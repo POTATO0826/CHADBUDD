@@ -95,7 +95,7 @@ const tint = (colour: string, pct: number): string =>
 const DEFAULT_CAL_VIEW: "week" | "month" = "week";
 
 type IslandState = "idle" | "alert" | "call" | "peek" | "open";
-type Page = "home" | "clients" | "agenda" | "calendar" | "assist" | QueueKind;
+type Page = "home" | "clients" | "agenda" | "calendar" | "desk" | "assist" | QueueKind;
 type Mode = "profile" | "record";
 type Filter = "all" | "client" | "flagged";
 /** The clients page is a grid of cards until one of them is opened. */
@@ -592,6 +592,7 @@ function navItems(): Array<{ page: Page; label: string; count: number }> {
     { page: "home", label: "overview", count: 0 },
     { page: "agenda", label: "day", count: dayTotals.left },
     { page: "calendar", label: "calendar", count: owed.overdue + tasksOn(startOfDay(nowMs())).filter((t) => !t.done).length },
+    { page: "desk", label: "desk", count: deskView().needAction },
     { page: "clients", label: "clients", count: totals.clients },
     { page: "calls", label: "calls", count: owed.toReturn + openProposals().length },
   ];
@@ -2563,7 +2564,6 @@ function overviewPage(): string {
       </div>
       </div>
 
-      ${deskSection()}
     </div>`;
 }
 
@@ -2749,6 +2749,13 @@ function staleRow(row: StaleRow): string {
  * below the existing dashboard grid so nothing above it moved an inch —
  * this is an experiment scrolled into, not a replacement.
  */
+/* The desk owns a page now: the queues stopped being the thing you
+   discover by scrolling past a full-screen overview. Plain .page — the
+   desk relies on #dashbody scrolling. */
+function deskPage(): string {
+  return `<div class="page">${deskSection()}</div>`;
+}
+
 function deskSection(): string {
   const d = deskView();
   return `
@@ -3899,6 +3906,7 @@ function body(): string {
   if (state.page === "home") return overviewPage();
   if (state.page === "agenda") return agendaPage();
   if (state.page === "calendar") return calendarPage();
+  if (state.page === "desk") return deskPage();
   if (state.page === "assist") return assistPage();
   if (state.page === "clients") {
     if (state.cview === "grid") {

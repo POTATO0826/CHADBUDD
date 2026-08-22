@@ -142,6 +142,17 @@ export const consider = internalAction({
       if (key !== null) {
         await ctx.scheduler.runAfter(1_000, internal.stages.classifyOne, { key });
       }
+      /* An address typed in chat becomes the email on file — verified by
+         name similarity and by reading the sentence, receipts either way.
+         The @ pre-check keeps the common case free. */
+      if (a.text.includes("@")) {
+        await ctx.scheduler.runAfter(1_000, internal.emailCapture.inspect, {
+          clientId: a.clientId,
+          cite: a.cite,
+          text: a.text,
+          ts: a.ts,
+        });
+      }
     }
 
     let reading: Reading | null = readSchedule(a.text, a.ts);
