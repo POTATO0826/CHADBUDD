@@ -28,7 +28,7 @@ import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
 import { initLive, queueSend } from "./live.ts";
-import { emotionTone, keyPointsFor, latestEmotion } from "./emotions.ts";
+import { digestFor, emotionTone, keyPointsFor, latestEmotion } from "./emotions.ts";
 import type { KeyPoint } from "./emotions.ts";
 import { connectCalendar } from "./convexCalendar.ts";
 import { initScramble } from "./scramble.ts";
@@ -1879,35 +1879,54 @@ function messageRow(m: RecMessage, hit = ""): string {
 }
 
 /**
- * What the client actually told you, extracted and cited.
+ * What the client actually told you — one reading, then the recent facts.
  *
- * The shape deliberately mirrors the open ledger below it: a kind chip, the
- * fact, the verbatim quote it was read from, the cite that lights the message.
- * `point` is the model's restatement and sits beside its evidence, which is
- * the ideas panel's own precedent. Absent entirely when no pass has run —
- * a tile of hatches would just be noise where the seed is concerned.
+ * The digest leads: two model-written sentences (how they feel, what they
+ * want), rendered as prose with the cites they rest on, which the server
+ * verified against gate-surviving spans before storing. Under it, only the
+ * five most recent raw points — Faizal produced thirty-seven, and a tile
+ * that long buries the column it lives in. The full history is one cite
+ * click away; each row's quote lives in the message it lights up.
  */
 function keyPointsTile(c: ClientView): string {
   const points = keyPointsFor(c.key);
-  if (points.length === 0) return "";
+  const digest = digestFor(c.key);
+  if (points.length === 0 && !digest) return "";
+
+  const lead = digest
+    ? `
+      <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--hair)">
+        <div style="display:flex;gap:8px;font-size:12px;line-height:1.5">
+          <span class="lbl" style="flex:none;width:38px;padding-top:2px">feels</span>
+          <span>${e(digest.feel)}</span>
+        </div>
+        <div style="display:flex;gap:8px;font-size:12px;line-height:1.5">
+          <span class="lbl" style="flex:none;width:38px;padding-top:2px">wants</span>
+          <span>${e(digest.want)}</span>
+        </div>
+        <span>${citeChips(digest.cites, c.key)}</span>
+      </div>`
+    : "";
+
+  const recent = points.slice(-5).reverse();
+  const earlier = points.length - recent.length;
 
   const row = (p: KeyPoint) => `
-    <div style="display:flex;flex-direction:column;gap:5px;padding:8px 0;border-bottom:1px solid var(--hair)">
-      <div style="display:flex;align-items:baseline;gap:8px">
-        <span class="ec" style="color:var(--iris);border:1px dashed color-mix(in oklab, var(--iris) 55%, transparent)">${e(p.kind.replace(/_/g, " "))}</span>
-        <span style="font-size:12px">${e(p.point)}</span>
-      </div>
-      <blockquote style="margin:0;padding:5px 9px;border-left:2px solid color-mix(in oklab, var(--foreground) 18%, transparent);background:color-mix(in oklab, var(--foreground) 3.5%, transparent);font-size:11.5px;font-style:italic;color:var(--t3)">“${e(p.quote)}”</blockquote>
-      <span>${citeChips([p.sourceId], c.key)}</span>
+    <div style="display:flex;align-items:baseline;gap:8px;padding:7px 0;border-bottom:1px solid var(--hair)">
+      <span class="ec" style="flex:none;color:var(--iris);border:1px dashed color-mix(in oklab, var(--iris) 55%, transparent)">${e(p.kind.replace(/_/g, " "))}</span>
+      <span style="font-size:12px;flex:1;min-width:0">${e(p.point)}</span>
+      <span style="flex:none">${citeChips([p.sourceId], c.key)}</span>
     </div>`;
 
   return `
     <div class="tile" style="gap:6px;flex:none">
       <div style="display:flex;align-items:baseline;gap:9px;padding-bottom:6px">
         <span class="t" style="font-size:14.5px;font-weight:500">Key points</span>
-        <span class="lbl" style="margin-left:auto">${points.length} extracted · every quote gate-checked</span>
+        <span class="lbl" style="margin-left:auto">${points.length} noted · gate-checked</span>
       </div>
-      <div class="sect" style="gap:0">${points.map(row).join("")}</div>
+      ${lead}
+      <div class="sect" style="gap:0">${recent.map(row).join("")}</div>
+      ${earlier > 0 ? `<span class="lbl" style="padding-top:4px">+ ${earlier} earlier — cites in the thread</span>` : ""}
     </div>`;
 }
 

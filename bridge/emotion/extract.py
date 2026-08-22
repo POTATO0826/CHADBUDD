@@ -170,13 +170,12 @@ EXAMPLES = [
 ]
 
 MODEL_ID = os.environ.get("AGENT_MODEL", "gpt-4o")
+API_KEY = os.environ.get("AGENT_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+BASE_URL = (os.environ.get("AGENT_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
 CONFIG = ModelConfig(
     model_id=MODEL_ID,
     provider="OpenAILanguageModel",
-    provider_kwargs={
-        "api_key": os.environ.get("AGENT_API_KEY") or os.environ.get("OPENAI_API_KEY") or "",
-        "base_url": (os.environ.get("AGENT_BASE_URL") or "https://api.openai.com/v1").rstrip("/"),
-    },
+    provider_kwargs={"api_key": API_KEY, "base_url": BASE_URL},
 )
 
 
@@ -244,6 +243,78 @@ def spans_for(messages: list[dict]) -> tuple[list[dict], list[dict]]:
     return rows, points
 
 
+DIGEST_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["feel", "want", "cites"],
+    "properties": {
+        "feel": {"type": "string", "description": "One sentence: how the client currently feels, weighted to their most recent messages."},
+        "want": {"type": "string", "description": "One sentence: what the client wants from their advisor right now."},
+        "cites": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Message ids (e.g. E-008) of the spans these sentences rest on. Only ids present in the input.",
+        },
+    },
+}
+
+
+def digest_for(name: str, rows: list[dict], points: list[dict]) -> dict | None:
+    """One reading of the client, from the grounded spans and nothing else.
+
+    A second, plain chat call rather than more LangExtract: this is synthesis,
+    not extraction — there is no span for "overall". It sees only spans that
+    were grounded above, must cite the ids it drew from, and the server then
+    refuses the whole digest if any cite names a span the gate rejected. The
+    same one-call shape as convex/agent.ts, down to the strict schema.
+    """
+    if not rows and not points:
+        return None
+
+    lines = [f"[{r['sourceId']}] emotion/{r['label']} ({r['intensity']}): \"{r['quote']}\"" for r in rows]
+    lines += [f"[{p['sourceId']}] {p['kind']}: {p['point']} — \"{p['quote']}\"" for p in points]
+
+    body = json.dumps({
+        "model": MODEL_ID,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You summarise a financial advisor's client from extracted, quoted spans "
+                    "of that client's own messages. Write two sentences: how the client feels, "
+                    "and what the client wants from the advisor. Weight recent spans over old "
+                    "ones — the ids are in chronological order. Plain words, no hedging "
+                    "boilerplate. Cite only ids from the input, and only in the cites field — "
+                    "never write ids inside the sentences themselves."
+                ),
+            },
+            {"role": "user", "content": f"Client: {name}\n\n" + "\n".join(lines)},
+        ],
+        "response_format": {"type": "json_schema", "json_schema": {"name": "digest", "strict": True, "schema": DIGEST_SCHEMA}},
+    }).encode()
+
+    req = urllib.request.Request(
+        f"{BASE_URL}/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=120) as res:
+        out = json.load(res)
+    raw = out.get("choices", [{}])[0].get("message", {}).get("content", "")
+    try:
+        d = json.loads(raw)
+    except json.JSONDecodeError:
+        print(f"[emotion]   digest for {name} was not JSON; skipped")
+        return None
+
+    # Belt here, braces on the server: drop ids not in this run's spans.
+    known = {r["sourceId"] for r in rows} | {p["sourceId"] for p in points}
+    cites = [c for c in d.get("cites", []) if c in known]
+    if not cites:
+        return None
+    return {"feel": d.get("feel", ""), "want": d.get("want", ""), "cites": cites}
+
+
 def main() -> None:
     only = {k.upper() for k in sys.argv[1:]}
     threads = convex("query", "threads:list", {})
@@ -255,15 +326,18 @@ def main() -> None:
         if not rows and not points:
             print(f"[emotion] {t['key']} · {t['clientName']}: nothing extractable")
             continue
+        digest = digest_for(t["clientName"], rows, points)
         res = convex("mutation", "emotions:record", {
             "key": t["key"],
             "model": MODEL_ID,
             "rows": rows,
             "points": points,
+            **({"digest": digest} if digest else {}),
         })
         print(
             f"[emotion] {t['key']} · {t['clientName']}: "
             f"{res['kept']} emotions, {res.get('points', 0)} key points, "
+            f"digest {'stored' if res.get('digest') else 'none'}, "
             f"{res['rejected']} rejected at the gate"
         )
 

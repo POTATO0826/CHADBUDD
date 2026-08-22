@@ -153,6 +153,23 @@ export default defineSchema({
   }).index("by_client", ["clientId"]),
 
   /**
+   * One reading of the whole client, model-written: how they feel, what they
+   * want. Prose, and displayed as prose — but its cites must name spans that
+   * survived this run's gate, checked in emotions.record, so the sentence can
+   * always be traced to messages that actually carry it. A digest whose cites
+   * do not survive is not stored at all.
+   */
+  digests: defineTable({
+    clientId: v.id("clients"),
+    feel: v.string(),
+    want: v.string(),
+    /** externalIds of gate-surviving spans this reading rests on. */
+    cites: v.array(v.string()),
+    generatedTs: v.number(),
+    model: v.string(),
+  }).index("by_client", ["clientId"]),
+
+  /**
    * Agent output that did NOT survive the gate. Kept, not discarded.
    *
    * Note `reason`: the gate can only prove a quote exists, not that the quote

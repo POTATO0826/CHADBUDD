@@ -29,7 +29,7 @@ import { initialsOf, rebuild, setDecayTempo } from "./derive.ts";
 import { rebuildAgenda, shiftAgendaToDay } from "./agenda.ts";
 import { setIdeas } from "./copy.ts";
 import { setEmotions } from "./emotions.ts";
-import type { EmotionSpan, KeyPoint } from "./emotions.ts";
+import type { Digest, EmotionSpan, KeyPoint } from "./emotions.ts";
 import { isTauri } from "./shell.ts";
 import type { Idea } from "./copy.ts";
 
@@ -309,14 +309,21 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
   });
 
   client.onUpdate(q("emotions", "forAll"), {}, (value) => {
-    const rows = value as Array<{ key: string; rows: EmotionSpan[]; points?: KeyPoint[] }>;
+    const rows = value as Array<{
+      key: string;
+      rows: EmotionSpan[];
+      points?: KeyPoint[];
+      digest?: Digest | null;
+    }>;
     const next: Record<string, EmotionSpan[]> = {};
     const points: Record<string, KeyPoint[]> = {};
+    const digests: Record<string, Digest> = {};
     for (const row of rows) {
       next[row.key] = row.rows;
       points[row.key] = row.points ?? [];
+      if (row.digest) digests[row.key] = row.digest;
     }
-    setEmotions(next, points);
+    setEmotions(next, points, digests);
     apply();
   });
 

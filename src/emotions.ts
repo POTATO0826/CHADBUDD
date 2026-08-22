@@ -43,17 +43,37 @@ export interface KeyPoint {
   ts: number;
 }
 
+/**
+ * The model's one reading of a client: how they feel, what they want.
+ *
+ * Prose, and rendered as prose — but the server stored it only after every
+ * cite named a span that survived that run's gate, so the sentences are
+ * always one click from the messages that carry them.
+ */
+export interface Digest {
+  feel: string;
+  want: string;
+  cites: string[];
+}
+
 /** Oldest-first spans per client key. */
 export let emotions: Record<string, EmotionSpan[]> = {};
 
 /** Oldest-first key points per client key. */
 export let keyPoints: Record<string, KeyPoint[]> = {};
 
+/** One digest per client key, when the pass produced one. */
+export let digests: Record<string, Digest> = {};
+
 /** sourceId → span, for the conversation pane's per-message chip. */
 let bySource = new Map<string, EmotionSpan>();
 let pointBySource = new Map<string, KeyPoint>();
 
-export function setEmotions(next: Record<string, EmotionSpan[]>, points?: Record<string, KeyPoint[]>): void {
+export function setEmotions(
+  next: Record<string, EmotionSpan[]>,
+  points?: Record<string, KeyPoint[]>,
+  nextDigests?: Record<string, Digest>,
+): void {
   emotions = next;
   bySource = new Map();
   for (const spans of Object.values(next)) {
@@ -67,6 +87,11 @@ export function setEmotions(next: Record<string, EmotionSpan[]>, points?: Record
       for (const p of list) pointBySource.set(p.sourceId, p);
     }
   }
+  if (nextDigests) digests = nextDigests;
+}
+
+export function digestFor(key: string): Digest | undefined {
+  return digests[key];
 }
 
 export function emotionAt(externalId: string): EmotionSpan | undefined {
