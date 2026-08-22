@@ -16,6 +16,7 @@ import type * as chats from "../chats.js";
 import type * as crons from "../crons.js";
 import type * as email from "../email.js";
 import type * as emailIngest from "../emailIngest.js";
+import type * as holdings from "../holdings.js";
 import type * as http from "../http.js";
 import type * as ingest from "../ingest.js";
 import type * as news from "../news.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   email: typeof email;
   emailIngest: typeof emailIngest;
+  holdings: typeof holdings;
   http: typeof http;
   ingest: typeof ingest;
   news: typeof news;

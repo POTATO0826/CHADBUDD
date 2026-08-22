@@ -315,6 +315,26 @@ export default defineSchema({
     .index("by_ts", ["ts"])
     .index("by_client", ["clientId"]),
 
+  /** The real book, one row per product, replaced whole on each import. */
+  holdings: defineTable({
+    hid: v.string(),
+    clientKey: v.string(),
+    name: v.string(),
+    kind: v.string(),
+    classes: v.array(v.string()),
+    invested: v.number(),
+    value: v.number(),
+    value1yAgo: v.number(),
+    startIso: v.string(),
+    maturityIso: v.optional(v.string()),
+    contribution: v.number(),
+    frequency: v.string(),
+    lastUpdateIso: v.string(),
+    risk: v.string(),
+    notes: v.string(),
+    importedAt: v.number(),
+  }).index("by_client", ["clientKey"]),
+
   pairing: defineTable({
     platform: v.string(),
     state: v.union(

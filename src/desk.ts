@@ -27,7 +27,7 @@ import { holdings } from "../data/holdings.ts";
 import type { MarketEvent } from "../data/market.ts";
 import { marketEvents } from "../data/market.ts";
 import { clients } from "./derive.ts";
-import { liveMarketEvents } from "./live.ts";
+import { liveHoldings, liveMarketEvents } from "./live.ts";
 import { nowMs } from "./daysource.ts";
 
 const DAY = 86_400_000;
@@ -224,7 +224,7 @@ export function deskView(): Desk {
   /* Holdings whose client is actually in the current book. In seed mode the
      book is A–D; live mode adds real clients. A holding with no client behind
      it is a row about nobody, so it is dropped rather than mislabelled. */
-  const held = holdings
+  const held = ((liveHoldings() as Holding[] | null) ?? holdings)
     .map((h) => ({ h, name: nameOf(h.client) }))
     .filter((x): x is { h: Holding; name: string } => x.name !== null);
 

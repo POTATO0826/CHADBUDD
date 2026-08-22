@@ -1,10 +1,10 @@
-client_key,client_name,product_name,product_type,asset_classes,currency,invested_amount,current_value,start_date,maturity_date,contribution_amount,contribution_frequency,last_update_sent,risk_rating,notes
-A,Priya Ramasamy,Capital Secure Income Plan VII,structured,us-bonds;global-bonds,MYR,140000,152400,2023-09-01,2026-08-29,0,none,2026-07-18,conservative,Principal-protected; discussed rollover options at last review
-A,Priya Ramasamy,Global Sukuk Income Fund,fund,global-bonds,MYR,82000,88700,2022-03-15,,500,monthly,2026-07-18,conservative,Standing instruction from salary on the 24th
-B,Faizal Rahman,Corporate Cash Management Fund,fund,money-market,MYR,205000,210000,2024-01-10,,0,none,2026-07-11,conservative,Business float; keep liquid per his instruction
-B,Faizal Rahman,Asia Pacific Bond Fund,fund,global-bonds;asia-equity,MYR,70000,64300,2021-11-02,,0,none,2026-07-11,moderate,Underwater; he said park everything until October
-C,Michelle Tan,Balanced Growth Portfolio,fund,global-equity;global-bonds,MYR,104000,118900,2023-05-20,,1900,monthly,2026-05-17,moderate,Condo deposit target mid-2028; RM1900 stepped-up rate
-C,Michelle Tan,Malaysia Dividend Equity Fund,fund,malaysia-equity,MYR,45000,46200,2024-06-01,,0,none,2026-05-17,moderate,Dividend payout to bank account
-D,Adrian Lim,Global Technology Fund,fund,tech-equity;global-equity,MYR,60000,93800,2021-02-14,,0,none,2026-05-09,aggressive,Worried about drawdown; wants the two-fund comparison first
-D,Adrian Lim,PRS Growth — self + spouse,prs,malaysia-equity;global-equity,MYR,66000,71500,2022-12-01,,250,monthly,2026-06-24,moderate,Tax relief pair; spouse account under same servicing
-E,Vince Loo,Money Market Fund,fund,money-market,MYR,10000,10000,2026-08-01,,0,none,2026-08-20,conservative,New client; parked while deciding allocation
+client_key,client_name,client_email,product_name,product_type,asset_classes,currency,invested_amount,current_value,value_1y_ago,start_date,maturity_date,contribution_amount,contribution_frequency,last_update_sent,risk_rating,notes
+A,Priya Ramasamy,priya.r@example.com,Capital Secure Income Plan VII,structured,us-bonds;global-bonds,MYR,140000,152400,151300,2023-09-01,2026-08-29,0,none,2026-07-18,conservative,Principal-protected; discussed rollover options at last review
+A,Priya Ramasamy,priya.r@example.com,Global Sukuk Income Fund,fund,global-bonds,MYR,82000,88700,88100,2022-03-15,,500,monthly,2026-07-18,conservative,Standing instruction from salary on the 24th
+B,Faizal Rahman,faizal.r@example.com,Corporate Cash Management Fund,fund,money-market,MYR,205000,210000,203400,2024-01-10,,0,none,2026-07-11,conservative,Business float; keep liquid per his instruction
+B,Faizal Rahman,faizal.r@example.com,Asia Pacific Bond Fund,fund,global-bonds;asia-equity,MYR,70000,64300,66900,2021-11-02,,0,none,2026-07-11,moderate,Underwater; he said park everything until October
+C,Michelle Tan,michelle.t@example.com,Balanced Growth Portfolio,fund,global-equity;global-bonds,MYR,104000,118900,108000,2023-05-20,,1900,monthly,2026-05-17,moderate,Condo deposit target mid-2028; RM1900 stepped-up rate
+C,Michelle Tan,michelle.t@example.com,Malaysia Dividend Equity Fund,fund,malaysia-equity,MYR,45000,46200,43600,2024-06-01,,0,none,2026-05-17,moderate,Dividend payout to bank account
+D,Adrian Lim,adrian.l@example.com,Global Technology Fund,fund,tech-equity;global-equity,MYR,60000,93800,70100,2021-02-14,,0,none,2026-05-09,aggressive,Worried about drawdown; wants the two-fund comparison first
+D,Adrian Lim,adrian.l@example.com,PRS Growth — self + spouse,prs,malaysia-equity;global-equity,MYR,66000,71500,67200,2022-12-01,,250,monthly,2026-06-24,moderate,Tax relief pair; spouse account under same servicing
+E,Vince Loo,vince.loo@example.com,Money Market Fund,fund,money-market,MYR,10000,10000,10000,2026-08-01,,0,none,2026-08-20,conservative,New client; parked while deciding allocation

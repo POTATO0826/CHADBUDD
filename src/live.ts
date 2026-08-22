@@ -142,6 +142,63 @@ export function liveNotes(key: ClientKey): Array<{ text: string; cite: string; u
   return notesLive.get(key) ?? [];
 }
 
+/**
+ * The imported book, shaped exactly like data/holdings.ts rows so the desk
+ * and importance pre-fill cannot tell which answered. Null until an import
+ * exists — the seed remains the demo's book.
+ */
+interface HoldingRow {
+  hid: string;
+  clientKey: string;
+  name: string;
+  kind: string;
+  classes: string[];
+  invested: number;
+  value: number;
+  value1yAgo: number;
+  maturityIso?: string;
+  lastUpdateIso: string;
+}
+let holdingRows: HoldingRow[] = [];
+
+export function liveHoldings(): Array<{
+  id: string;
+  client: ClientKey;
+  name: string;
+  kind: "fund" | "structured" | "prs" | "plan";
+  classes: string[];
+  value: number;
+  invested: number;
+  series: number[];
+  maturesAtIso?: string;
+  lastUpdateDaysAgo: number;
+}> | null {
+  if (holdingRows.length === 0) return null;
+  const now = Date.now();
+  return holdingRows.map((r) => ({
+    id: r.hid,
+    client: r.clientKey as ClientKey,
+    name: r.name,
+    kind: (["fund", "structured", "prs", "plan"].includes(r.kind) ? r.kind : "plan") as
+      | "fund"
+      | "structured"
+      | "prs"
+      | "plan",
+    classes: r.classes,
+    value: r.value,
+    invested: r.invested,
+    // Twelve points, linear from a year ago to now. Honest about what it is:
+    // a 12-month change with a straight line between the endpoints, because
+    // the CSV carries endpoints, not a NAV history.
+    series: Array.from({ length: 12 }, (_, i) => r.value1yAgo + ((r.value - r.value1yAgo) * i) / 11),
+    ...(r.maturityIso ? { maturesAtIso: r.maturityIso } : {}),
+    lastUpdateDaysAgo: Math.max(
+      0,
+      Math.floor((now - (Date.parse(r.lastUpdateIso) || now)) / 86_400_000),
+    ),
+  }));
+}
+
 /** The Ask panel's real backend. Throws plainly when live mode is off. */
 export async function askAgent(
   key: ClientKey,
@@ -382,6 +439,11 @@ export function initLive(onRender: () => void, onArrive?: (a: Arrival) => void):
 
     threads = next;
     ready = true;
+    apply();
+  });
+
+  client.onUpdate(q("holdings", "list"), {}, (value) => {
+    holdingRows = value as HoldingRow[];
     apply();
   });
 

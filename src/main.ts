@@ -27,7 +27,7 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
-import { askAgent, clientMeta, initLive, liveNotes, queueSend, sendEmail, setClientEmail } from "./live.ts";
+import { askAgent, clientMeta, initLive, liveHoldings, liveNotes, queueSend, sendEmail, setClientEmail } from "./live.ts";
 import { aiText, initDeskAi } from "./deskAi.ts";
 import type { Task } from "./tasks.ts";
 import { initTasks, taskCreate, taskDone, taskMove, taskRemove, tasks, tasksOn, urgencyOf } from "./tasks.ts";
@@ -881,11 +881,21 @@ function dayImportance(list: CalendarEvent[]): { imp: Importance | null; unrated
  */
 function suggestImportance(ev: CalendarEvent): Importance {
   if (!ev.withClient) return "routine";
-  const theirs = holdings.filter((h) => h.client === ev.withClient);
+  const book = (liveHoldings() as typeof holdings | null) ?? holdings;
+  const theirs = book.filter((h) => h.client === ev.withClient);
   if (theirs.length === 0) return "routine";
 
   const total = theirs.reduce((n, h) => n + h.value, 0);
-  const maturingSoon = theirs.some((h) => h.maturesInDays !== undefined && h.maturesInDays <= 14);
+  const soonDays = (h: (typeof theirs)[number]): number | undefined =>
+    h.maturesInDays !== undefined
+      ? h.maturesInDays
+      : h.maturesAtIso
+        ? Math.ceil((Date.parse(h.maturesAtIso) - nowMs()) / 86_400_000)
+        : undefined;
+  const maturingSoon = theirs.some((h) => {
+    const d = soonDays(h);
+    return d !== undefined && d >= 0 && d <= 14;
+  });
   const stale = theirs.some((h) => h.lastUpdateDaysAgo >= 90);
 
   if (maturingSoon || total >= 150_000) return "key";
