@@ -187,7 +187,10 @@ fn open_telegram(app: AppHandle, peer: String, dial: Option<bool>) -> Result<(),
 /// why it is not on the list — the page has no business opening browsers.
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
-    let allowed = url.starts_with("tg://") || url.starts_with("mailto:");
+    let allowed = url.starts_with("tg://")
+        || url.starts_with("mailto:")
+        || url.starts_with("https://mail.google.com/")
+        || url.starts_with("https://web.telegram.org/");
     if !allowed {
         return Err(format!("refusing to open non-allowlisted url: {url}"));
     }

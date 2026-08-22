@@ -29,22 +29,15 @@ import { funnelStages } from "./book.ts";
 import { FunnelChart, type FunnelStage } from "./charts/funnel-chart.tsx";
 
 /**
- * One hue, five depths.
+ * One hue for the whole funnel — the chart system's lead token, mixed toward
+ * the card so it sits on the surface instead of shouting off it.
  *
- * The stages are ordered, so the colour job is sequential — one hue stepped
- * light-to-dark — never five unrelated hues (a rainbow across an ordered
- * scale reads as five separate things, not one journey). The hue is the
- * chart system's lead token, so the tile matches every other chart, and the
- * ramp deepens toward the far end: the further a client is through the book,
- * the more saturated the segment they stand in.
- *
- * The value pill floats on its own foreground chip, so no step of the ramp
- * carries text.
+ * A per-stage ramp was tried and reverted: the vendored renderer draws its
+ * depth from halo rings around one colour, and feeding it five broke the
+ * segment shapes and swallowed the stage labels. One hue is also the honest
+ * grammar for an ordered scale.
  */
-const FUNNEL_RAMP = [26, 40, 54, 70, 86].map(
-  (pct) => `color-mix(in oklab, var(--chart-1) ${pct}%, var(--card))`,
-);
-const FUNNEL_COLOR = FUNNEL_RAMP[2] as string;
+const FUNNEL_COLOR = "color-mix(in oklab, var(--chart-1) 58%, var(--card))";
 
 interface Props {
   onStage: (stage: Stage) => void;
@@ -55,13 +48,12 @@ function Funnel({ onStage }: Props): React.JSX.Element {
 
   const data = useMemo<FunnelStage[]>(
     () =>
-      funnelStages.map((r, i) => ({
+      funnelStages.map((r) => ({
         label: r.stage,
         value: r.reached,
         // The width is everyone who got this far; the number shown is who is
         // standing here now. The gap between them is the conversion work.
         displayValue: String(r.here),
-        color: FUNNEL_RAMP[i] ?? FUNNEL_COLOR,
       })),
     [],
   );

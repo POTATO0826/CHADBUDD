@@ -28,12 +28,12 @@ export function nowMs(): number {
 }
 
 /**
- * Hidden for now, per the advisor: the recurring Google "Focus time" blocks
- * paint every single day and drown the meetings the calendar exists to
- * show. Display-level only — the busy/presence logic still sees them.
+ * Hidden for now, per the advisor: the recurring Google "Focus time" and
+ * "Lunch" blocks paint every single day and drown the meetings the calendar
+ * exists to show. Display-level only — busy/presence logic still sees them.
  */
 function shown(list: CalendarEvent[]): CalendarEvent[] {
-  return list.filter((ev) => !/focus time/i.test(ev.title));
+  return list.filter((ev) => !/focus time|lunch/i.test(ev.title));
 }
 
 /** Today's events, as last fetched. Empty until refreshCalendar has run once. */

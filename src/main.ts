@@ -589,7 +589,33 @@ const readyToSend = byIntent("send");
 const onHold = byIntent("hold");
 const blocked = byIntent("blocked");
 
-const pending = approvals.filter((a) => !a.done);
+/* The advisor's live ticks on the authored approval queue, persisted so a
+   demo approval survives a refresh. The authored done flags stay the floor. */
+const APPROVED_STORE = "cb-approved-v1";
+const approvedLive = new Set<string>(
+  ((): string[] => {
+    try {
+      return JSON.parse(localStorage.getItem(APPROVED_STORE) ?? "[]") as string[];
+    } catch {
+      return [];
+    }
+  })(),
+);
+function apDone(a: (typeof approvals)[number]): boolean {
+  return a.done || approvedLive.has(a.title);
+}
+function toggleApproval(title: string): void {
+  if (approvedLive.has(title)) approvedLive.delete(title);
+  else approvedLive.add(title);
+  try {
+    localStorage.setItem(APPROVED_STORE, JSON.stringify([...approvedLive]));
+  } catch {
+    /* private mode: ticks last the session */
+  }
+}
+function pendingApprovals(): Array<(typeof approvals)[number]> {
+  return approvals.filter((a) => !apDone(a));
+}
 
 /* ── the day ─────────────────────────────────────────────────────
    The top-left tile used to name the most urgent client. That is a fact the
@@ -1849,6 +1875,7 @@ function needsReviewCard(): string {
         <div class="ctxacts">
           <button class="btn acc sm" data-act="sugg-accept" data-sugg="${e(s.id)}">✓ Add to plan</button>
           <button class="btn sm" data-act="sugg-dismiss" data-sugg="${e(s.id)}">✕ No</button>
+          <button class="btn sm" data-act="${s.kind === "email" ? "ext-gmail" : "ext-tg"}" data-client="${s.clientKey}">↗ ${s.kind === "email" ? "Gmail" : "Telegram"}</button>
         </div>
       </div>`;
     })
@@ -2223,6 +2250,7 @@ function overviewPage(): string {
     .join("");
 
   // Real split of what is waiting on you, by kind.
+  const pending = pendingApprovals();
   const kinds = [
     { label: "send", n: pending.filter((a) => a.glyph === "→").length, fill: "var(--butter)" },
     { label: "unblock", n: pending.filter((a) => a.glyph === "!" || a.glyph === "◇").length, fill: "var(--chip-dark)" },
@@ -2240,17 +2268,24 @@ function overviewPage(): string {
     .join("");
 
   const queueRows = approvals
-    .map(
-      (a) => `
-      <button class="qrow${a.done ? " done" : ""}"${a.go ? ` data-act="open-record" data-client="${a.go.client}" data-mode="${a.go.mode}"` : ""}>
-        <span class="g" style="color:${a.done ? "var(--t4)" : a.glyph === "!" ? "var(--i-crit)" : "var(--butter)"}">${e(a.glyph)}</span>
+    .map((a) => {
+      const done = apDone(a);
+      // "A-068" in the meta is a citation key — the exact message that
+      // justifies the row. It becomes a jump chip; the prose keeps the rest.
+      const cite = /([A-D]-\d{3})/.exec(a.meta)?.[1];
+      const metaText = cite ? a.meta.replace(` · ${cite}`, "").replace(cite, "").trim() : a.meta;
+      return `
+      <button class="qrow${done ? " done" : ""}"${a.go ? ` data-act="open-record" data-client="${a.go.client}" data-mode="${a.go.mode}"` : ""}>
+        <span class="g" style="color:${done ? "var(--t4)" : a.glyph === "!" ? "var(--i-crit)" : "var(--butter)"}">${e(a.glyph)}</span>
         <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
           <span class="ttl">${e(a.title)}</span>
-          <span class="mt">${e(a.meta)}</span>
+          <span class="mt">${e(metaText)}${cite && a.go ? ` <span class="qcite" data-act="cite" data-client="${a.go.client}" data-id="${cite}">${cite} →</span>` : ""}</span>
         </span>
-        <span class="tick" style="background:${a.done ? "var(--butter)" : "transparent"};box-shadow:inset 0 0 0 1px ${a.done ? "var(--butter)" : "color-mix(in oklab, var(--foreground) 20%, transparent)"}">${a.done ? "✓" : ""}</span>
-      </button>`,
-    )
+        <span class="tick" data-act="approve-toggle" data-apid="${e(a.title)}" role="checkbox" aria-checked="${done}"
+          title="${done ? "Undo" : "Mark handled"}"
+          style="background:${done ? "var(--butter)" : "transparent"};box-shadow:inset 0 0 0 1px ${done ? "var(--butter)" : "color-mix(in oklab, var(--foreground) 20%, transparent)"}">${done ? "✓" : ""}</span>
+      </button>`;
+    })
     .join("");
 
 
@@ -2293,7 +2328,7 @@ function overviewPage(): string {
       <div class="bento">
         ${upNextTile()}
 
-        <div class="tile">
+        <div class="tile" data-act="page" data-page="clients" role="button" style="cursor:pointer">
           <div class="tile-h">
             <span class="t">Client replies</span>
             <button class="ico" data-act="page" data-page="clients" title="Open clients">↗</button>
@@ -2305,7 +2340,7 @@ function overviewPage(): string {
           <div class="bars">${bars}</div>
         </div>
 
-        <div class="tile">
+        <div class="tile" data-act="open-profile" data-client="${replyClock.worst.key}" role="button" style="cursor:pointer">
           <div class="tile-h">
             <span class="t">Reply clock</span>
             <button class="ico" data-act="open-profile" data-client="${replyClock.worst.key}" title="Open ${e(replyClock.worst.name)}">↗</button>
@@ -4152,6 +4187,30 @@ island.addEventListener("click", (ev) => {
         state.calDay = startOfDay(t.dueMs);
         setState("open");
       }
+      return;
+    }
+
+    case "approve-toggle": {
+      const id = hit.dataset.apid;
+      if (id) {
+        toggleApproval(id);
+        render();
+      }
+      return;
+    }
+
+    /* The conversation, where it actually lives: the OS browser on Gmail or
+       Telegram Web, searched to the client. */
+    case "ext-gmail": {
+      if (!key) return;
+      const who = clientMeta(key)?.email ?? clientById(key.toLowerCase()).name.split(" ")[0] ?? "";
+      openExternal(`https://mail.google.com/mail/u/0/#search/${encodeURIComponent(who)}`);
+      return;
+    }
+    case "ext-tg": {
+      if (!key) return;
+      const src = clientMeta(key)?.sourceId ?? "";
+      openExternal(src !== "" ? `https://web.telegram.org/a/#${src}` : "https://web.telegram.org/a/");
       return;
     }
 
