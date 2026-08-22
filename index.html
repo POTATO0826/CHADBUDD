@@ -52,33 +52,47 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
    The named palette maps onto the system's token slots below: base →
    background, surface → card, overlay → secondary/muted, highlight-med →
    border, iris → primary, and the accents onto the status bands. */
-:root{
-  color-scheme: dark;
+/* ── the ground is white now ──
+   Rosé Pine Dawn, the light sibling of the Moon palette this was built on, so
+   the hues keep their meaning — iris is still the machine, love is still the
+   alarm, foam is still the calm — while the ground goes to paper. The base is
+   pure white rather than Dawn's warm #faf4ed because that is what was asked
+   for; surface keeps Dawn's warmth so cards still separate from the page
+   without a border.
 
-  --background: #232136;              /* base    */
-  --foreground: #e0def4;              /* text    */
-  --card: #2a273f;                    /* surface */
-  --card-foreground: #e0def4;
-  --popover: #2a273f;
-  --popover-foreground: #e0def4;
-  --primary: #c4a7e7;                 /* iris    */
-  --primary-foreground: #232136;
-  --secondary: #393552;               /* overlay */
-  --secondary-foreground: #e0def4;
-  --muted: #393552;
-  --muted-foreground: #908caa;        /* subtle  */
-  --accent: #44415a;                  /* highlight-med */
-  --accent-foreground: #e0def4;
-  --destructive: #eb6f92;             /* love    */
-  --destructive-foreground: #232136;
-  --border: #44415a;
-  --input: #44415a;
-  --ring: #c4a7e7;
-  --chart-1: #3e8fb0;   /* pine */
-  --chart-2: #9ccfd8;   /* foam */
-  --chart-3: #f6c177;   /* gold */
-  --chart-4: #ea9a97;   /* rose */
-  --chart-5: #c4a7e7;   /* iris */
+   Nothing below this block needed changing: every fill in the sheet is a
+   color-mix against these tokens rather than a literal, so dark ink at 6% on
+   white lands exactly where light ink at 6% on charcoal did. */
+:root{
+  color-scheme: light;
+
+  --background: #ffffff;              /* base    */
+  --foreground: #575279;              /* text    */
+  /* Dawn's surface is #faf4ed, which over a white base gave the whole plane a
+     cream cast — the ask was white, so the surface keeps only a trace of the
+     warmth and the tiles separate on their edge ring instead. */
+  --card: #fbfaf8;                    /* surface */
+  --card-foreground: #575279;
+  --popover: #fffaf3;
+  --popover-foreground: #575279;
+  --primary: #907aa9;                 /* iris    */
+  --primary-foreground: #ffffff;
+  --secondary: #f2e9e1;               /* overlay */
+  --secondary-foreground: #575279;
+  --muted: #f2e9e1;
+  --muted-foreground: #797593;        /* subtle  */
+  --accent: #dfdad9;                  /* highlight-med */
+  --accent-foreground: #575279;
+  --destructive: #b4637a;             /* love    */
+  --destructive-foreground: #ffffff;
+  --border: #dfdad9;
+  --input: #dfdad9;
+  --ring: #907aa9;
+  --chart-1: #286983;   /* pine */
+  --chart-2: #56949f;   /* foam */
+  --chart-3: #ea9d34;   /* gold */
+  --chart-4: #d7827e;   /* rose */
+  --chart-5: #907aa9;   /* iris */
   --radius: 1rem;
 
   --shadow-2xs: 0 1px 10px 0px hsl(0 0% 0% / 0.03);
@@ -156,8 +170,8 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
      hue, same quietness — so a box reads as a box without needing a border.
      Surface tint only, never an ink. */
   --glacial:   #a8c8dc;
-  --mint:      #a9d9b6;   /* task on track — green means nothing else here */
-  --mint-hi:   #d6eedd;
+  --mint:      #7bbd93;   /* task on track — green means nothing else here */
+  --mint-hi:   #2f6b45;
   --tile:      color-mix(in oklab, var(--glacial) 11%, color-mix(in oklab, var(--card) 72%, transparent));
   --tile-2:    color-mix(in oklab, var(--glacial) 12%, color-mix(in oklab, var(--card) 80%, transparent));
   /* wells — a step *down* from the plane, which on the light ramp means ink */
@@ -197,10 +211,13 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
      the plane, so they carry the contrast the way --i-* does in the status
      pairs. Left at their old light-ramp lightness they came out near-black on
      the base and the brand mark disappeared into it. */
-  --iris:     oklch(0.7800 0.0850 285);
+  /* On the dark ramp these were the LIGHTER step, because they had to hold
+     against a charcoal plane. On paper that inverts — they are type, so they
+     take the darker step or they wash out. */
+  --iris:     #7f6a99;
   --iris-a:   color-mix(in oklab, var(--iris) 16%, transparent);
   --iris-b:   color-mix(in oklab, var(--iris) 32%, transparent);
-  --foam:     oklch(0.8000 0.0700 196);
+  --foam:     #3f7f8a;
 
   /* ── bridge: the lit frame ──
      Notification hues, and the one place the palette steps outside itself.
@@ -209,10 +226,10 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
      than derived. --*-hi is the hot centre of the travelling band, a lighter
      step of the same hue so the sweep reads as a highlight rather than as a
      second colour crossing the first. */
-  --gold:     #f6c177;                /* gold */
-  --gold-hi:  #fbe0b0;
-  --alarm:    #eb6f92;                /* love */
-  --alarm-hi: #f5a8bd;
+  --gold:     #ea9d34;                /* gold */
+  --gold-hi:  #96650f;
+  --alarm:    #b4637a;                /* love */
+  --alarm-hi: #8f3f57;
 
   /* ── bridge: status ──
      MARK fills a shape, INK sets type. The pair is ordered by which one has to
@@ -223,10 +240,12 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
 
      Four bands, on the palette's own accents: pine/foam steady, gold watch,
      rose slipping, love gone. */
-  --m-good: #3e8fb0;  --i-good: #9ccfd8;   /* pine  → foam */
-  --m-warn: #f6c177;  --i-warn: #f6c177;   /* gold        */
-  --m-ser:  #ea9a97;  --i-ser:  #ea9a97;   /* rose        */
-  --m-crit: #eb6f92;  --i-crit: #eb6f92;   /* love        */
+  /* The pair inverts on paper: MARK stays the lighter fill, INK takes the
+     darker step, because INK is the one that now has to survive white. */
+  --m-good: #56949f;  --i-good: #286983;   /* foam  → pine */
+  --m-warn: #ea9d34;  --i-warn: #96650f;   /* gold        */
+  --m-ser:  #d7827e;  --i-ser:  #b04a45;   /* rose        */
+  --m-crit: #b4637a;  --i-crit: #a13c58;   /* love        */
 
   /* ── hue = meaning, the whole palette working ──
      The audit found rose and pine painting zero pixels and gold and foam
@@ -241,8 +260,8 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
      saturated ink on a wash of its own hue. Chips keep their hue by pairing
      a LIGHTER ink with a fill mixed toward the BACKGROUND — darker fill,
      brighter text, same identity, and the ratios clear 4.5:1. */
-  --rose:     #ea9a97;
-  --rose-hi:  #f5c2c0;
+  --rose:     #d7827e;
+  --rose-hi:  #b04a45;
 
   /* ── bridge: elevation ──
      The system's shadow scale is tuned for cards sitting on a page. The
