@@ -801,11 +801,11 @@ function upNextTile(): string {
   return `
     <div class="upnext">
       <button class="face" data-act="open-slot" data-slot="${e(s.id)}"
-        aria-label="${e(flag)}: ${e(s.title)}, ${e(untilText(s.inMinutes))}. Open its context.">
+        aria-label="${e(flag)}: ${e(s.title)}${s.past ? ` ended ${e(hhmmOf(s.end))}` : `, ${e(untilText(s.inMinutes))}`}. Open its context.">
         <span class="grain" aria-hidden="true"></span>
         <span class="glow" aria-hidden="true" style="background:radial-gradient(closest-side, ${tint(markOf(tone), 20)}, transparent)"></span>
         <span class="flag">${e(flag)}</span>
-        <span class="cd" style="color:${inkOf(tone)}">${e(untilText(s.inMinutes))}</span>
+        <span class="cd" style="color:${inkOf(tone)}">${s.past ? `ended ${e(hhmmOf(s.end))}` : e(untilText(s.inMinutes))}</span>
         <span class="btm">
           <span style="display:flex;flex-direction:column;gap:3px;min-width:0">
             <span class="nm">${e(who)}</span>
@@ -4211,6 +4211,9 @@ island.addEventListener("click", (ev) => {
     }
     case "page":
       state.page = (hit.dataset.page ?? "home") as Page;
+      // The up-next tile browses temporarily; landing on the overview snaps
+      // it back to the actual next thing, so "ago" can never greet you.
+      if (state.page === "home") state.up = null;
       // A section tab goes to the section, so clicking "clients" from inside a
       // client returns to the grid rather than looking like a dead button.
       if (state.page === "clients") state.cview = "grid";
