@@ -621,9 +621,8 @@ function greeting(): string {
 const byIntent = (want: Idea["intent"]): number =>
   clients.filter((c) => ideas[c.key]?.[0]?.intent === want).length;
 
-const readyToSend = byIntent("send");
-const onHold = byIntent("hold");
-const blocked = byIntent("blocked");
+/* Computed per render inside overviewPage — as module constants they froze
+   the seed before live ideas arrived, and the pills lied all day. */
 
 /* The advisor's live ticks on the authored approval queue, persisted so a
    demo approval survives a refresh. The authored done flags stay the floor. */
@@ -769,6 +768,27 @@ function upNextTile(): string {
   if (spent && state.up === null) {
     const ahead = nextAhead();
     if (ahead) return aheadCard(ahead, list.length);
+    if (list.length > 0) {
+      return `
+    <div class="upnext">
+      <button class="face" data-act="page" data-page="agenda">
+        <span class="grain" aria-hidden="true"></span>
+        <span class="flag">the day</span>
+        <span class="cd" style="color:var(--i-good)">day is done</span>
+        <span class="btm">
+          <span style="display:flex;flex-direction:column;gap:3px;min-width:0">
+            <span class="nm">Nothing ahead this week</span>
+            <span class="sub">${list.length} commitment${list.length === 1 ? "" : "s"} finished today</span>
+          </span>
+        </span>
+      </button>
+      <span class="step">
+        <button class="ar" data-act="up-step" data-dir="0" aria-label="Review today">‹</button>
+        <span class="pos">done</span>
+        <button class="ar" disabled aria-label="Nothing later">›</button>
+      </span>
+    </div>`;
+    }
     if (list.length === 0) {
       return `
       <div class="upnext"><button class="face" data-act="page" data-page="agenda">
@@ -789,7 +809,7 @@ function upNextTile(): string {
 
   // The flag has to say which way you have stepped, or a past meeting reads as
   // the next one with a strange countdown attached to it.
-  const flag = at === nextUpIndex ? "next up" : s.past ? "earlier today" : "later today";
+  const flag = s.past ? "earlier today" : at === nextUpIndex ? "next up" : "later today";
 
   const aheadAvail = list.every((x) => x.past) && nextAhead() !== null;
   const arrow = (dir: number, glyph: string, label: string): string => {
@@ -2360,6 +2380,9 @@ function overviewPage(): string {
 
   // Real split of what is waiting on you, by kind.
   const pending = pendingApprovals();
+  const readyToSend = byIntent("send");
+  const onHold = byIntent("hold");
+  const blocked = byIntent("blocked");
   const kinds = [
     { label: "send", n: pending.filter((a) => a.glyph === "→").length, fill: "var(--butter)" },
     { label: "unblock", n: pending.filter((a) => a.glyph === "!" || a.glyph === "◇").length, fill: "var(--chip-dark)" },
