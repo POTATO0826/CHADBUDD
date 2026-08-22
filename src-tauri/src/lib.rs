@@ -138,16 +138,35 @@ fn open_telegram(app: AppHandle, peer: String) -> Result<(), String> {
        marker in the query: the A client only honours the hash at SPA boot
        (recon proved runtime hash changes change nothing), and the marker is
        what tells the page-load handler this load intends to ring. */
-    let w = app
+    let mut w = app
         .get_webview_window("tgweb")
         .ok_or_else(|| "telegram window was not created at startup".to_string())?;
-    let _ = w.eval(&format!(
-        "location.href='https://web.telegram.org/a/?cbcall=1#{peer}'"
-    ));
+
+    /* Navigation happens from RUST, not from a script inside the page. The
+       trace showed why: the first two calls navigated and dialled, then
+       every eval'd location.href after a completed call submitted fine and
+       navigated nothing — a WebRTC call leaves beforeunload protection
+       armed, and in-page navigation dies against it silently. Native
+       Navigate does not ask the page's permission. The disarm eval is belt
+       to that suspender for any path that still goes through the page. */
+    let _ = w.eval("try{window.onbeforeunload=null;}catch(e){}");
+
+    let url: tauri::Url = format!("https://web.telegram.org/a/?cbcall=1#{peer}")
+        .parse()
+        .map_err(|e| format!("{e}"))?;
+    match w.navigate(url) {
+        Ok(()) => println!("[tgweb] rust-navigate to peer {peer} with call intent"),
+        Err(e) => {
+            println!("[tgweb] rust-navigate failed ({e}); falling back to eval");
+            let _ = w.eval(&format!(
+                "location.replace('https://web.telegram.org/a/?cbcall=1#{peer}')"
+            ));
+        }
+    }
+
     let _ = w.show();
     let _ = w.unminimize();
     let _ = w.set_focus();
-    println!("[tgweb] navigating to peer {peer} with call intent");
     Ok(())
 }
 
