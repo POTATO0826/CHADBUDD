@@ -2118,7 +2118,7 @@ function deskSection(): string {
 
       ${
         d.urgent.length || d.horizon.length
-          ? `<div class="dsec">
+          ? `<div class="dsec dsec--maturing">
               <span class="lbl">maturing soon</span>
               ${d.urgent.map((r) => maturingRow(r, true)).join("")}
               ${d.horizon.map((r) => maturingRow(r, false)).join("")}
@@ -2129,7 +2129,7 @@ function deskSection(): string {
 
       ${
         d.market.length
-          ? `<div class="dsec">
+          ? `<div class="dsec dsec--market">
               <span class="lbl">market watch</span>
               ${d.market.map(marketRow).join("")}
             </div>`
@@ -2138,7 +2138,7 @@ function deskSection(): string {
 
       ${
         d.stale.length
-          ? `<div class="dsec">
+          ? `<div class="dsec dsec--stale">
               <span class="lbl">quiet holdings</span>
               ${d.stale.map(staleRow).join("")}
               ${d.staleMore > 0 ? `<span class="dmore">+${d.staleMore} more past ${90} days</span>` : ""}
@@ -2836,14 +2836,14 @@ function proposalCards(): string {
     .map((p) => {
       const initials = p.name.split(" ").map((w) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
       return `
-    <div class="lrow" style="box-shadow:inset 2px 0 0 var(--butter)">
-      <span class="sq" style="background:${tint("var(--butter)", 16)};color:var(--butter)">${e(initials)}</span>
+    <div class="lrow" style="box-shadow:inset 2px 0 0 var(--gold)">
+      <span class="sq" style="background:${tint("var(--gold)", 16)};color:var(--gold)">${e(initials)}</span>
       <span class="who">
         <span class="n">${e(p.name)}</span>
         <span class="w">${e(proposalWhen(p))}</span>
       </span>
       <span class="kindcol">
-        <span class="kind" style="color:var(--butter);background:transparent;border:1px dashed ${tint("var(--butter)", 50)}">asked in chat</span>
+        <span class="kind" style="color:var(--gold);background:transparent;border:1px dashed ${tint("var(--gold)", 50)}">asked in chat</span>
       </span>
       <span class="bodycol">
         <span class="tx" style="color:var(--t1)">“${e(p.text)}”</span>
