@@ -121,29 +121,18 @@ fn open_telegram(app: AppHandle, peer: String) -> Result<(), String> {
         return Err(format!("not a telegram peer id: {peer}"));
     }
 
-    // Rebuilt fresh on every click rather than reused: the login lives in the
-    // WebView2 profile, not the window, so closing costs nothing — and a
-    // window that wedged (white screen, dead worker) would otherwise be
-    // faithfully refocused in its wedged state forever.
-    if let Some(w) = app.get_webview_window("tgweb") {
-        let _ = w.close();
-    }
+    println!("[tgweb] open requested for peer {peer}");
 
-    let url: tauri::Url = format!("https://web.telegram.org/k/#{peer}")
-        .parse()
-        .map_err(|e| format!("{e}"))?;
-
-    /* A plain Chrome user-agent, because Telegram Web sniffs. The embedded
-       WebView2 UA reads as an in-app browser and the K client answers it
-       with a silent white page rather than an error — the same treatment
-       Google's login gives webviews. The engine underneath is the same
-       Chromium either way; the string is the only thing being judged. */
-    tauri::WebviewWindowBuilder::new(&app, "tgweb", tauri::WebviewUrl::External(url))
-        .title("Telegram · ChadBuddy")
-        .inner_size(440.0, 720.0)
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-        .build()
-        .map_err(|e| e.to_string())?;
+    /* The window already exists — created once in setup(), because runtime
+       webview creation on this app silently never navigated however it was
+       threaded. Opening is now: point the SPA at the peer, show, focus. */
+    let w = app
+        .get_webview_window("tgweb")
+        .ok_or_else(|| "telegram window was not created at startup".to_string())?;
+    let _ = w.eval(&format!("location.hash = '#{peer}'"));
+    let _ = w.show();
+    let _ = w.unminimize();
+    let _ = w.set_focus();
     Ok(())
 }
 
@@ -216,6 +205,51 @@ pub fn run() {
             open_telegram
         ])
         .setup(move |app| {
+            /* The Telegram window, created once here and only ever shown.
+               Runtime creation was tried three ways — worker thread, then
+               run_on_main_thread — and the trace showed the closure never
+               executing and the webview never navigating: a white shell,
+               no error. setup() runs on the main thread before the event
+               loop starts, which is the one place window creation is
+               documented to work everywhere. Hidden until the Call button
+               wants it; closing it hides it again rather than destroying
+               the only copy. */
+            {
+                let tg_url: tauri::Url = "https://web.telegram.org/a/"
+                    .parse()
+                    .expect("static url parses");
+                match tauri::WebviewWindowBuilder::new(
+                    app,
+                    "tgweb",
+                    tauri::WebviewUrl::External(tg_url),
+                )
+                .title("Telegram · ChadBuddy")
+                .inner_size(440.0, 720.0)
+                .visible(false)
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+                .on_navigation(|url| {
+                    println!("[tgweb] navigating: {url}");
+                    true
+                })
+                .on_page_load(|_w, payload| {
+                    println!("[tgweb] page {:?}: {}", payload.event(), payload.url());
+                })
+                .build()
+                {
+                    Ok(tg) => {
+                        println!("[tgweb] window built at startup");
+                        let tg2 = tg.clone();
+                        tg.on_window_event(move |event| {
+                            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                                api.prevent_close();
+                                let _ = tg2.hide();
+                            }
+                        });
+                    }
+                    Err(e) => eprintln!("[tgweb] startup build failed: {e}"),
+                }
+            }
+
             let window = app
                 .get_webview_window("main")
                 .expect("tauri.conf.json defines a window labelled `main`");
