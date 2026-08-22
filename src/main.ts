@@ -26,7 +26,8 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
-import { acceptProposal, askAgent, clientMeta, declineProposal, initLive, liveHoldings, liveNotes, queueSend, sendEmail, sendEmailWithFile, setClientEmail, uploadFile } from "./live.ts";
+import { acceptProposal, askAgent, autoStats, clientMeta, declineProposal, initLive, liveHoldings, liveNotes, queueSend, sendEmail, sendEmailWithFile, setClientEmail, uploadFile } from "./live.ts";
+import type { AutoStats } from "./live.ts";
 import { aiText, initDeskAi } from "./deskAi.ts";
 import type { Task } from "./tasks.ts";
 import { initTasks, taskCreate, taskDone, taskMove, taskRemove, tasks, tasksOn, urgencyOf } from "./tasks.ts";
@@ -115,6 +116,15 @@ interface AskTurn {
   text: string;
   sug?: number[];
   cites?: string[];
+  /**
+   * The plain text of this answer, when it is something that could be sent to
+   * the client as-is. Held unescaped and separate from `text`, which is HTML
+   * by the time it renders. Its presence is what puts a send control under the
+   * turn; the advisor still has to open it, read it and confirm.
+   */
+  sendable?: string;
+  /** Set once this turn has been sent, so the control cannot fire twice. */
+  sent?: boolean;
 }
 
 interface State {
@@ -177,6 +187,15 @@ interface State {
    * goes out is what was approved, not what the model originally wrote.
    */
   editing: string | null;
+  /**
+   * Which answer in the ask log is open for send confirmation, as "key:index".
+   *
+   * Sending on one click would make the agent's chat a place where a stray
+   * press mails a client. Sending behind a browser confirm() would make it a
+   * dialog nobody reads. The middle is this: the control opens the exact text
+   * in an editable box in place, and the button under it is the send.
+   */
+  confirmAsk: string | null;
   /** Reply composer: which channel, and the draft surviving re-renders. */
   replyVia: "tg" | "em";
   replyDraft: string;
@@ -237,6 +256,7 @@ const state: State = {
   ask: {},
   draft: "",
   editing: null,
+  confirmAsk: null,
   replyVia: "tg",
   replyDraft: "",
   editText: "",
@@ -548,9 +568,33 @@ function nextNotif(): void {
  * strip underneath is one band per client in their status colour, so the
  * shape of the whole book still reads in a quarter of a second.
  */
+/**
+ * What the agent sent while nobody was watching.
+ *
+ * Only rendered in live mode — the column is absent rather than zero when the
+ * backend has not answered, because "it sent nothing" and "we do not know yet"
+ * are different claims and a peek card that guesses is worse than one that is
+ * quiet. The headline is today's count, with the running total and anything
+ * stuck in the queue in the tooltip; a queue that is not draining means the
+ * bridge is down, which is the one thing worth noticing here.
+ */
+function autoStat(a: AutoStats): string {
+  const detail =
+    `${a.today} auto-replies sent today\n${a.sent} sent in total` +
+    (a.pending > 0 ? `\n${a.pending} still queued — is the bridge running?` : "") +
+    (a.failed > 0 ? `\n${a.failed} failed` : "");
+  const dot = a.pending > 0 || a.failed > 0 ? "var(--m-warn)" : a.today > 0 ? "var(--butter)" : undefined;
+  return `
+    <span class="st" data-act="peek-go" data-page="clients" role="link" title="${e(detail)}">
+      <span class="hd">${dot ? `<i class="dt" style="background:${dot}"></i>` : ""}<span class="lbl">auto-replied</span></span>
+      <span class="v num">${a.today}</span>
+    </span>`;
+}
+
 function peekLayer(): string {
   const { tasksLeft, unreplied, toReturn } = owedNow();
   const meetingsLeft = bigSlots.filter((s) => !s.past).length;
+  const auto = autoStats();
   const strip = clients
     .map((c) => `<i style="background:${markOf(c.tone)}" title="${e(c.name)} · ${e(c.statusWord)}"></i>`)
     .join("");
@@ -578,6 +622,7 @@ function peekLayer(): string {
         ${stat("calls to return", toReturn, "calls", toReturn > 0 ? "var(--m-crit)" : "var(--m-good)")}
         <i class="div"></i>
         ${stat("meetings left", meetingsLeft, "agenda")}
+        ${auto ? `<i class="div"></i>${autoStat(auto)}` : ""}
       </span>
       <span class="strip" aria-hidden="true">${strip}</span>
     </button>`;
@@ -3024,7 +3069,46 @@ function answer(c: ClientView, intent: AskIntent): AskTurn {
   }
 }
 
-function askTurn(t: AskTurn, c: ClientView): string {
+/**
+ * The send control under an agent answer.
+ *
+ * The agent can draft a reply; until now, in live mode, it could only *say*
+ * the reply — the suggestion cards with their Send buttons are a seed-mode
+ * path, so an answer from the real model arrived as prose the advisor had to
+ * retype into the composer. This closes that: one control to open it, the
+ * exact outgoing text editable in place, and a send that puts the message in
+ * the same outbox every other send uses.
+ *
+ * Two steps on purpose. Nothing in this product mails a client on one click.
+ */
+function askSend(t: AskTurn, c: ClientView, idx: number): string {
+  if (t.from !== "agent" || !t.sendable) return "";
+  const id = `${c.key}:${idx}`;
+  const first = c.name.split(" ")[0] ?? c.name;
+
+  if (t.sent) return `<span class="asent">sent to ${e(first)}</span>`;
+
+  if (state.confirmAsk !== id) {
+    return `
+      <div class="askacts">
+        <button class="btn ghost" data-act="ask-send-open" data-id="${e(id)}"
+          title="Review this and send it to ${e(c.name)}">Send this to ${e(first)}…</button>
+      </div>`;
+  }
+
+  return `
+    <div class="askconfirm">
+      <span class="lb">Goes to ${e(c.name)} as you — edit it first if you need to</span>
+      <textarea class="asktx" id="asksend" data-keep="1" rows="4"
+        aria-label="The message that will be sent">${e(state.editText)}</textarea>
+      <div class="askacts">
+        <button class="btn acc" data-act="ask-send-go" data-id="${e(id)}" data-client="${e(c.key)}">Send</button>
+        <button class="btn ghost" data-act="ask-send-cancel">Cancel</button>
+      </div>
+    </div>`;
+}
+
+function askTurn(t: AskTurn, c: ClientView, idx = 0): string {
   const sug = (t.sug ?? [])
     .map((n) => {
       const i = ideas[c.key]?.[n];
@@ -3078,6 +3162,7 @@ function askTurn(t: AskTurn, c: ClientView): string {
       <span class="b">${t.text}</span>
       ${sug}
       ${cites}
+      ${askSend(t, c, idx)}
     </div>`;
 }
 
@@ -3108,7 +3193,7 @@ function insightPanel(c: ClientView): string {
               : ""
           }
         </div>
-        ${log.length ? `<div class="plog">${log.map((t) => askTurn(t, c)).join("")}</div>` : ""}
+        ${log.length ? `<div class="plog">${log.map((t, i) => askTurn(t, c, i)).join("")}</div>` : ""}
       </div>
       <div class="pask">
         <input data-act="draft" type="text" value="${e(state.draft)}" placeholder="Ask about ${e(c.name.split(" ")[0]!)}…" aria-label="Ask the agent about ${e(c.name)}">
@@ -3233,15 +3318,37 @@ function callButton(c: ClientView): string {
  * Advisor-entered because no platform we read carries it. An empty save
  * clears it — a wrong address is worse than none.
  */
+/**
+ * Commit the email on file.
+ *
+ * There is no Save button beside the field any more. A two-control row for a
+ * single value made the rail's tidiest line its busiest, and the button was
+ * pure ceremony — the field already knows when you are done with it. Blur and
+ * Enter both land here; an unchanged value is dropped before it reaches the
+ * network. An empty save still clears, deliberately: a wrong address on file
+ * is worse than none.
+ */
+function saveEmail(who: ClientKey, value: string): void {
+  const next = value.trim();
+  if (next === (clientMeta(who)?.email ?? "")) return;
+  void setClientEmail(who, next)
+    .then(() => render())
+    .catch((err) => {
+      console.error("[chadbuddy] email save failed", err);
+      showNotif({ kind: "reminder", client: null, title: "Not saved", body: String(err instanceof Error ? err.message : err).slice(0, 60), meta: "", tag: "EMAIL", tone: "critical", dwell: 6000 });
+    });
+}
+
 function emailRow(c: ClientView): string {
   const meta = clientMeta(c.key);
   const email = meta?.email ?? "";
   return `
     <div class="fact emailrow">
       <span class="g">✉</span><span class="k">Email</span><span class="d"></span>
-      <span class="v" style="display:flex;gap:5px;align-items:center">
-        <input class="emailbox" id="emailbox" type="email" value="${e(email)}" placeholder="none on file">
-        <button class="btn sm" data-act="email-save" data-client="${c.key}">Save</button>
+      <span class="v">
+        <input class="emailbox" id="emailbox" type="email" value="${e(email)}" placeholder="none on file"
+               data-act="email-field" data-client="${e(c.key)}"
+               title="Saves when you leave the field or press Enter">
       </span>
     </div>`;
 }
@@ -3272,6 +3379,69 @@ function composer(c: ClientView): string {
         <button class="btn acc" data-act="reply-send" data-client="${c.key}">Send</button>
       </div>
     </div>`;
+}
+
+/* ── sending, seen immediately ────────────────────────────────────
+ * The page cannot reach Telegram: a reply is a row in the outbox that the
+ * bridge picks up, sends, and that Telegram echoes back as a real message a
+ * second or three later. That round trip is the honest architecture and it is
+ * staying — but it meant the composer cleared and *nothing took its place*,
+ * so the thread sat unchanged while you wondered whether it had gone.
+ *
+ * These are the messages you have sent that the echo has not returned yet.
+ * They render as your own bubbles, marked, at the foot of the thread, and
+ * disappear the moment the real one lands. Nothing here is written anywhere:
+ * an optimistic bubble is a claim about the UI, never about the database.
+ */
+interface Pending {
+  id: string;
+  key: ClientKey;
+  text: string;
+  at: number;
+  /* The bridge being down is indistinguishable from it being slow, right up
+     until it isn't. After the grace period a pending bubble says so rather
+     than spinning forever. */
+  failed: boolean;
+}
+
+const pending: Pending[] = [];
+let pendingSeq = 0;
+const PENDING_GRACE_MS = 20_000;
+
+function addPending(key: ClientKey, text: string): string {
+  const id = `p${++pendingSeq}`;
+  pending.push({ id, key, text: text.trim(), at: Date.now(), failed: false });
+  window.setTimeout(() => {
+    const row = pending.find((p) => p.id === id);
+    if (row && !row.failed) {
+      row.failed = true;
+      render();
+    }
+  }, PENDING_GRACE_MS);
+  return id;
+}
+
+function dropPending(id: string): void {
+  const at = pending.findIndex((p) => p.id === id);
+  if (at >= 0) pending.splice(at, 1);
+}
+
+/**
+ * The pending bubbles still worth drawing for this client.
+ *
+ * Reconciliation is by text, because there is no correlation id to match on —
+ * the outbox row's id never reaches the message row the echo creates. Exact
+ * text plus "sent by the advisor" is enough in practice: the alternative is a
+ * schema change to carry an id through Telegram and back, which is a lot of
+ * machinery to disambiguate sending the same sentence twice in one minute.
+ */
+function pendingFor(c: ClientView): Pending[] {
+  const mine = new Set(c.messages.filter((m) => m.who === "advisor").map((m) => m.text.trim()));
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const p = pending[i]!;
+    if (p.key === c.key && mine.has(p.text)) pending.splice(i, 1);
+  }
+  return pending.filter((p) => p.key === c.key);
 }
 
 /**
@@ -3317,12 +3487,36 @@ function clientDetail(c: ClientView): string {
             ${shown.length
               ? shown.map((m) => messageRow(m, state.q.trim(), note)).join("")
               : `<p class="empty">No message matches “${e(state.q)}”.<br>Search runs over the text, the id and the timestamp.</p>`}
+            ${pendingFor(c).map(pendingRow).join("")}
           </div>
           ${composer(c)}
         </div>
 
         <!-- what to do about it -->
         <div class="dcol agent">${insightPanel(c)}</div>
+      </div>
+    </div>`;
+}
+
+/** Jump the thread to the newest message, after the next paint. */
+function stickThread(): void {
+  requestAnimationFrame(() => {
+    const el = document.getElementById("msgs");
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+}
+
+/** A message on its way out: your bubble, with the delivery state where the id goes. */
+function pendingRow(p: Pending): string {
+  return `
+    <div class="msg pend${p.failed ? " late" : ""}" data-who="advisor">
+      <div class="bub">
+        <span class="tx">${e(p.text)}</span>
+        <span class="meta"><span class="id">${
+          p.failed
+            ? "not delivered yet · is the bridge running?"
+            : "sending…"
+        }</span></span>
       </div>
     </div>`;
 }
@@ -4008,6 +4202,17 @@ function render(): void {
         ? ((active as HTMLTextAreaElement).selectionStart ?? 0)
         : 0;
 
+    /* Chat behaviour for the thread and the ask log: a reader who is at the
+       bottom is following the conversation and must stay pinned there as new
+       messages land; a reader who has scrolled up is reading something and
+       must not be yanked away from it. Measured before the swap, because the
+       new markup is a different height. */
+    const stick = new Set<string>();
+    for (const id of ["msgs", "asklog"]) {
+      const el = document.getElementById(id);
+      if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80) stick.add(id);
+    }
+
     const keep = new Map<string, number>();
     /* dashbody is the page scroll itself. It joined this list with the desk —
        the first page that scrolls — because a full innerHTML swap resets
@@ -4029,7 +4234,7 @@ function render(): void {
 
     for (const [id, y] of keep) {
       const el = document.getElementById(id);
-      if (el) el.scrollTop = y;
+      if (el) el.scrollTop = stick.has(id) ? el.scrollHeight : y;
     }
     for (const [id, v] of keepEdits) {
       const el = document.getElementById(id);
@@ -4117,6 +4322,10 @@ function ask(c: ClientView | undefined, q: string): void {
       .then((r) => {
         turn.text = e(r.uncited ? `${r.answer}\n\n(No verbatim evidence survived the gate — treat this one as the model's guess.)` : r.answer);
         turn.cites = r.cites;
+        /* The raw answer, kept unescaped, is what a send would put on the
+           wire. An uncited answer is the model guessing, and guesses do not
+           get a send button — that is the whole point of the gate. */
+        if (!r.uncited && r.answer.trim() !== "") turn.sendable = r.answer.trim();
         render();
       })
       .catch((err) => {
@@ -4655,17 +4864,69 @@ island.addEventListener("click", (ev) => {
       return;
     }
 
+    /* ── the agent's reply, confirmed then sent ──────────────────────
+       Opening the control seeds the editor with the agent's exact words;
+       `editText` is the same field the recommendation editor uses, so what
+       goes out is always what is on screen. */
+    case "ask-send-open": {
+      const id = hit.dataset.id;
+      if (!id) return;
+      const idx = Number(id.split(":")[1] ?? "");
+      const turn = (state.ask[state.sel] ?? [])[idx];
+      if (!turn?.sendable) return;
+      state.confirmAsk = id;
+      state.editText = turn.sendable;
+      dropKeep("asksend");
+      render();
+      return;
+    }
+
+    case "ask-send-cancel": {
+      state.confirmAsk = null;
+      state.editText = "";
+      dropKeep("asksend");
+      render();
+      return;
+    }
+
+    case "ask-send-go": {
+      const id = hit.dataset.id;
+      const who = hit.dataset.client;
+      const box = document.getElementById("asksend") as HTMLTextAreaElement | null;
+      const outgoing = (box?.value ?? state.editText).trim();
+      if (!id || !who || outgoing === "") return;
+
+      const idx = Number(id.split(":")[1] ?? "");
+      const turn = (state.ask[who] ?? [])[idx];
+      const person = findClient(who.toLowerCase());
+      if (!turn || !person) return;
+
+      state.confirmAsk = null;
+      state.editText = "";
+      dropKeep("asksend");
+      turn.sent = true;
+
+      const ticket = addPending(who as ClientKey, outgoing);
+      render();
+      stickThread();
+
+      void queueSend(who as ClientKey, outgoing)
+        .then(() => {
+          showNotif({ kind: "reminder", client: who, title: "Queued", body: `the bridge delivers it to ${person.name} in about a second`, meta: "", tag: "SENT", tone: "butter", dwell: 6000 });
+        })
+        .catch((err) => {
+          dropPending(ticket);
+          turn.sent = false;
+          render();
+          showNotif({ kind: "reminder", client: who, title: "Not sent", body: String(err instanceof Error ? err.message : err).slice(0, 60), meta: "", tag: "FAILED", tone: "critical", dwell: 6000 });
+        });
+      return;
+    }
+
     case "email-save": {
       const who = hit.dataset.client;
       const box = document.getElementById("emailbox") as HTMLInputElement | null;
-      if (who && box) {
-        void setClientEmail(who, box.value)
-          .then(() => render())
-          .catch((err) => {
-            console.error("[chadbuddy] email save failed", err);
-            showNotif({ kind: "reminder", client: null, title: "Not saved", body: String(err instanceof Error ? err.message : err).slice(0, 60), meta: "", tag: "EMAIL", tone: "critical", dwell: 6000 });
-          });
-      }
+      if (who && box) saveEmail(who, box.value);
       return;
     }
 
@@ -4693,22 +4954,35 @@ island.addEventListener("click", (ev) => {
         showNotif({ kind: "reminder", client: who, title, body: body.slice(0, 60), meta: "", tag: tone === "critical" ? "FAILED" : "SENT", tone, dwell: 6000 });
       };
 
+      /* The bubble goes up before the network does. It is removed again if the
+         mutation is refused, so an optimistic message never outlives the send
+         that failed to happen. */
+      const ticket = addPending(who as ClientKey, text);
+      state.replyDraft = "";
+      dropKeep("replybox");
+      render();
+      stickThread();
+
       if (state.replyVia === "tg") {
         void queueSend(who, text)
-          .then(() => {
-            state.replyDraft = "";
+          .then(() => done("Queued", "the bridge delivers it in about a second", "butter"))
+          .catch((err) => {
+            dropPending(ticket);
             render();
-            done("Queued", "the bridge delivers it in about a second", "butter");
-          })
-          .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
+            done("Not sent", err instanceof Error ? err.message : String(err), "critical");
+          });
       } else {
         void sendEmail(who, `Message from ${ADVISOR}`, text)
           .then(() => {
-            state.replyDraft = "";
+            dropPending(ticket);
             render();
             done("Email sent", clientMeta(who)?.email ?? "", "butter");
           })
-          .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
+          .catch((err) => {
+            dropPending(ticket);
+            render();
+            done("Not sent", err instanceof Error ? err.message : String(err), "critical");
+          });
       }
       return;
     }
@@ -5264,6 +5538,16 @@ island.addEventListener("change", (ev) => {
     });
 });
 
+/* `change` on a text input fires when the value differs and focus leaves, so
+   this is the blur-save for the email field. Enter is handled in the keydown
+   listener below, which also blurs so the two paths cannot double-fire. */
+island.addEventListener("change", (ev) => {
+  const el = ev.target as HTMLInputElement;
+  if (el.dataset.act !== "email-field") return;
+  const who = el.dataset.client;
+  if (who) saveEmail(who as ClientKey, el.value);
+});
+
 island.addEventListener("input", (ev) => {
   const el = ev.target as HTMLInputElement;
   if (el.dataset["keep"] !== undefined && el.id !== "") keepEdits.set(el.id, el.value);
@@ -5297,6 +5581,13 @@ island.addEventListener("input", (ev) => {
 island.addEventListener("keydown", (ev) => {
   const el = ev.target as HTMLElement;
   const act = el.dataset?.act;
+  if (act === "email-field" && ev.key === "Enter") {
+    ev.preventDefault();
+    // Blur rather than saving here: leaving the field fires `change`, which is
+    // the one place the save lives. Two callers would send it twice.
+    el.blur();
+    return;
+  }
   if (act !== "draft" && act !== "search") return;
 
   if (ev.key === "Enter" && act === "draft") {

@@ -121,6 +121,7 @@ export const autoQueue = internalMutation({
       sourceId: client.sourceId,
       text: trimmed,
       ideaRank,
+      auto: true,
       state: "queued",
       queuedTs: Date.now(),
     });

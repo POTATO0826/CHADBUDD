@@ -87,6 +87,7 @@ export const tick = internalMutation({
         text:
           `${advisor} is ${what} until about ${until} — he's seen your message ` +
           `and will come back to you after that.`,
+        auto: true,
         state: "queued",
         queuedTs: now,
       });

@@ -127,6 +127,36 @@ export const history = query({
       queuedTs: r.queuedTs,
       sentTs: r.sentTs ?? null,
       error: r.error ?? null,
+      auto: r.auto === true,
     }));
+  },
+});
+
+/**
+ * How much the agent has said on your behalf.
+ *
+ * Counted rather than listed because the number is the thing you check: the
+ * moment AUTO_SEND is on, "did it send anything, and how much" is the first
+ * question, and a queue you cannot inspect is indistinguishable from a system
+ * that sends things on its own. `today` resets on the local day boundary the
+ * rest of the product uses; `pending` is what is still sitting in the queue
+ * unsent, which is the number that means the bridge is down.
+ */
+export const autoStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("outbox").collect();
+    const auto = rows.filter((r) => r.auto === true);
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const since = dayStart.getTime();
+
+    return {
+      total: auto.length,
+      sent: auto.filter((r) => r.state === "sent").length,
+      today: auto.filter((r) => r.state === "sent" && (r.sentTs ?? r.queuedTs) >= since).length,
+      pending: auto.filter((r) => r.state === "queued").length,
+      failed: auto.filter((r) => r.state === "failed").length,
+    };
   },
 });

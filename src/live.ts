@@ -191,6 +191,26 @@ export function liveNotes(key: ClientKey): Array<{ text: string; cite: string; u
 }
 
 /**
+ * What the agent has sent on the advisor's behalf, with nobody pressing
+ * anything. Null until live mode has answered — the peek card hides the
+ * column rather than showing a zero it cannot vouch for, because "0 auto
+ * replies" and "we have no idea yet" are different claims.
+ */
+export interface AutoStats {
+  total: number;
+  sent: number;
+  today: number;
+  pending: number;
+  failed: number;
+}
+
+let autoRows: AutoStats | null = null;
+
+export function autoStats(): AutoStats | null {
+  return autoRows;
+}
+
+/**
  * The imported book, shaped exactly like data/holdings.ts rows so the desk
  * and importance pre-fill cannot tell which answered. Null until an import
  * exists — the seed remains the demo's book.
@@ -561,6 +581,11 @@ function pushStages(): void {
 
   client.onUpdate(q("news", "list"), {}, (value) => {
     marketRows = value as typeof marketRows;
+    apply();
+  });
+
+  client.onUpdate(q("outbox", "autoStats"), {}, (value) => {
+    autoRows = value as AutoStats;
     apply();
   });
 

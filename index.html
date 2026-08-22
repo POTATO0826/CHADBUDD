@@ -492,7 +492,9 @@ html[data-shell="tauri"] #desk{ display: none; }
   opacity: 1;
   animation: spin 2.1s linear infinite;
 }
-.island[data-state="peek"]{ width: 428px; height: 104px; border-radius: var(--r-2xl); }
+/* Taller than the old 104px, which the stat row already overflowed, and wider
+   to carry the fifth column without crushing the labels. */
+.island[data-state="peek"]{ width: 496px; height: 122px; border-radius: var(--r-2xl); }
 .island[data-state="open"]{
   width: min(1360px, calc(100vw - 24px));
   height: min(860px, calc(100vh - 20px));
@@ -545,7 +547,12 @@ html[data-shell="tauri"] #desk{ display: none; }
    Three rows on a strict rhythm: a header, five stat columns separated by
    hairlines and justified edge to edge, and one status band per client.
    Numerals share a baseline; colour rides the dot, never the digits. */
-.peek{ width: 100%; height: 100%; padding: 13px 16px 12px; display: flex; flex-direction: column; gap: 9px; }
+/* The stack used to be ~83px of content in a 79px box: the rows shrank, the
+   `margin-top:auto` under the strip never got positive space to spend, and
+   the whole card rode the top edge with the stat row jammed under the header.
+   The box is taller than its contents now and the contents are centred in it,
+   so the numbers sit where the eye expects them. */
+.peek{ width: 100%; height: 100%; padding: 14px 16px; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
 .peek .top{ display: flex; align-items: baseline; gap: 9px; }
 .peek .nm{ font-family: var(--display); font-size: 13px; font-weight: 500; letter-spacing: -.016em; }
 .peek .sc-n{ margin-left: auto; font-family: var(--mono); font-size: 9.5px; color: var(--t4); }
@@ -555,7 +562,7 @@ html[data-shell="tauri"] #desk{ display: none; }
 .peek .st .dt{ width: 5px; height: 5px; border-radius: 50%; flex: none; display: block; }
 .peek .st .v{ font-size: 19px; line-height: 1; letter-spacing: -.02em; font-weight: 500; color: var(--t1); }
 .peek .div{ width: 1px; background: var(--hair); display: block; margin: 1px 0; }
-.peek .strip{ display: flex; gap: 4px; margin-top: auto; }
+.peek .strip{ display: flex; gap: 4px; }
 .peek .strip i{ height: 4px; flex: 1; display: block; border-radius: 2px; }
 
 /* status chip — the word always travels with the colour */
@@ -2024,12 +2031,16 @@ html[data-shell="tauri"] #desk{ display: none; }
    No card, no border, no fill. Structure is type hierarchy and a hairline
    between sections — which is enough, and which stops the page from reading
    as three competing boxes. */
-.rail{ display: flex; flex-direction: column; gap: 16px; }
+/* Everything in a 260px column wraps rather than escaping it. A long name, a
+   long email or a pasted url used to push the rail wider than its track and
+   put a horizontal scrollbar under the whole page. */
+.rail{ display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.rail *{ min-width: 0; overflow-wrap: anywhere; }
 .rid{ display: flex; flex-direction: column; gap: 4px; }
 .rnm{ margin: 0; font-family: var(--display); font-size: 24px; font-weight: 500; letter-spacing: -.03em; line-height: 1.15; }
 .rhandle{ font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--t5); }
-.rstat{ display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.rstat i{ width: 6px; height: 6px; border-radius: var(--rc-1); flex: none; }
+.rstat{ display: flex; align-items: baseline; gap: 8px; font-size: 12px; line-height: 1.45; }
+.rstat i{ width: 6px; height: 6px; border-radius: var(--rc-1); flex: none; align-self: center; }
 
 /* five weeks of contact as bare ticks — a shape, not a statistic */
 .rdecay{ display: flex; align-items: flex-end; gap: 4px; height: 20px; }
@@ -2062,6 +2073,22 @@ html[data-shell="tauri"] #desk{ display: none; }
    rather than left to add a third and fourth radius to the view. */
 .cpage .btn, .cpage .emailbox, .cpage .chip, .cpage .cite,
 .cpage .at .b, .cpage .sug, .cpage .sug .rank, .cpage .sug .draft{ border-radius: var(--rc-1); }
+/* ── the agent's reply, on its way to the client ──────────────────
+   The agent can draft; this is where the advisor signs it. Step one is a
+   quiet ghost button, step two is the exact outgoing text in an editable box
+   with the send under it — nothing here mails a client on one press. */
+.askacts{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.askconfirm{ display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--hair); }
+.askconfirm .lb{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; color: var(--t5); }
+.asktx{
+  width: 100%; resize: vertical; font: inherit; font-size: 12px; line-height: 1.5;
+  color: var(--t1); background: color-mix(in oklab, var(--background) 55%, transparent);
+  border: 1px solid color-mix(in oklab, var(--primary) 40%, transparent);
+  border-radius: var(--rc-1); padding: 8px 10px; outline: none;
+}
+.asktx:focus{ border-color: color-mix(in oklab, var(--primary) 70%, transparent); }
+.asent{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; color: var(--i-good); }
+
 /* the ask transcript, once there is one: quiet inside an already-raised panel */
 .cpage .sug{ background: color-mix(in oklab, var(--foreground) 5%, transparent); box-shadow: none; }
 .cpage .sug .draft{ background: color-mix(in oklab, var(--foreground) 4%, transparent); box-shadow: none; }
@@ -2108,7 +2135,19 @@ html[data-shell="tauri"] #desk{ display: none; }
 }
 .cpage .qbox{ border-radius: var(--rc-1); background: color-mix(in oklab, var(--foreground) 5%, transparent); box-shadow: none; }
 .cpage .thread.sm .msgs{ padding: 16px 0; gap: 12px; }
-.cpage .thread.sm .bub{ border-radius: var(--rc-1); padding: 8px 12px; gap: 4px; max-width: 84%; }
+.cpage .thread.sm .bub{ border-radius: var(--rc-1); padding: 8px 12px; gap: 4px; max-width: 84%; min-width: 0; }
+/* On its way out: your own bubble, dimmed until the echo confirms it. The
+   grace period expiring turns the caption into a real answer rather than an
+   endless ellipsis — a bridge that is not running is the usual cause. */
+.cpage .msg.pend .bub{ opacity: .62; }
+.cpage .msg.pend .id{ font-style: italic; }
+.cpage .msg.pend.late .bub{ opacity: 1; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--m-warn) 45%, transparent); }
+.cpage .msg.pend.late .id{ color: var(--i-warn); font-style: normal; }
+
+/* an unbroken url in a message must not widen the column it sits in */
+.cpage .thread.sm .bub .tx{ overflow-wrap: anywhere; }
+.cpage .dcol{ min-width: 0; overflow-x: hidden; }
+.cpage .thread{ min-width: 0; }
 /* Mine: a fill and no border. Theirs: a border and no fill. The fill was 6%
    of the foreground, which on this ground is very nearly nothing — your own
    half of the conversation was on screen and invisible, so the thread read as

@@ -282,6 +282,17 @@ export default defineSchema({
     text: v.string(),
     /** Which recommendation this came from, for auditing what was acted on. */
     ideaRank: v.optional(v.string()),
+    /**
+     * True when nobody pressed anything — the autonomous rank-1 path under
+     * AUTO_SEND, or a presence auto-reply. Absent on every human send.
+     *
+     * Without this an auto-sent message is byte-for-byte indistinguishable
+     * from one the advisor typed, both here and in the thread the echo
+     * creates. A count of what the agent said on your behalf is the first
+     * thing you want when you turn autonomy on, and it cannot be recovered
+     * after the fact, so it is recorded at the point of the send.
+     */
+    auto: v.optional(v.boolean()),
     /** An attached file, held in Convex storage until the bridge delivers. */
     fileId: v.optional(v.id("_storage")),
     fileName: v.optional(v.string()),
