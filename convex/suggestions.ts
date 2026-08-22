@@ -107,45 +107,6 @@ RULES:
 - Suggest at most 2 per client. If the thread implies no dated work, return
   an empty list. An empty list is a good answer.`;
 
-const STAGE_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["stage", "confident", "why", "sourceId", "quote"],
-  properties: {
-    stage: { type: "string", enum: ["inquiring", "proposing", "completed", "maturing", "renewing"] },
-    confident: { type: "boolean" },
-    why: { type: "string" },
-    sourceId: { type: "string" },
-    quote: { type: "string" },
-  },
-} as const;
-
-const SYSTEM_STAGE = `You read a financial advisor's client conversation and say which lifecycle
-stage the client is in RIGHT NOW:
-
-- inquiring: asking about products or services; nothing proposed yet.
-- proposing: options or a proposal are on the table; the client is deciding.
-- completed: the client clearly AGREED to proceed, or the product was set up.
-- maturing: a held product is approaching maturity; renewal talk is near.
-- renewing: renewal or rollover is actively in motion (paperwork, signatures).
-
-RULES:
-- Judge from the client's OWN words. An agreement moves them to completed;
-  a signed/created product moves them onward. Never advance on the
-  advisor's hopes.
-- Return the id of the ONE message that proves it and that message's
-  decisive sentence QUOTED VERBATIM, character for character.
-- confident=false when the thread does not clearly place them. When in
-  doubt: not confident. A wrong stage is worse than no answer.`;
-
-interface StageRead {
-  stage: "inquiring" | "proposing" | "completed" | "maturing" | "renewing";
-  confident: boolean;
-  why: string;
-  sourceId: string;
-  quote: string;
-}
-
 interface Proposed {
   title: string;
   dueInDays: number;
@@ -262,33 +223,9 @@ export const run = internalAction({
         total += await ctx.runMutation(internal.suggestions.record, { rows });
       }
 
-      /* The same thread, read once more for where the client stands. A
-         confident, verbatim-proven reading moves their funnel stage without
-         a hand touching it; anything less changes nothing. */
-      try {
-        const read = await callModel<StageRead>(
-          SYSTEM_STAGE,
-          `Client: ${thread.name}\n\n${rendered}`,
-          "stage",
-          STAGE_SCHEMA,
-        );
-        if (read.confident) {
-          const { kept } = gate(
-            [{ statement: read.why, sourceId: read.sourceId, quote: read.quote }],
-            byId,
-          );
-          if (kept.length > 0) {
-            await ctx.runMutation(internal.stages.record, {
-              clientKey: key,
-              stage: read.stage,
-              why: read.why.slice(0, 160),
-              cite: read.sourceId,
-            });
-          }
-        }
-      } catch (err) {
-        console.warn(`[stage] read failed for ${key}: ${String(err)}`);
-      }
+      /* The sweep's stage read — the per-message path in scheduling.ts
+         covers the live seconds; this catches anything it missed. */
+      await ctx.runAction(internal.stages.classifyOne, { key });
     }
     return total;
   },

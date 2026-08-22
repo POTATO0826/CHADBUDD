@@ -166,6 +166,7 @@ export const funnelStages: FunnelRow[] = computeFunnel();
  */
 export function applyLiveStages(
   over: Array<{ clientKey: string; stage: string; cite: string }>,
+  allKeys: string[] = [],
 ): void {
   liveOver = new Map(
     over
@@ -173,6 +174,20 @@ export function applyLiveStages(
       .map((r) => [r.clientKey as ClientKey, { stage: r.stage as Stage, cite: r.cite }]),
   );
   rows.splice(0, rows.length, ...computeRows());
+  /* Every tracked client belongs on the funnel. One the classifier has not
+     placed yet sits at inquiring — being on the book with nothing proposed
+     IS that stage, no citation required to say so. */
+  for (const key of allKeys) {
+    if (!rows.some((r) => r.client === (key as ClientKey))) {
+      rows.push({
+        client: key as ClientKey,
+        stage: "inquiring",
+        product: "new relationship — nothing proposed yet",
+        cites: [],
+        daysToMaturity: null,
+      });
+    }
+  }
   buckets.splice(0, buckets.length, ...computeBuckets());
   funnelStages.splice(0, funnelStages.length, ...computeFunnel());
 }

@@ -367,6 +367,14 @@ export function initLive(
   }
 
   let threads: SeedThread[] = [];
+
+/** The classifier's latest word per client, held for re-application. */
+let stageRows: Array<{ clientKey: string; stage: string; why: string; cite: string }> = [];
+
+function pushStages(): void {
+  applyLiveStages(stageRows, threads.map((t) => t.key));
+  refreshFunnel();
+}
   let ready = false;
   let clockMoved = false;
 
@@ -480,13 +488,13 @@ export function initLive(
 
     threads = next;
     ready = true;
+    pushStages();
     apply();
   });
 
   client.onUpdate(q("stages", "list"), {}, (value) => {
-    const rows = value as Array<{ clientKey: string; stage: string; why: string; cite: string }>;
-    applyLiveStages(rows);
-    refreshFunnel();
+    stageRows = value as Array<{ clientKey: string; stage: string; why: string; cite: string }>;
+    pushStages();
     apply();
   });
 

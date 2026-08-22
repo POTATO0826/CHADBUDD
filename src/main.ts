@@ -3424,6 +3424,10 @@ interface RoomKit {
 
 const RM = (n: number): string => `RM ${Math.round(n).toLocaleString("en-MY")}`;
 
+/** Appended to every room ask: the house voice, and its one hard rule. */
+const ROOM_VOICE =
+  " Voice: a helpful, professional, detailed relationship manager, personal to this client. Never offer your own opinion — recommend only what the client's own words support, and name which of their words the recommendation rests on.";
+
 /** Days until a holding matures, however the book states it. */
 function matDays(h: Holding): number | undefined {
   if (h.maturesInDays !== undefined) return h.maturesInDays;
@@ -3507,7 +3511,8 @@ function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
         `Matures: ${matStr}${days !== undefined ? ` (in ${days} days)` : ""}. Change vs a year ago: ${pct1y}%.` +
         noteFacts,
       ask:
-        "Write the maturity outreach as a friendly, competent relationship manager: open with the client's first name, name the product, its maturity date and days remaining, the current value with the 12-month change and the change since inception, then propose taking 15 minutes before the date to decide what the money should do next rather than letting it roll by default — and close with a short agenda drawn from the facts and their notes (safety, income, anything specific they hold). 4-6 sentences, warm, concrete, no jargon, no pressure.",
+        "Write the maturity outreach: open with the client's first name, name the product, its maturity date and days remaining, the current value with the 12-month change and the change since inception, then propose taking 15 minutes before the date to decide what the money should do next rather than letting it roll by default — and close with a short agenda drawn from the facts and their notes (safety, income, anything specific they hold). 4-6 sentences, concrete, no jargon, no pressure." +
+        ROOM_VOICE,
       template:
         `Hi ${first}, your ${h.name} matures on ${matStr}${days !== undefined ? ` — ${days} day${days === 1 ? "" : "s"} from now` : ""}. ` +
         `Current value is ${RM(h.value)}, ${pct1y >= 0 ? "up" : "down"} ${Math.abs(pct1y)}% over 12 months and ${grew ? "+" : "−"}${RM(Math.abs(h.value - h.invested))} since inception. ` +
@@ -3560,13 +3565,14 @@ function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
         (outcome ? ` Client said: "${outcome.quote}" [${outcome.cite}].` : "") +
         noteFacts,
       ask:
-        options.length <= 3
-          ? "Write the options message: lay out each option in one plain line (purpose, who it suits), recommend exactly one and tie the reason to what the client themselves said. End by inviting questions. No pressure language."
-          : "Too many options to list — write a short message asking one or two guiding questions (timeline, purpose of the money) to narrow the set. Do not list products yet.",
+        (options.length <= 3
+          ? "Write the options message: lay out each option in one plain line (purpose, who it suits), recommend exactly one and tie the reason strictly to what the client themselves said — quote their words back to them. End by inviting questions. No pressure language."
+          : "Too many options to list — write a short message asking one or two guiding questions (timeline, purpose of the money) to narrow the set. Do not list products yet.") +
+        ROOM_VOICE,
       template:
         options.length <= 3
-          ? `Hi ${first} — as promised, the choices side by side:\n\n${lines}\n\nIf it were me: ${recName}${outcome ? ` — it fits what you said about ${outcome.horizon === "short" ? "needing the money sooner" : "being able to sit long"}` : ""}. Happy to talk any of them through — no rush.`
-          : `Hi ${first}, before I put every option in front of you, two quick questions so I only show you what actually fits: when would you want this money back in your hands, and what is it working towards? With those answered I can narrow it to two or three genuinely worth your time — and tell you plainly which one I'd pick in your position, and why.`,
+          ? `Hi ${first}, as promised — the choices side by side:\n\n${lines}\n\n${outcome ? `Going by your own words — “${outcome.quote.length > 70 ? `${outcome.quote.slice(0, 70)}…` : outcome.quote}” — ${recName} lines up best with what you're aiming for.` : `Once you tell me what this money is for and when you'd want it back, I can say which of these actually fits — that answer should come from your plans, not my preference.`} Happy to walk through any of them, no rush.`
+          : `Hi ${first}, before I put every option in front of you, two quick questions so I only show you what actually fits: when would you want this money back in your hands, and what is it working towards? With those answered I can narrow it to two or three genuinely worth your time — matched against your own words, not anyone's opinion.`,
     };
   }
 
@@ -3583,7 +3589,8 @@ function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
       options: null,
       facts: `Client: ${c.name}. Their question: "${q}".` + noteFacts,
       ask:
-        "Answer their question briefly from the thread, then ask ONE qualifying question — what the money is for and roughly when they need it back. Never pitch a product yet.",
+        "Answer their question in detail from the thread — their words, their situation — then ask ONE qualifying question: what the money is for and roughly when they need it back. Never pitch a product yet." +
+        ROOM_VOICE,
       template: `Hi ${first}, good question — and the honest answer depends on two things I don't know yet: what this money is working towards, and when you'd want it back in your hands. A fund that suits a house deposit in two years is the wrong home for retirement money, and vice versa. Tell me those two and I'll point you somewhere specific rather than somewhere general — with the actual numbers side by side.`,
     };
   }
@@ -3601,7 +3608,7 @@ function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
       report: null,
       options: null,
       facts: `Client: ${c.name}. Open items: ${c.open.map((o) => o.text).join("; ") || "none"}.` + noteFacts,
-      ask: "Write a short, warm nudge to finish the renewal — name what is still outstanding and offer to make it easy (a call, a pre-filled form). Deadline-aware, never pushy.",
+      ask: "Write a detailed, warm nudge to finish the renewal — name each outstanding item and exactly what it needs, offer to make it easy (a call, a pre-filled form), and say what happens once it's done. Deadline-aware, never pushy." + ROOM_VOICE,
       template: `Hi ${first}, the renewal is nearly across the line — ${open > 0 ? `just ${open} item${open === 1 ? "" : "s"} outstanding on the paperwork` : "nothing outstanding on my side"}. I can call and walk it through with you, or send the form pre-filled so it's one signature and done. Either way it's two minutes, and then it's off your desk — which would you prefer?`,
     };
   }
@@ -3617,7 +3624,7 @@ function roomKit(c: ClientView, stage: Stage, book: Holding[]): RoomKit {
     report: null,
     options: null,
     facts: `Client: ${c.name}.${biggest ? ` Product: ${biggest.name}, value ${biggest.value}.` : ""}` + noteFacts,
-    ask: "Write the aftercare message: confirm everything is in place, say what happens next (first statement, when you'll check in), and thank them plainly. No selling.",
+    ask: "Write the aftercare message: confirm everything is in place, say precisely what happens next (first statement date, when you'll check in, who to call if anything looks off), and thank them plainly. No selling." + ROOM_VOICE,
     template: `Hi ${first} — everything's in place on my side. You'll see the first statement next month, and I'll check in each quarter regardless. Thank you for the trust — and if anything changes on your end, I'm one message away.`,
   };
 }

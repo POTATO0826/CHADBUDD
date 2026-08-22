@@ -134,6 +134,16 @@ export const consider = internalAction({
     sender: v.optional(v.string()),
   },
   handler: async (ctx: ActionCtx, a): Promise<void> => {
+    /* Every inbound message also refreshes the client's funnel stage — an
+       agreement should move them within seconds. Scheduled, not awaited, so
+       a slow model can never hold up the schedule read. */
+    if (a.sender !== "advisor") {
+      const key = await ctx.runQuery(internal.stages.keyOf, { clientId: a.clientId });
+      if (key !== null) {
+        await ctx.scheduler.runAfter(1_000, internal.stages.classifyOne, { key });
+      }
+    }
+
     let reading: Reading | null = readSchedule(a.text, a.ts);
 
     /* The regex is the fast path and stays first — deterministic, free,
