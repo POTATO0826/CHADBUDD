@@ -787,8 +787,230 @@ html[data-shell="tauri"] #desk{ display: none; }
    A calendar shaded by committed time. The ramp is one hue deepening, never
    green-to-red: the busiest day of somebody's week is not an error state, and
    colouring it like one is how a planning tool starts reading as a scolding. */
-/* The month takes the room, because it is the thing being read. The day
-   panel beside it is a detail view and behaves like one. */
+/* ── the calendar page: one main view, a rail, an overlay ─────────────────
+   Week or month owns the page; the confirm rail appears on the right only
+   while something needs deciding; the other view slides over on demand. */
+.calwrap{ display: flex; gap: 12px; flex: 1; min-height: 0; position: relative; }
+.calmain{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px; border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); }
+.calwrap.withrail .calmain{ flex: 1 1 auto; }
+
+/* ── the week: Mon–Sun in a line, hours down the side ── */
+.wgrid{ display: grid; grid-template-columns: 30px repeat(7, 1fr); gap: 3px;
+  flex: 1; min-height: 0; }
+.wrail{ position: relative; }
+.whr{ position: absolute; right: 4px; transform: translateY(-50%);
+  font-family: var(--mono); font-size: 9px; color: var(--t4);
+  font-variant-numeric: tabular-nums; }
+/* The header is offset height; tracks start below it, so the hour rail needs
+   the same offset to line up with the tracks beside it. */
+.wrail{ margin-top: 34px; }
+
+.wcol{ display: flex; flex-direction: column; min-height: 0; }
+.whead{ display: flex; align-items: baseline; justify-content: center; gap: 5px;
+  height: 28px; margin-bottom: 6px; border-radius: var(--r-sm);
+  transition: background .16s var(--ease); }
+.whead:hover{ background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.whead .wd{ font-family: var(--mono); font-size: 9px; color: var(--t4); letter-spacing: .05em; }
+.whead .wn{ font-size: 13px; color: var(--t2); font-variant-numeric: tabular-nums; }
+.wcol.today .whead .wn{ color: var(--background); background: var(--gold); font-weight: 600;
+  min-width: 18px; height: 18px; border-radius: 50%; display: inline-flex;
+  align-items: center; justify-content: center; padding: 0 4px; }
+.wtrack{ position: relative; flex: 1; min-height: 300px; border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent); }
+.wcol.today .wtrack{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--gold) 20%, transparent); }
+
+/* Blocks wear their importance. One calm hue deepening — key is not an alarm.
+   Own time (travel, focus, admin, breaks) stays recessive: importance is a
+   meeting concept, and grey is the honest colour for your own hours. */
+.wblk{ position: absolute; overflow: hidden; cursor: pointer;
+  display: flex; flex-direction: column; gap: 0; padding: 3px 5px 3px 6px;
+  border-radius: 4px; font-size: 0; }
+.wblk.own{ background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.wblk.imp-r{ background: color-mix(in oklab, var(--foam) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foam) 16%, transparent); }
+.wblk.imp-i{ background: color-mix(in oklab, var(--foam) 19%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foam) 32%, transparent); }
+.wblk.imp-k{ background: color-mix(in oklab, var(--foam) 32%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--foam); }
+/* Unrated is a visible state, never silently routine — a pale day with a huge
+   unrated client would be the map lying exactly where it matters. */
+.wblk.imp-u{ background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 18%, transparent);
+  outline: 1px dashed color-mix(in oklab, var(--foreground) 25%, transparent); outline-offset: -3px; }
+.wblk.tent{ background: transparent; box-shadow: none;
+  border: 1px dashed var(--iris-b); }
+.wblk .bt{ font-family: var(--mono); font-size: 8px; color: var(--t4);
+  font-variant-numeric: tabular-nums; }
+.wblk .bn{ font-size: 10px; line-height: 1.25; color: var(--t1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wblk.own .bn{ color: var(--t3); }
+
+/* The weekly adjust control: tap the dot, the rating cycles in place. */
+.impdot{ position: absolute; top: 1px; right: 1px; width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 8px; color: var(--foam); border-radius: 50%; }
+.impdot:hover{ background: color-mix(in oklab, var(--foreground) 14%, transparent); }
+.wblk.imp-u .impdot{ color: var(--t3); font-size: 10px; }
+
+/* ── the three-way importance control ── */
+.impseg{ display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 5%, transparent); align-self: flex-start; }
+.impseg .isb{ font-family: var(--mono); font-size: 9px; padding: 3px 9px; border-radius: 999px;
+  color: var(--t3); letter-spacing: .03em; transition: background .14s var(--ease), color .14s var(--ease); }
+.impseg .isb:hover{ color: var(--t1); }
+.impseg .isb.on{ background: color-mix(in oklab, var(--foam) 22%, transparent); color: var(--t1); }
+/* A suggestion is dashed, a decision is solid — the difference must survive
+   a glance, or the pre-fill quietly becomes the advisor's opinion. */
+.impseg .isb.sug{ box-shadow: inset 0 0 0 1px dashed; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foam) 45%, transparent); color: var(--t2); }
+.sughint{ font-family: var(--mono); font-size: 8.5px; color: var(--t4); }
+
+/* ── the confirm rail ── */
+.crail{ width: 292px; flex: none; display: flex; flex-direction: column; gap: 8px;
+  padding: 14px; border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge);
+  overflow-y: auto; min-height: 0; }
+.ccard{ display: flex; flex-direction: column; gap: 7px; padding: 11px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent); }
+.ccard.tent{ background: color-mix(in oklab, var(--iris) 4%, transparent);
+  box-shadow: none; border: 1px dashed var(--iris-b); }
+.ccard .ct{ font-size: 13px; color: var(--t1); }
+.ccard .cw{ font-family: var(--mono); font-size: 9.5px; color: var(--t3);
+  font-variant-numeric: tabular-nums; }
+.aiprep{ display: flex; flex-direction: column; gap: 3px; }
+.prepin{ font: inherit; font-size: 11.5px; line-height: 1.5; color: var(--t1);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--r-sm); padding: 6px 8px; resize: vertical; min-height: 34px; }
+.prepin:focus{ outline: none; border-color: color-mix(in oklab, var(--foam) 40%, transparent); }
+.prepin::placeholder{ color: var(--t4); }
+
+/* ── the overlay: the other view, summoned over the main one ── */
+.calover{ position: absolute; inset: 0; z-index: 30; display: flex;
+  align-items: stretch; justify-content: center; padding: 8px 0; }
+.covback{ position: absolute; inset: -14px -22px -20px;
+  background: color-mix(in oklab, var(--background) 55%, transparent);
+  backdrop-filter: blur(3px); }
+.covpanel{ position: relative; flex: 1; max-width: 980px; display: flex;
+  flex-direction: column; gap: 10px; padding: 14px; border-radius: var(--r-xl);
+  background: var(--card); box-shadow: var(--edge), 0 18px 50px rgb(0 0 0 / .35); }
+
+/* ── the single-day page ── */
+.daycols2{ display: grid; grid-template-columns: minmax(340px, 1.1fr) 1fr;
+  gap: 12px; flex: 1; min-height: 0; }
+.daycols2 .dayside{ padding: 16px 18px; }
+.dayslots{ display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0;
+  border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); padding: 14px; }
+.dslot{ display: flex; flex-direction: column; gap: 8px; padding: 11px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+.dslot.tent{ background: color-mix(in oklab, var(--iris) 4%, transparent);
+  border: 1px dashed var(--iris-b); }
+.dslot .dsl{ display: flex; flex-direction: column; gap: 2px; }
+.dslot .dst{ font-size: 14px; color: var(--t1); }
+.dslot .dsw{ font-family: var(--mono); font-size: 9.5px; color: var(--t3); }
+
+/* ── tasks on the calendar ─────────────────────────────────────────────────
+   Deadline urgency is the chip's own colour: gold deepening toward the due
+   day, alarm red only for overdue — the one place that red is allowed on the
+   calendar. Day fills keep meaning importance; the two signals never share a
+   surface. */
+.tchip{ display: flex; align-items: center; gap: 5px; padding: 3px 7px 3px 4px;
+  border-radius: 5px; cursor: grab; font-size: 0; min-width: 0;
+  background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.tchip:active{ cursor: grabbing; }
+.tchip .tk{ width: 15px; height: 15px; flex: none; border-radius: 50%; font-size: 9px;
+  display: flex; align-items: center; justify-content: center; color: var(--t3); }
+.tchip .tk:hover{ background: color-mix(in oklab, var(--foreground) 14%, transparent); color: var(--t1); }
+.tchip .tt{ font-size: 10.5px; line-height: 1.3; color: var(--t1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tchip .tlate{ font-family: var(--mono); font-size: 10px; color: var(--alarm); flex: none; }
+
+.tchip.urg-week{ background: color-mix(in oklab, var(--gold) 12%, transparent); }
+.tchip.urg-soon{ background: color-mix(in oklab, var(--gold) 22%, transparent); }
+.tchip.urg-today{ background: color-mix(in oklab, var(--gold) 36%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--gold) 45%, transparent); }
+.tchip.urg-over{ background: color-mix(in oklab, var(--alarm) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--alarm) 45%, transparent); }
+.tchip.tdone{ opacity: .4; }
+.tchip.tdone .tt{ text-decoration: line-through; }
+
+.wtasks{ display: flex; flex-direction: column; gap: 3px; margin-bottom: 5px; min-height: 4px; }
+.whead .wtc{ font-family: var(--mono); font-size: 8.5px; color: var(--gold);
+  align-self: flex-start; }
+
+/* Where a drag may land. The ring is feedback, not decoration — it must be
+   unmistakable from across the arc of a drag. */
+.dropok{ box-shadow: inset 0 0 0 2px var(--foam) !important; }
+
+/* The today contract. */
+.contract{ display: flex; align-items: baseline; gap: 10px; padding: 8px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--gold) 7%, transparent); }
+.contract.clear{ background: color-mix(in oklab, var(--foam) 7%, transparent); }
+.contract .clabel{ font-family: var(--mono); font-size: 9px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--t3); }
+.contract .cbody{ font-size: 12.5px; color: var(--t1); }
+.contract .cbody .odue{ color: var(--alarm); font-weight: 500; }
+.contract .cnote{ font-family: var(--mono); font-size: 9px; color: var(--t4); margin-left: auto; }
+
+/* The day page plan. */
+.dtasks{ display: flex; flex-direction: column; gap: 5px; padding: 11px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+.trow{ display: flex; align-items: center; gap: 7px; min-width: 0; }
+.trow .tchip{ flex: 1; min-width: 0; }
+.trow .thard{ font-family: var(--mono); font-size: 8.5px; color: var(--t4); flex: none; }
+.trow .trm{ width: 18px; height: 18px; border-radius: var(--r-sm); font-size: 9px;
+  color: var(--t4); flex: none; display: flex; align-items: center; justify-content: center; }
+.trow .trm:hover{ color: var(--alarm); background: color-mix(in oklab, var(--foreground) 8%, transparent); }
+.taddrow{ display: flex; gap: 6px; margin-top: 3px; }
+.tadd{ flex: 1; font: inherit; font-size: 11.5px; color: var(--t1);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--r-sm); padding: 5px 9px; }
+.tadd:focus{ outline: none; border-color: color-mix(in oklab, var(--foam) 40%, transparent); }
+.tadd::placeholder{ color: var(--t4); }
+.tdate{ font: inherit; font-size: 10.5px; color: var(--t2);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--r-sm); padding: 4px 7px; color-scheme: dark; }
+
+/* ── the composer: replying without leaving ── */
+.composer{ display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent); }
+.cvia{ display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; align-self: flex-start;
+  background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.cvia .cv{ font-family: var(--mono); font-size: 9.5px; padding: 4px 11px; border-radius: 999px;
+  color: var(--t3); transition: background .14s var(--ease), color .14s var(--ease); }
+.cvia .cv.on{ background: color-mix(in oklab, var(--foam) 20%, transparent); color: var(--t1); }
+.replybox{ font: inherit; font-size: 12.5px; line-height: 1.55; color: var(--t1);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: var(--r-md); padding: 8px 10px; resize: vertical; min-height: 40px; }
+.replybox:focus{ outline: none; border-color: color-mix(in oklab, var(--foam) 40%, transparent); }
+.replybox::placeholder{ color: var(--t4); }
+.crow{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.crow .mt{ font-family: var(--mono); font-size: 9px; color: var(--t4); }
+
+.callbtn{ margin-left: auto; }
+
+.emailrow .emailbox{ font: inherit; font-size: 11px; color: var(--t1); width: 100%;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 9%, transparent);
+  border-radius: var(--r-sm); padding: 3px 7px; }
+.emailrow .emailbox:focus{ outline: none; border-color: color-mix(in oklab, var(--foam) 40%, transparent); }
+.emailrow .emailbox::placeholder{ color: var(--t4); }
+.btn.sm{ font-size: 10px; padding: 3px 9px; }
+
+/* Unrated marker on a month cell — the honest "?" */
+.grid .unm{ font-family: var(--mono); font-size: 9px; color: var(--t3);
+  border: 1px dashed color-mix(in oklab, var(--foreground) 30%, transparent);
+  border-radius: 50%; width: 13px; height: 13px; display: inline-flex;
+  align-items: center; justify-content: center; }
+
+/* Kept for the old layout's leftovers elsewhere. */
 .calcols{ display: grid; grid-template-columns: minmax(520px, 1.75fr) minmax(280px, 1fr);
   gap: 12px; flex: 1; min-height: 0; }
 
@@ -894,6 +1116,85 @@ html[data-shell="tauri"] #desk{ display: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .dayside .empty{ display: flex; flex-direction: column; gap: 5px; padding: 40px 0; }
+
+/* The first screen of the overview, pinned to viewport height so the desk
+   below changes nothing above it. Without this, adding content under .bento
+   turns its flex:1 into a no-op and the whole existing dashboard reflows —
+   the exact thing "experiment below, replace nothing" promised not to do.
+   152px ≈ header (40) + hdr padding (16) + page padding (14+20) + gaps;
+   drift here only moves where the desk starts, never how the grid lays out. */
+.ovfill{ display: flex; flex-direction: column; gap: 16px;
+  height: calc(100dvh - 152px); min-height: 540px; flex: none; }
+
+/* ── the desk ──────────────────────────────────────────────────────────────
+   ChadBuddy's own section, scrolled to below the dashboard grid. Rows are the
+   unit: a queue of collapsed one-liners, one open at a time. Urgency wears
+   gold, market pressure wears the alarm red sparingly, anything AI-drafted is
+   labelled in iris — same vocabulary as everywhere else in the app. */
+.desk{ display: flex; flex-direction: column; gap: 14px; padding: 18px 20px 22px;
+  border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); }
+.deskhead{ display: flex; flex-direction: column; gap: 4px; }
+.dstat{ font-family: var(--mono); font-size: 10px; color: var(--t3); letter-spacing: .02em; }
+
+.dsec{ display: flex; flex-direction: column; gap: 4px; }
+.dsec > .lbl{ margin-bottom: 3px; }
+
+.drow{ border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+.drow.on{ background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent); }
+
+.dhead{ display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  padding: 9px 12px; border-radius: var(--r-md); transition: background .16s var(--ease); }
+.dhead:hover{ background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.dhead .dd{ font-family: var(--mono); font-size: 11px; width: 30px; flex: none;
+  font-variant-numeric: tabular-nums; }
+.dhead .dwho{ font-size: 13px; color: var(--t1); flex: none; }
+.dhead .dwhat{ font-size: 12px; color: var(--t3); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0; }
+.dhead .dwhat.wide{ color: var(--t1); font-size: 13px; }
+.dhead .dval{ font-family: var(--mono); font-size: 10.5px; color: var(--t3); margin-left: auto;
+  flex: none; font-variant-numeric: tabular-nums; }
+.dhead .dcaret{ font-size: 10px; color: var(--t4); flex: none; }
+
+.dbody{ display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 12px; }
+.dsum{ font-size: 12.5px; line-height: 1.55; color: var(--t2); max-width: 68ch; margin: 0; }
+
+/* Chips carry provenance — outlet and age — the way citation chips do. */
+.dchiprow{ display: flex; gap: 6px; flex-wrap: wrap; }
+.dchip{ font-family: var(--mono); font-size: 9px; padding: 3px 8px; border-radius: 999px;
+  color: var(--t2); background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.dchip.dim{ color: var(--t4); }
+
+.dfacts{ display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.dspark{ flex: none; }
+.dspark .spark{ width: 120px; height: 30px; display: block; }
+.df{ display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; color: var(--t1);
+  font-variant-numeric: tabular-nums; }
+.df i{ font-family: var(--mono); font-style: normal; font-size: 9px; color: var(--t4);
+  letter-spacing: .05em; }
+
+/* The drafted message. Iris marks machine prose everywhere in this app. */
+.ddraft{ display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+  border-radius: var(--r-md); border: 1px dashed var(--iris-b);
+  background: color-mix(in oklab, var(--iris) 4%, transparent); }
+.dtext{ font-size: 12.5px; line-height: 1.6; color: var(--t1); margin: 0; max-width: 70ch; }
+.ddraft .btn[disabled]{ opacity: .45; cursor: not-allowed; }
+
+.dhit{ border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+.dhit.on{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 9%, transparent); }
+.dhithead{ display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  padding: 7px 10px; border-radius: var(--r-sm); }
+.dhithead:hover{ background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.dhithead .dwho{ font-size: 12px; color: var(--t1); }
+.dhithead .dwhat{ font-size: 11px; color: var(--t3); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0; }
+.dhithead .dval{ font-family: var(--mono); font-size: 10px; color: var(--t4); margin-left: auto; }
+.dhithead .dcaret{ font-size: 9px; color: var(--t4); }
+.dhit .ddraft{ margin: 0 10px 10px; }
+
+.dmore{ font-family: var(--mono); font-size: 9.5px; color: var(--t4); padding: 3px 12px 0; }
 
 /* A block nobody confirmed. Dashed rather than tinted: it has to read as
    provisional at a glance from across a desk, and a fill would make it look

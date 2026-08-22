@@ -32,7 +32,8 @@ import { v } from "convex/values";
 import { action, internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { dayOf, readSchedule, whenOf } from "../shared/scheduletalk";
+import { OFFSET_MIN, dayOf, readSchedule, whenOf } from "../shared/scheduletalk";
+import type { Reading } from "../shared/scheduletalk";
 
 /** Default length for something booked out of a chat. */
 const DEFAULT_MINUTES = 45;
@@ -133,7 +134,58 @@ export const consider = internalAction({
     sender: v.optional(v.string()),
   },
   handler: async (ctx: ActionCtx, a): Promise<void> => {
-    const reading = readSchedule(a.text, a.ts);
+    let reading: Reading | null = readSchedule(a.text, a.ts);
+
+    /* The regex is the fast path and stays first — deterministic, free,
+       incapable of hallucinating a booking. The model is the second pass,
+       only for messages the regex could not parse but that smell of
+       scheduling (a digit, a day-word, a time-word). It inherits every guard
+       the fast path has: output is only ever tentative, deduped per message,
+       future-only — so a wrong extraction costs the advisor one tap. */
+    if (!reading && /\d|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|tonight|morning|afternoon|evening|noon|next week/i.test(a.text)) {
+      try {
+        const ex = (await ctx.runAction(internal.agent.extractTime, {
+          text: a.text,
+          nowIso: new Date(a.ts).toISOString(),
+        })) as { intent: string; date: string; time: string; confident: boolean };
+
+        if (ex.confident && ex.intent !== "none") {
+          const minutesOfDay = /^(\d{2}):(\d{2})$/.test(ex.time)
+            ? Number(ex.time.slice(0, 2)) * 60 + Number(ex.time.slice(3))
+            : null;
+          // Midnight of that date in Kuala Lumpur, as an instant — the same
+          // convention shared/scheduletalk.ts uses throughout.
+          const day = /^\d{4}-\d{2}-\d{2}$/.test(ex.date)
+            ? Date.UTC(
+                Number(ex.date.slice(0, 4)),
+                Number(ex.date.slice(5, 7)) - 1,
+                Number(ex.date.slice(8, 10)),
+              ) -
+              OFFSET_MIN * 60_000
+            : null;
+
+          // The same shape the regex produces, so everything downstream is
+          // shared — one acting path, two readers.
+          if (
+            (ex.intent === "agree" && minutesOfDay !== null && day !== null) ||
+            (ex.intent === "move" && minutesOfDay !== null) ||
+            ex.intent === "cancel"
+          ) {
+            reading = {
+              intent: ex.intent as Reading["intent"],
+              minutesOfDay,
+              day,
+              phrase: a.text.trim(),
+            };
+          }
+        }
+      } catch (err) {
+        // A model outage must not break ingest; the message simply reads as
+        // non-scheduling, which is what the regex already concluded.
+        console.error("extractTime failed", err instanceof Error ? err.message : err);
+      }
+    }
+
     if (!reading) return;
 
     // One attempt per sentence, forever. A backfill re-reading history must
@@ -188,6 +240,7 @@ export const consider = internalAction({
         // Nobody confirmed this to the advisor. The whole safety property.
         tentative: true,
         inferredCite: a.cite,
+        prepAi: `Re-read what was agreed: "${reading.phrase.slice(0, 140)}" (${a.cite})`,
       });
       return;
     }

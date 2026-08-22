@@ -42,6 +42,15 @@ Bun.serve({
   async fetch(req) {
     const { pathname } = new URL(req.url);
 
+    /* The Telegram webview's only working return channel: no Tauri IPC
+       reaches a remote origin, but an https page may fetch localhost (the
+       mixed-content rules carve localhost out as trustworthy). Dev-only by
+       nature, like the window it serves. */
+    if (pathname === "/__diag") {
+      console.log(`[tgdiag] ${new URL(req.url).searchParams.get("m") ?? ""}`);
+      return new Response(null, { status: 204 });
+    }
+
     if (pathname === "/app.js") return bundle();
     if (pathname === "/fonts.css") {
       return new Response(Bun.file("assets/fonts.css"), {

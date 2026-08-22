@@ -29,7 +29,7 @@ import type { FunctionReference } from "convex/server";
 
 import type { ClientKey } from "../data/types.ts";
 import type { SlotKind } from "../data/schedule.ts";
-import type { Booking, CalendarEvent, CalendarSource } from "./calendar.ts";
+import type { Booking, CalendarEvent, CalendarSource, Importance } from "./calendar.ts";
 import { useCalendar } from "./daysource.ts";
 import { convexClient } from "./live.ts";
 
@@ -57,6 +57,9 @@ interface EventRow {
   inferredSource?: string;
   inferredCite?: string;
   conferenceUrl?: string;
+  importance?: string;
+  prepUser?: string;
+  prepAi?: string;
 }
 
 const KINDS: ReadonlySet<string> = new Set(["meeting", "call", "travel", "break", "focus", "admin"]);
@@ -89,6 +92,9 @@ function toEvent(r: EventRow): CalendarEvent {
     cites: [],
     prep: [],
     booking: r.booking,
+    ...(r.importance ? { importance: r.importance as Importance } : {}),
+    ...(r.prepUser ? { prepUser: r.prepUser } : {}),
+    ...(r.prepAi ? { prepAi: r.prepAi.split("\n").filter(Boolean) } : {}),
     ...(r.inferredSource && r.inferredCite
       ? {
           inferredFrom: {
@@ -185,6 +191,16 @@ export function convexCalendar(client: ConvexClient): CalendarSource {
       // A cancelled event is removed from the mirror, so there is nothing left
       // to re-read — the local row, marked, is the honest answer.
       if (booking === "cancelled") return { ...toEvent(r), booking };
+      return reread(id);
+    },
+
+    async annotate(id, patch) {
+      const r = rowFor(id);
+      await client.action(act("calendar", "annotateEvent"), {
+        googleId: r.googleId,
+        ...(patch.importance ? { importance: patch.importance } : {}),
+        ...(patch.prepUser !== undefined ? { prepUser: patch.prepUser } : {}),
+      });
       return reread(id);
     },
   };

@@ -27,7 +27,10 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
-import { acceptProposal, declineProposal, initLive, queueSend } from "./live.ts";
+import { acceptProposal, askAgent, clientMeta, declineProposal, initLive, liveHoldings, liveNotes, queueSend, sendEmail, setClientEmail } from "./live.ts";
+import { aiText, initDeskAi } from "./deskAi.ts";
+import type { Task } from "./tasks.ts";
+import { initTasks, taskCreate, taskDone, taskMove, taskRemove, tasks, tasksOn, urgencyOf } from "./tasks.ts";
 import { openProposals, proposalReply, proposalWhen } from "./proposals.ts";
 import { digestFor, emotionTone, keyPointsFor, latestEmotion } from "./emotions.ts";
 import type { KeyPoint } from "./emotions.ts";
@@ -38,10 +41,15 @@ import type { TaskKind } from "./inbox.ts";
 import { TASK_GLYPH, TASK_LABEL, decisions, inboxTotals, tasksOfKind } from "./inbox.ts";
 import { GATE_REASON, TIER_ACTION } from "./gates.ts";
 import { NOTIFY_THRESHOLD_MIN, conflictsFrom, delayText, laterToday, markRunningOver, overrunFor } from "./presence.ts";
-import { calendarDay, calendarMonth, calendarSource, nowMs, refreshCalendar, refreshMonth } from "./daysource.ts";
-import type { CalendarEvent } from "./calendar.ts";
+import { calendarDay, calendarMonth, calendarSource, calendarWeek, mondayOf, nowMs, refreshCalendar, refreshMonth, refreshWeek } from "./daysource.ts";
+import type { CalendarEvent, Importance } from "./calendar.ts";
+import { IMPORTANCE } from "./calendar.ts";
+import { BIG } from "../data/schedule.ts";
+import { holdings } from "../data/holdings.ts";
+import type { MarketRow, MaturingRow, Report, StaleRow } from "./desk.ts";
+import { deskView, dismissBrief, snoozeBrief } from "./desk.ts";
 import { initDrag } from "./drag.ts";
-import { focusWindow, isTauri, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
+import { focusWindow, isTauri, openExternal, openTelegram, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
 
 /* ── tiny helpers ────────────────────────────────────────────────── */
 
@@ -73,6 +81,16 @@ const tint = (colour: string, pct: number): string =>
   `color-mix(in oklab, ${colour} ${pct}%, transparent)`;
 
 /* ── state ───────────────────────────────────────────────────────── */
+
+/**
+ * Which calendar view greets the advisor.
+ *
+ * Decided by a five-advisor council review rather than by taste — the verdict
+ * and its reasoning are in the working record. The toggle persists per user,
+ * so this only shapes the first opening and anyone who disagrees overrules it
+ * once, permanently.
+ */
+const DEFAULT_CAL_VIEW: "week" | "month" = "week";
 
 type IslandState = "idle" | "alert" | "call" | "peek" | "open";
 type Page = "home" | "clients" | "agenda" | "calendar" | "assist" | QueueKind;
@@ -106,8 +124,18 @@ interface State {
   slot: string | null;
   /** Calendar page: first-of-month being shown. Null follows the clock. */
   month: number | null;
-  /** Calendar page: the day whose blocks are open. Null follows the clock. */
-  pick: number | null;
+  /** Calendar page: which view is the main one. Persisted per user. */
+  calView: "week" | "month";
+  /** Calendar page: whether the other view is open as an overlay. */
+  calOverlay: boolean;
+  /** Calendar page: the single-day page, or null for the main view. */
+  calDay: number | null;
+  /** Week view: Monday of the week shown. Null follows the clock. */
+  wk: number | null;
+  /** Desk: the expanded row, by brief id. Null is everything collapsed. */
+  desk: string | null;
+  /** Desk: which market hit's draft is open inside an expanded event. */
+  deskHit: string | null;
   /** Live text in the chat-history search box. */
   q: string;
   /** Ask-the-agent transcript, per client — switching clients keeps yours. */
@@ -123,6 +151,9 @@ interface State {
    * goes out is what was approved, not what the model originally wrote.
    */
   editing: string | null;
+  /** Reply composer: which channel, and the draft surviving re-renders. */
+  replyVia: "tg" | "em";
+  replyDraft: string;
   /** The edited text, held apart so cancelling restores the agent's original. */
   editText: string;
   /**
@@ -145,11 +176,26 @@ const state: State = {
   up: null,
   slot: null,
   month: null,
-  pick: null,
+  calView: ((): "week" | "month" => {
+    try {
+      const saved = localStorage.getItem("cb-calview");
+      if (saved === "week" || saved === "month") return saved;
+    } catch {
+      /* private mode: the default stands */
+    }
+    return DEFAULT_CAL_VIEW;
+  })(),
+  calOverlay: false,
+  calDay: null,
+  wk: null,
+  desk: null,
+  deskHit: null,
   q: "",
   ask: {},
   draft: "",
   editing: null,
+  replyVia: "tg",
+  replyDraft: "",
   editText: "",
   // Off by default: the island should be visible in a screen recording made
   // deliberately, and hidden only when the advisor says so.
@@ -794,53 +840,10 @@ function agendaPage(): string {
    that comes before booking anything — "what does that week already look
    like". */
 
-/**
- * What counts as load.
- *
- * Time in front of people, and the driving between it. Focus and admin blocks
- * are work but they are the advisor's own to move, and breaks are the opposite
- * of load — shading a day darker because it has a protected lunch in it would
- * punish exactly the habit the assistant is trying to defend.
- */
-const LOAD_KINDS: ReadonlySet<string> = new Set(["meeting", "call", "travel"]);
-
-function loadMinutes(events: CalendarEvent[]): number {
-  return events.reduce((n, x) => (LOAD_KINDS.has(x.kind) ? n + x.minutes : n), 0);
-}
-
-/**
- * Hours of committed time at which a day moves up a step.
- *
- * Four steps, and it stops. A ten-hour day and a six-hour day are drawn
- * identically on purpose: past a point the difference is not something the
- * advisor can act on, and a scale that keeps deepening turns a working diary
- * into a chart of how bad things are. The ramp exists to help someone find a
- * gap, not to grade their week.
- */
-const LOAD_STEPS = [2, 4, 6];
-
-function loadStep(minutes: number): number {
-  if (minutes <= 0) return 0;
-  const hours = minutes / 60;
-  return 1 + LOAD_STEPS.filter((h) => hours >= h).length;
-}
-
-/**
- * The ramp: one hue, deepening.
- *
- * A single calm hue rather than green-to-red, and foam rather than love or
- * gold, because the busiest day of someone's week should not be coloured like
- * an error. Sequential data gets one hue by rule; which hue is the part that
- * decides whether the page reads as a plan or as an alarm.
- *
- * On a dark surface "darker" has to mean more ink, not lower lightness — a
- * genuinely darker fill on #232136 disappears into the background, so a packed
- * day would recede exactly where it should stand out. Density does the work.
- */
-const LOAD_FILL = ["transparent", "7%", "13%", "20%", "29%"];
-
-const loadTint = (step: number): string =>
-  step === 0 ? "transparent" : `color-mix(in oklab, var(--foam) ${LOAD_FILL[step]}, transparent)`;
+/* The density machinery that used to live here — load minutes, hour steps,
+   the four-step fill — is gone with the question it answered. The desk keeps
+   its own copy in src/desk.ts, where "how much committed time" is still the
+   right question to ask. */
 
 const monthFmt = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" });
 
@@ -856,11 +859,100 @@ const startOfDay = (ms: number): number => {
   return d.getTime();
 };
 
+/* ── importance, drawn ──────────────────────────────────────────────
+   The heatmap changed its question. Density asked "how packed"; importance
+   asks "how heavy" — and a day with one meeting with the biggest client on
+   the book outranks four routine check-ins. The shade of a day is the weight
+   of its heaviest meeting, never a sum, and *unrated* is shown as unrated:
+   silently treating it as routine would make the map lie exactly where it
+   matters most. */
+
+const IMP_RANK: Record<Importance, number> = { routine: 1, important: 2, key: 3 };
+
+/* One calm hue deepening. Key does not wear gold or red on purpose —
+   importance is not alarm, and a heavy week must not read as an incident. */
+const IMP_FILL: Record<Importance, string> = { routine: "8%", important: "19%", key: "32%" };
+
+const impTint = (imp: Importance | null): string =>
+  imp === null ? "transparent" : `color-mix(in oklab, var(--foam) ${IMP_FILL[imp]}, transparent)`;
+
+/** A day's weight: its heaviest rated meeting, and whether any await rating. */
+function dayImportance(list: CalendarEvent[]): { imp: Importance | null; unrated: boolean } {
+  let imp: Importance | null = null;
+  let unrated = false;
+  for (const ev of list) {
+    if (!BIG.has(ev.kind)) continue;
+    if (ev.importance === undefined) {
+      unrated = true;
+      continue;
+    }
+    if (imp === null || IMP_RANK[ev.importance] > IMP_RANK[imp]) imp = ev.importance;
+  }
+  return { imp, unrated };
+}
+
 /**
- * The grid, including the days either side that complete the first and last
- * weeks. Those are drawn faint and are not clickable: they belong to another
- * month, and the events for them were never fetched, so a count on them would
- * be a zero that means "not asked" rather than "nothing booked".
+ * What the book says this meeting is probably worth.
+ *
+ * The council review's decisive fix: an advisor with hundreds of clients will
+ * not hand-rate every meeting, and a heatmap built on sparse voluntary tags
+ * looks authoritative while lying. So the rating arrives pre-filled from data
+ * the app already holds — how much the client has with you, whether anything
+ * of theirs matures inside the window, how long their holdings have gone
+ * without an update — and confirming accepts it in one click. The advisor
+ * always outranks the suggestion; the suggestion only outranks silence.
+ */
+function suggestImportance(ev: CalendarEvent): Importance {
+  if (!ev.withClient) return "routine";
+  const book = (liveHoldings() as typeof holdings | null) ?? holdings;
+  const theirs = book.filter((h) => h.client === ev.withClient);
+  if (theirs.length === 0) return "routine";
+
+  const total = theirs.reduce((n, h) => n + h.value, 0);
+  const soonDays = (h: (typeof theirs)[number]): number | undefined =>
+    h.maturesInDays !== undefined
+      ? h.maturesInDays
+      : h.maturesAtIso
+        ? Math.ceil((Date.parse(h.maturesAtIso) - nowMs()) / 86_400_000)
+        : undefined;
+  const maturingSoon = theirs.some((h) => {
+    const d = soonDays(h);
+    return d !== undefined && d >= 0 && d <= 14;
+  });
+  const stale = theirs.some((h) => h.lastUpdateDaysAgo >= 90);
+
+  if (maturingSoon || total >= 150_000) return "key";
+  if (stale || total >= 50_000) return "important";
+  return "routine";
+}
+
+/**
+ * The three-way control. `cur` is what the advisor set; `suggested` is what
+ * the book proposes when they have not — drawn dashed, never solid, because a
+ * suggestion wearing the same ink as a decision would erase the difference.
+ */
+function impSeg(id: string, cur?: Importance, suggested?: Importance): string {
+  return `<span class="impseg" role="group" aria-label="Importance">${IMPORTANCE.map(
+    (v) =>
+      `<button class="isb${cur === v ? " on" : cur === undefined && suggested === v ? " sug" : ""}" data-act="cal-set" data-ev="${e(id)}" data-imp="${v}">${v}</button>`,
+  ).join("")}</span>`;
+}
+
+const IMP_LEGEND = `
+  <div class="ramp">
+    <span class="lbl">importance</span>
+    <span class="sw" style="--fill:${impTint("routine")}"></span>
+    <span class="sw" style="--fill:${impTint("important")}"></span>
+    <span class="sw" style="--fill:${impTint("key")}"></span>
+    <span class="rt">routine · important · key — shading is importance, not volume · ? = unrated</span>
+  </div>`;
+
+/**
+ * The month, shaded by weight.
+ *
+ * Grid mechanics unchanged from the density era: lead/tail days of the
+ * neighbouring months are holes, chips carry what is on the day, counts stay
+ * as text. Only the meaning of the fill changed.
  */
 function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
   const first = new Date(anchorMs);
@@ -872,7 +964,6 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
   const lead = (first.getDay() + 6) % 7;
 
   const today = startOfDay(nowMs());
-  const picked = state.pick === null ? today : startOfDay(state.pick);
 
   const byDay = new Map<number, CalendarEvent[]>();
   for (const ev of events) {
@@ -889,18 +980,12 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
   for (let d = 1; d <= daysInMonth; d++) {
     const at = new Date(first.getFullYear(), first.getMonth(), d).getTime();
     const list = byDay.get(at) ?? [];
-    const step = loadStep(loadMinutes(list));
+    const { imp, unrated } = dayImportance(list);
     const isToday = at === today;
-    const isPicked = at === picked;
     const weekend = [5, 6].includes((new Date(at).getDay() + 6) % 7);
 
     const n = list.length;
 
-    /* What is actually on the day, not just how much of it. A number alone
-       answers "how busy" and leaves "busy with what" to a second click — and
-       on a page whose job is deciding where to put a meeting, that second
-       click is the whole question. Three fit; the rest become a count, because
-       a cell that grows with its contents breaks the grid it belongs to. */
     const chips = list
       .slice(0, CHIPS_PER_CELL)
       .map((x) => {
@@ -914,17 +999,24 @@ function monthGrid(anchorMs: number, events: CalendarEvent[]): string {
 
     const over = n - CHIPS_PER_CELL;
 
+    const cellTasks = tasksOn(at).filter((t) => !t.done);
+
     cells.push(`
-      <button class="cell${isToday ? " today" : ""}${isPicked ? " on" : ""}${weekend ? " wk" : ""}"
-        data-act="pick-day" data-day="${at}" data-step="${step}"
-        style="--fill:${loadTint(step)}"
+      <button class="cell${isToday ? " today" : ""}${state.calDay === at ? " on" : ""}${weekend ? " wk" : ""}"
+        data-act="cal-day" data-day="${at}" data-drop-day="${at}"
+        style="--fill:${impTint(imp)}"
         aria-current="${isToday ? "date" : "false"}"
-        aria-label="${e(new Date(at).toDateString())}, ${n} ${n === 1 ? "entry" : "entries"}">
+        aria-label="${e(new Date(at).toDateString())}, ${n} ${n === 1 ? "entry" : "entries"}, ${cellTasks.length} task${cellTasks.length === 1 ? "" : "s"}">
         <span class="top">
           <span class="dn">${d}</span>
+          ${unrated ? `<span class="unm" title="Has unrated meetings">?</span>` : ""}
           ${n ? `<span class="cn">${n}</span>` : ""}
         </span>
-        <span class="chips">${chips}${over > 0 ? `<span class="more">+${over} more</span>` : ""}</span>
+        <span class="chips">
+          ${cellTasks.slice(0, 2).map(taskChip).join("")}
+          ${cellTasks.length > 2 ? `<span class="more">+${cellTasks.length - 2} tasks</span>` : ""}
+          ${chips}${over > 0 ? `<span class="more">+${over} more</span>` : ""}
+        </span>
       </button>`);
   }
 
@@ -1016,64 +1108,486 @@ function dayBlocks(dayMs: number, events: CalendarEvent[]): string {
   return `<div class="track">${hours.join("")}<div class="blocks">${blocks}</div></div>`;
 }
 
-function calendarPage(): string {
+/* ── the calendar page: one main view, the other summoned ──────────
+   Week and month never share the row. Whichever the advisor made main takes
+   the page; the other slides over it on demand and gets out. Clicking any
+   day — a week column head or a month cell — becomes the single-day page.
+   To the right, the confirm rail: every meeting ChadBuddy created from a
+   thread, and every meeting that arrived from Google sync unrated, queues
+   there until a person has decided what it is. Nothing reaches the heatmap
+   unrated without having been asked about once. */
+
+const DAY_MS = 86_400_000;
+
+/**
+ * "Prepare a day before", made mechanical.
+ *
+ * Rating a meeting key is the advisor saying this one deserves preparation —
+ * so the preparation appears as a dated task the day before, with the meeting
+ * itself as the hard deadline underneath. One per meeting, ref-deduped; done
+ * or dragged, it is theirs from then on.
+ */
+function prepTaskFor(eventId: string): void {
+  const ev = findCalEvent(eventId);
+  if (!ev || !BIG.has(ev.kind)) return;
+  const start = Date.parse(ev.at);
+  if (start <= nowMs()) return;
+  const dayBefore = Math.max(startOfDay(nowMs()), startOfDay(start) - 86_400_000);
+  void taskCreate({
+    title: `Prep — ${ev.title}`,
+    dueMs: dayBefore + 12 * 3_600_000,
+    hardMs: start,
+    ...(ev.withClient ? { clientKey: ev.withClient } : {}),
+    ref: `prep:${ev.id}`,
+    source: "chadbuddy",
+  }).then(() => render());
+}
+
+function findCalEvent(id: string): CalendarEvent | undefined {
+  return (
+    calendarWeek().find((x) => x.id === id) ??
+    calendarMonth().find((x) => x.id === id) ??
+    calendarDay().find((x) => x.id === id)
+  );
+}
+
+const dayTitleFmt = new Intl.DateTimeFormat("en-GB", {
+  weekday: "long", day: "numeric", month: "long", timeZone: "Asia/Kuala_Lumpur",
+});
+const shortDayFmt = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric", month: "short", timeZone: "Asia/Kuala_Lumpur",
+});
+const railWhenFmt = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+  hour12: false, timeZone: "Asia/Kuala_Lumpur",
+});
+
+/**
+ * A task, wherever the calendar draws one.
+ *
+ * The chip is the drag handle; the circle is the done toggle. Urgency is the
+ * chip's own colour — closer to the deadline, darker gold; overdue wears the
+ * alarm red nothing else on the calendar is allowed to. Day fills keep
+ * meaning importance: two signals, two surfaces, no fight.
+ */
+function taskChip(t: Task): string {
+  const late = t.hardMs !== undefined && startOfDay(t.dueMs) > startOfDay(t.hardMs);
+  return `
+    <div class="tchip urg-${urgencyOf(t)}${t.done ? " tdone" : ""}" draggable="true"
+      data-task="${e(t.id)}"
+      title="${e(t.title)}${late ? " — planned AFTER the hard deadline" : ""}">
+      <button class="tk" data-act="task-done" data-task="${e(t.id)}"
+        aria-label="${t.done ? "Reopen" : "Mark done"}">${t.done ? "✓" : "○"}</button>
+      <span class="tt">${e(t.title)}</span>
+      ${late ? `<span class="tlate" title="Past the hard deadline underneath">!</span>` : ""}
+    </div>`;
+}
+
+/**
+ * The today contract — the reason the table exists.
+ *
+ * What is due today is finite and countable: finish it and you are genuinely
+ * free, not "free until you remember something". Thirty things can be in
+ * flight; only these are load.
+ */
+function todayContract(): string {
+  const today = startOfDay(nowMs());
+  const meets = [...calendarWeek(), ...calendarDay()]
+    .filter(
+      (ev, i, arr) =>
+        arr.findIndex((x) => x.id === ev.id) === i &&
+        BIG.has(ev.kind) &&
+        ev.booking !== "cancelled" &&
+        startOfDay(Date.parse(ev.at)) === today,
+    );
+  const due = tasksOn(today);
+  const open = due.filter((t) => !t.done).length;
+  const doneN = due.length - open;
+  const overdue = tasks().filter((t) => !t.done && startOfDay(t.dueMs) < today).length;
+
+  const parts = [
+    `${meets.length} meeting${meets.length === 1 ? "" : "s"}`,
+    `${open} task${open === 1 ? "" : "s"} due`,
+    ...(doneN > 0 ? [`${doneN} done`] : []),
+    ...(overdue > 0 ? [`<b class="odue">${overdue} overdue</b>`] : []),
+  ];
+
+  return `
+    <div class="contract${open === 0 && overdue === 0 ? " clear" : ""}">
+      <span class="clabel">today</span>
+      <span class="cbody">${parts.join(" · ")}</span>
+      <span class="cnote">${
+        open === 0 && overdue === 0
+          ? "clear — finish the meetings and nothing slips today"
+          : "finish these and you are genuinely free"
+      }</span>
+    </div>`;
+}
+
+function weekTitle(anchor: number): string {
+  return `${shortDayFmt.format(anchor)} – ${shortDayFmt.format(anchor + 6 * DAY_MS)}`;
+}
+
+/**
+ * The week: Mon–Sun in a line, hours down the side, blocks to real time.
+ *
+ * One shared hour window across all seven days, fitted to the events rather
+ * than assumed — a 07:00 flight and a 20:00 call must both be inside it, and
+ * a fixed 9-to-6 would clip them silently.
+ */
+function weekGrid(anchor: number): string {
+  const events = calendarWeek();
+  const today = startOfDay(nowMs());
+
+  let from = 8 * 60;
+  let to = 18 * 60;
+  for (const ev of events) {
+    const start = Date.parse(ev.at);
+    const m0 = Math.round((start - startOfDay(start)) / 60_000);
+    from = Math.min(from, Math.floor(m0 / 60) * 60);
+    to = Math.max(to, Math.ceil((m0 + ev.minutes) / 60) * 60);
+  }
+  const span = to - from;
+
+  const hours: string[] = [];
+  for (let h = from; h <= to; h += 60) {
+    hours.push(`<span class="whr" style="top:${(((h - from) / span) * 100).toFixed(2)}%">${String(Math.floor(h / 60)).padStart(2, "0")}</span>`);
+  }
+
+  const cols = Array.from({ length: 7 }, (_, i) => {
+    // Malaysia has no DST, so day arithmetic in plain milliseconds is exact.
+    const day = anchor + i * DAY_MS;
+    const list = events
+      .filter((x) => startOfDay(Date.parse(x.at)) === day)
+      .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+
+    /* Same greedy lanes as the day view: first lane whose last block ended. */
+    const starts = list.map((x) => Date.parse(x.at));
+    const ends = list.map((x, j) => starts[j]! + x.minutes * 60_000);
+    const laneEnds: number[] = [];
+    const lane = starts.map((start, j) => {
+      const free = laneEnds.findIndex((endsAt) => endsAt <= start);
+      const at = free === -1 ? laneEnds.length : free;
+      laneEnds[at] = ends[j]!;
+      return at;
+    });
+    const lanes = Math.max(1, laneEnds.length);
+
+    const blocks = list
+      .map((x, j) => {
+        const m0 = Math.round((starts[j]! - day) / 60_000);
+        const top = ((m0 - from) / span) * 100;
+        const height = Math.max((x.minutes / span) * 100, 3.4);
+        const width = 100 / lanes;
+        const big = BIG.has(x.kind);
+        const impClass = !big ? " own" : x.importance ? ` imp-${x.importance[0]}` : " imp-u";
+
+        /* The dot is the weekly adjust control: tap to cycle the rating in
+           place. Everything else on the block opens the day. */
+        const dot = big
+          ? `<button class="impdot" data-act="cal-rate" data-ev="${e(x.id)}"
+               title="${x.importance ?? "unrated"} — tap to change">${x.importance ? "●" : "?"}</button>`
+          : "";
+
+        return `
+          <div class="wblk${impClass}${x.booking === "tentative" ? " tent" : ""}"
+            data-act="cal-day" data-day="${day}"
+            style="top:${top.toFixed(2)}%;height:${height.toFixed(2)}%;left:${(lane[j]! * width).toFixed(2)}%;width:calc(${width.toFixed(2)}% - 2px)">
+            ${dot}
+            <span class="bt">${e(hhmmOf(starts[j]!))}</span>
+            <span class="bn">${e(x.title)}</span>
+          </div>`;
+      })
+      .join("");
+
+    const dayTasks = tasksOn(day);
+    return `
+      <div class="wcol${day === today ? " today" : ""}" data-drop-day="${day}">
+        <button class="whead" data-act="cal-day" data-day="${day}">
+          <span class="wd">${DOW[i]}</span><span class="wn">${new Date(day).getDate()}</span>
+          ${dayTasks.filter((t) => !t.done).length ? `<span class="wtc">${dayTasks.filter((t) => !t.done).length}</span>` : ""}
+        </button>
+        <div class="wtasks">${dayTasks.map(taskChip).join("")}</div>
+        <div class="wtrack">${blocks}</div>
+      </div>`;
+  }).join("");
+
+  return `
+    <div class="wgrid">
+      <div class="wrail">${hours.join("")}</div>
+      ${cols}
+    </div>`;
+}
+
+function weekMain(): string {
+  const anchor = state.wk ?? mondayOf(nowMs());
+  return `
+    <div class="mnav">
+      <span class="hero-h d" style="font-size:19px">${e(weekTitle(anchor))}</span>
+      <button class="ico" data-act="wk-step" data-by="-1" aria-label="Previous week">‹</button>
+      <button class="btn" data-act="wk-step" data-by="0">Today</button>
+      <button class="ico" data-act="wk-step" data-by="1" aria-label="Next week">›</button>
+      <button class="btn" data-act="cal-over" style="margin-left:auto">Month ⌗</button>
+    </div>
+    ${todayContract()}
+    ${weekGrid(anchor)}
+    ${IMP_LEGEND}`;
+}
+
+function monthMain(): string {
   const anchor = state.month ?? nowMs();
   const events = calendarMonth();
-  const picked = state.pick ?? nowMs();
+  return `
+    <div class="mnav">
+      <span class="hero-h d" style="font-size:19px">${e(monthFmt.format(anchor))}</span>
+      <button class="ico" data-act="month-step" data-by="-1" aria-label="Previous month">‹</button>
+      <button class="btn" data-act="month-step" data-by="0">Today</button>
+      <button class="ico" data-act="month-step" data-by="1" aria-label="Next month">›</button>
+      <button class="btn" data-act="cal-over" style="margin-left:auto">Week ☰</button>
+    </div>
+    ${monthGrid(anchor, events)}
+    ${IMP_LEGEND}`;
+}
 
-  const busiest = (() => {
-    let worst = 0;
-    const byDay = new Map<number, CalendarEvent[]>();
-    for (const ev of events) {
-      const k = startOfDay(Date.parse(ev.at));
-      byDay.set(k, [...(byDay.get(k) ?? []), ev]);
-    }
-    for (const list of byDay.values()) worst = Math.max(worst, loadMinutes(list));
-    return worst;
+/**
+ * The other view, summoned over the main one.
+ *
+ * Escape stays sacred — one press still exits the dashboard, a rule fought
+ * for and kept. The overlay closes on the backdrop or the ✕ instead.
+ */
+function calOverlay(): string {
+  const other = state.calView === "month" ? "week" : "month";
+  const inner =
+    other === "month"
+      ? `<div class="mnav">
+          <span class="hero-h d" style="font-size:17px">${e(monthFmt.format(state.month ?? nowMs()))}</span>
+          <button class="ico" data-act="month-step" data-by="-1">‹</button>
+          <button class="btn" data-act="month-step" data-by="0">Today</button>
+          <button class="ico" data-act="month-step" data-by="1">›</button>
+          <button class="btn" data-act="cal-view" data-view="month">Make main</button>
+          <button class="ico" data-act="cal-over" style="margin-left:auto" aria-label="Close">✕</button>
+        </div>
+        ${monthGrid(state.month ?? nowMs(), calendarMonth())}`
+      : `<div class="mnav">
+          <span class="hero-h d" style="font-size:17px">${e(weekTitle(state.wk ?? mondayOf(nowMs())))}</span>
+          <button class="ico" data-act="wk-step" data-by="-1">‹</button>
+          <button class="btn" data-act="wk-step" data-by="0">Today</button>
+          <button class="ico" data-act="wk-step" data-by="1">›</button>
+          <button class="btn" data-act="cal-view" data-view="week">Make main</button>
+          <button class="ico" data-act="cal-over" style="margin-left:auto" aria-label="Close">✕</button>
+        </div>
+        ${weekGrid(state.wk ?? mondayOf(nowMs()))}`;
+
+  return `
+    <div class="calover">
+      <div class="covback" data-act="cal-over"></div>
+      <div class="covpanel">${inner}</div>
+    </div>`;
+}
+
+/* ── the confirm rail ─────────────────────────────────────────────── */
+
+/** What still needs a person: tentative bookings, and unrated meetings. */
+function pendingEvents(): CalendarEvent[] {
+  const seen = new Map<string, CalendarEvent>();
+  for (const ev of [...calendarWeek(), ...calendarMonth(), ...calendarDay()]) seen.set(ev.id, ev);
+  const now = nowMs();
+  return [...seen.values()]
+    .filter((ev) => BIG.has(ev.kind))
+    .filter(
+      (ev) =>
+        ev.booking === "tentative" ||
+        (ev.importance === undefined && Date.parse(ev.at) + ev.minutes * 60_000 > now),
+    )
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+const RAIL_CAP = 4;
+
+/**
+ * One card per decision. Two sources, one queue: a block ChadBuddy read out
+ * of a thread (tentative, cited), and a meeting that arrived from Google sync
+ * without a rating — booked on the phone, added by hand, either way nobody
+ * has said how much it matters yet.
+ *
+ * The prep field lives here because the confirm moment is when the advisor
+ * knows why the meeting exists. A note typed later is a chore; the same note
+ * typed now is just finishing the thought.
+ */
+function railCard(ev: CalendarEvent): string {
+  const tent = ev.booking === "tentative";
+  const who = ev.withClient ? clientById(ev.withClient.toLowerCase()).name : ev.withName;
+  const ai = ev.prepAi ?? [];
+
+  return `
+    <div class="ccard${tent ? " tent" : ""}">
+      <span class="lbl" style="color:${tent ? "var(--iris)" : "var(--t3)"}">${tent ? "pencilled in — confirm it" : "new — rate it"}</span>
+      <span class="ct">${e(ev.title)}</span>
+      <span class="cw">${e(railWhenFmt.format(Date.parse(ev.at)))} · ${ev.minutes} min${who ? ` · ${e(who)}` : ""}</span>
+      ${
+        tent && ev.inferredFrom && ev.withClient
+          ? `<div class="citerow">${citeChips([ev.inferredFrom.cite], ev.withClient)}</div>`
+          : ""
+      }
+      ${impSeg(ev.id, ev.importance, suggestImportance(ev))}
+      ${
+        ev.importance === undefined
+          ? `<span class="sughint">suggested from their book — tap to change</span>`
+          : ""
+      }
+      ${railPrep(ev, ai)}
+      <textarea class="prepin" id="prep-${e(ev.id)}" rows="2"
+        placeholder="Your prep note — what to have ready">${e(ev.prepUser ?? "")}</textarea>
+      <div class="ctxacts">
+        ${
+          tent
+            ? `<button class="btn acc" data-act="rail-confirm" data-ev="${e(ev.id)}">Confirm</button>
+               <button class="btn" data-act="rail-drop" data-ev="${e(ev.id)}">Remove</button>`
+            : `<button class="btn acc" data-act="rail-save" data-ev="${e(ev.id)}">Save</button>`
+        }
+      </div>
+    </div>`;
+}
+
+/**
+ * The prep bullets on a rail card: the model's, when live — it reads the
+ * client's actual recent messages server-side — with whatever the event
+ * already carried as the instant fallback.
+ */
+function railPrep(ev: CalendarEvent, carried: string[]): string {
+  let lines = carried;
+  let label = "chadbuddy suggests";
+  const req = {
+    kind: "prep",
+    facts: `Meeting: ${ev.title}, ${new Date(Date.parse(ev.at)).toString().slice(0, 21)}, ${ev.minutes} minutes.`,
+    ask: "2-3 prep bullets for this meeting, one short line each, grounded in what the client has actually said recently.",
+    ...(ev.withClient ? { key: ev.withClient } : {}),
+  };
+  const aiRes = aiText(`prep:${ev.id}`, req);
+  if (aiRes.status === "ready" && aiRes.text) {
+    lines = aiRes.text.split("\n").map((x) => x.replace(/^[-•▢\s]+/, "").trim()).filter(Boolean).slice(0, 3);
+    label = "chadbuddy suggests · from their messages";
+  } else if (aiRes.status === "pending" && lines.length === 0) {
+    return `<div class="aiprep"><span class="lbl" style="color:var(--iris)">chadbuddy is reading the thread…</span></div>`;
+  }
+  if (lines.length === 0) return "";
+  return `<div class="aiprep"><span class="lbl" style="color:var(--iris)">${e(label)}</span>
+    ${lines.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>`;
+}
+
+function calRail(): string {
+  const pending = pendingEvents();
+  if (pending.length === 0) return "";
+  const more = pending.length - RAIL_CAP;
+  return `
+    <div class="crail sc">
+      <span class="lbl">needs deciding · ${pending.length}</span>
+      ${pending.slice(0, RAIL_CAP).map(railCard).join("")}
+      ${more > 0 ? `<span class="dmore">+${more} more, oldest first</span>` : ""}
+    </div>`;
+}
+
+/* ── the single-day page ──────────────────────────────────────────── */
+
+function dayPage(dayMs: number): string {
+  const events = (() => {
+    const seen = new Map<string, CalendarEvent>();
+    for (const ev of [...calendarMonth(), ...calendarWeek(), ...calendarDay()]) seen.set(ev.id, ev);
+    return [...seen.values()];
   })();
+  const list = events
+    .filter((x) => startOfDay(Date.parse(x.at)) === startOfDay(dayMs))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
-  const committed = loadMinutes(events);
+  const slots = list
+    .filter((x) => BIG.has(x.kind))
+    .map((x) => {
+      const tent = x.booking === "tentative";
+      const ai = x.prepAi ?? [];
+      return `
+        <div class="dslot${tent ? " tent" : ""}">
+          <div class="dsl">
+            <span class="kind">${e(SLOT_GLYPH[x.kind] ?? "◍")} ${e(x.kind)}</span>
+            <span class="dst">${e(x.title)}</span>
+            <span class="dsw">${e(hhmmOf(Date.parse(x.at)))} · ${x.minutes} min${x.where ? ` · ${e(x.where)}` : ""}</span>
+          </div>
+          ${impSeg(x.id, x.importance)}
+          ${
+            ai.length
+              ? `<div class="aiprep"><span class="lbl" style="color:var(--iris)">chadbuddy suggests</span>
+                  ${ai.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>`
+              : ""
+          }
+          <textarea class="prepin" id="prep-${e(x.id)}" rows="2"
+            placeholder="Your prep note">${e(x.prepUser ?? "")}</textarea>
+          <div class="ctxacts">
+            ${
+              tent
+                ? `<button class="btn acc" data-act="rail-confirm" data-ev="${e(x.id)}">Confirm</button>
+                   <button class="btn" data-act="rail-drop" data-ev="${e(x.id)}">Remove</button>`
+                : `<button class="btn" data-act="rail-save" data-ev="${e(x.id)}">Save note</button>`
+            }
+            ${x.withClient ? `<button class="btn" data-act="open-client" data-client="${x.withClient}">Open ${e(clientById(x.withClient.toLowerCase()).name.split(" ")[0]!)}</button>` : ""}
+          </div>
+        </div>`;
+    })
+    .join("");
 
   return `
     <div class="page fixed">
-      <div class="qhead">
-        <span class="hero-h d">${e(monthFmt.format(anchor))}</span>
-        <span class="mt">${events.length} ${events.length === 1 ? "entry" : "entries"} ·
-          ${Math.round(committed / 60)}h committed · busiest day
-          ${busiest === 0 ? "—" : `${Math.round((busiest / 60) * 10) / 10}h`}. Shading is time in
-          front of people and the driving between it, not everything on the diary.</span>
+      <div class="qhead" style="flex-direction:row;align-items:baseline;gap:14px">
+        <button class="btn" data-act="cal-back">‹ ${state.calView === "month" ? "Month" : "Week"}</button>
+        <span class="hero-h d">${e(dayTitleFmt.format(dayMs))}</span>
       </div>
-
-      <div class="calcols">
-        <div class="month">
-          <div class="mnav">
-            <button class="ico" data-act="month-step" data-by="-1" aria-label="Previous month">‹</button>
-            <button class="btn" data-act="month-step" data-by="0">Today</button>
-            <button class="ico" data-act="month-step" data-by="1" aria-label="Next month">›</button>
-          </div>
-
-          ${monthGrid(anchor, events)}
-
-          <div class="ramp">
-            <span class="lbl">committed time</span>
-            <span class="sw" style="--fill:${loadTint(0)}"></span>
-            <span class="sw" style="--fill:${loadTint(1)}"></span>
-            <span class="sw" style="--fill:${loadTint(2)}"></span>
-            <span class="sw" style="--fill:${loadTint(3)}"></span>
-            <span class="sw" style="--fill:${loadTint(4)}"></span>
-            <span class="rt">clear · under 2h · 4h · 6h and beyond</span>
-          </div>
-        </div>
-
-        <div class="dayside sc">
-          <div class="dhead">
-            <span class="hero-h d" style="font-size:21px">${e(
-              new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(picked),
-            )}</span>
-          </div>
-          ${dayBlocks(picked, events)}
+      <div class="daycols2">
+        <div class="dayside sc">${dayBlocks(dayMs, events)}</div>
+        <div class="dayslots sc">
+          ${dayPlan(dayMs)}
+          ${slots || `<div class="empty"><span class="hero-h d" style="font-size:19px">No meetings</span><span class="mt">Own time only. Worth protecting.</span></div>`}
         </div>
       </div>
+    </div>`;
+}
+
+/**
+ * The day's dated work, checkable and extendable in place.
+ *
+ * The quick-add asks for exactly two things — what, and by when — because a
+ * task here is only legal with a date. Anything undated belongs on the desk,
+ * and the desk already has it.
+ */
+function dayPlan(dayMs: number): string {
+  const list = tasksOn(dayMs);
+  const iso = new Date(startOfDay(dayMs) + 12 * 3_600_000).toISOString().slice(0, 10);
+  return `
+    <div class="dtasks" data-drop-day="${startOfDay(dayMs)}">
+      <span class="lbl">the plan — finish these and the day is clear</span>
+      ${list.map((t) => `
+        <div class="trow${t.done ? " tdone" : ""}">
+          ${taskChip(t)}
+          ${t.hardMs !== undefined ? `<span class="thard">hard: ${e(shortDayFmt.format(t.hardMs))}</span>` : ""}
+          ${t.clientKey ? `<button class="btn sm" data-act="open-client" data-client="${t.clientKey}">${e(clientById(t.clientKey.toLowerCase()).name.split(" ")[0]!)}</button>` : ""}
+          <button class="trm" data-act="task-remove" data-task="${e(t.id)}" title="Remove">✕</button>
+        </div>`).join("")}
+      <div class="taddrow">
+        <input class="tadd" id="taskbox" type="text" placeholder="Add dated work — what must be done…">
+        <input class="tdate" id="taskdate" type="date" value="${iso}">
+        <button class="btn acc sm" data-act="task-add">Add</button>
+      </div>
+    </div>`;
+}
+
+function calendarPage(): string {
+  if (state.calDay !== null) return dayPage(state.calDay);
+
+  const rail = calRail();
+  return `
+    <div class="page fixed">
+      <div class="calwrap${rail ? " withrail" : ""}">
+        <div class="calmain">${state.calView === "month" ? monthMain() : weekMain()}</div>
+        ${rail}
+      </div>
+      ${state.calOverlay ? calOverlay() : ""}
     </div>`;
 }
 
@@ -1309,6 +1823,7 @@ function overviewPage(): string {
 
   return `
     <div class="page">
+      <div class="ovfill">
       <div class="greet">
         <div class="left">
           <div class="hero-h d">${greeting()}, ${e(ADVISOR)}</div>
@@ -1401,6 +1916,235 @@ function overviewPage(): string {
         ${stageFunnel()}
         </div>
       </div>
+      </div>
+
+      ${deskSection()}
+    </div>`;
+}
+
+/* ── the desk ────────────────────────────────────────────────────────
+   ChadBuddy's own section, scrolled to below the dashboard grid. Three
+   ranked queues — maturing, market, stale — derived in src/desk.ts. This
+   file only draws them; the shapes arrive capped, so nothing here can
+   accidentally render one row per client when the book grows. */
+
+/** Twelve months in 120px. Shape, not axes — the numbers sit beside it. */
+function sparkline(r: Report): string {
+  const pts = r.spark.map((v, i) => `${(i * (120 / 11)).toFixed(1)},${(26 - 22 * v).toFixed(1)}`);
+  const last = pts[pts.length - 1]!.split(",");
+  return `
+    <svg class="spark" viewBox="0 0 120 30" aria-hidden="true">
+      <polyline points="${pts.join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <circle cx="${last[0]}" cy="${last[1]}" r="2" fill="currentColor"/>
+    </svg>`;
+}
+
+/**
+ * The draft, its provenance label, and what can be done with it.
+ *
+ * With a brief request attached and live mode on, the model writes the prose
+ * — digit-guarded server-side, cached forever after one call — and the label
+ * says so. While it writes, the template shows with a label admitting it is
+ * one. In seed mode the template is all there is, also said plainly.
+ */
+function deskDraft(id: string, draft: string, req?: { kind: string; facts: string; ask: string; key?: string }): string {
+  let text = draft;
+  let label = "template — check before sending";
+  if (req) {
+    const ai = aiText(`draft:${id}`, req);
+    if (ai.status === "ready" && ai.text) {
+      text = ai.text;
+      label = "drafted by chadbuddy · model, figures table-checked";
+    } else if (ai.status === "pending") {
+      label = "template — chadbuddy is rewriting…";
+    } else if (ai.status === "failed") {
+      label = "template — the model's draft was refused";
+    }
+  }
+  return `
+    <div class="ddraft">
+      <span class="lbl" style="color:var(--iris)">${e(label)}</span>
+      <p class="dtext">${e(text)}</p>
+      <div class="ctxacts">
+        <button class="btn" disabled title="Sending connects in phase 3">Send Telegram</button>
+        <button class="btn" disabled title="Sending connects in phase 3">Send Email</button>
+        <button class="btn" data-act="desk-snooze" data-brief="${e(id)}">Snooze 7d</button>
+        <button class="btn" data-act="desk-dismiss" data-brief="${e(id)}">Dismiss</button>
+      </div>
+    </div>`;
+}
+
+function maturingRow(row: MaturingRow, urgent: boolean): string {
+  const on = state.desk === row.id;
+  const tone = urgent ? "var(--gold)" : "var(--t3)";
+  return `
+    <div class="drow${on ? " on" : ""}">
+      <button class="dhead" data-act="desk-open" data-brief="${e(row.id)}" aria-expanded="${on}">
+        <span class="dd" style="color:${tone}">${row.daysLeft}d</span>
+        <span class="dwho">${e(row.clientName)}</span>
+        <span class="dwhat">${e(row.holding.name)}</span>
+        <span class="dval">${row.holding.value > 0 ? e(row.report.valueText) : "renewal"}</span>
+        <span class="dcaret">${on ? "⌃" : "⌄"}</span>
+      </button>
+      ${
+        on
+          ? `<div class="dbody">
+              ${
+                row.holding.value > 0
+                  ? `<div class="dfacts">
+                      <span class="dspark" style="color:var(--foam)">${sparkline(row.report)}</span>
+                      <span class="df"><i>matures</i>${e(row.matureText)}</span>
+                      <span class="df"><i>stands at</i>${e(row.report.valueText)}</span>
+                      <span class="df"><i>12 months</i>${row.report.yearPct >= 0 ? "+" : ""}${row.report.yearPct}%</span>
+                      <span class="df"><i>since start</i>${e(row.report.gainText)}</span>
+                    </div>`
+                  : `<div class="dfacts"><span class="df"><i>renews</i>${e(row.matureText)}</span></div>`
+              }
+              ${deskDraft(row.id, row.draft, {
+                kind: "maturity-draft",
+                facts: `Client: ${row.clientName}. Product: ${row.holding.name}. Current value: ${row.report.valueText}. Change over 12 months: ${row.report.yearPct}%. ${row.report.gainText}. Matures: ${row.matureText}.`,
+                ask: "Draft a short Telegram message: their plan matures soon; suggest 15 minutes on what the money does next.",
+                key: row.client,
+              })}
+              <div class="ctxacts">
+                <button class="btn acc" data-act="open-client" data-client="${row.client}">Open ${e(row.clientName.split(" ")[0]!)}</button>
+                <button class="btn" data-act="task-plan"
+                  data-title="Reach out to ${e(row.clientName.split(" ")[0]!)} — ${e(row.holding.name)} matures"
+                  data-due="${startOfDay(nowMs() + (row.daysLeft - 1) * 86_400_000) + 12 * 3_600_000}"
+                  data-hard="${startOfDay(nowMs() + row.daysLeft * 86_400_000)}"
+                  data-client="${row.client}" data-ref="mature:${e(row.holding.id)}">Plan it → calendar</button>
+              </div>
+            </div>`
+          : ""
+      }
+    </div>`;
+}
+
+function marketRow(row: MarketRow): string {
+  const evId = `ev:${row.event.id}`;
+  const on = state.desk === evId;
+  const leanGlyph = row.event.lean === "pressure" ? "▼" : row.event.lean === "relief" ? "▲" : "●";
+  const leanInk =
+    row.event.lean === "pressure" ? "var(--alarm)" : row.event.lean === "relief" ? "var(--foam)" : "var(--t3)";
+  return `
+    <div class="drow${on ? " on" : ""}">
+      <button class="dhead" data-act="desk-open" data-brief="${e(evId)}" aria-expanded="${on}">
+        <span class="dd" style="color:${leanInk}">${leanGlyph}</span>
+        <span class="dwhat wide">${e(row.event.headline)}</span>
+        <span class="dval">${row.clientCount} client${row.clientCount === 1 ? "" : "s"} · ${e(row.exposureText)}</span>
+        <span class="dcaret">${on ? "⌃" : "⌄"}</span>
+      </button>
+      ${
+        on
+          ? `<div class="dbody">
+              <p class="dsum">${e(row.event.summary)}</p>
+              <div class="dchiprow">
+                <span class="dchip">${e(row.event.source.name)} · ${e(new URL(row.event.source.url).hostname)}</span>
+                <span class="dchip dim">${e(row.agoText)}</span>
+              </div>
+              ${row.hits
+                .map((hit) => {
+                  const hitOn = state.deskHit === hit.id;
+                  return `
+                    <div class="dhit${hitOn ? " on" : ""}">
+                      <button class="dhithead" data-act="desk-hit" data-brief="${e(hit.id)}">
+                        <span class="dwho">${e(hit.clientName)}</span>
+                        <span class="dwhat">${e(hit.holding.name)}</span>
+                        <span class="dval">${e(hit.holding.value.toLocaleString("en-MY"))}</span>
+                        <span class="dcaret">${hitOn ? "⌃" : "⌄"}</span>
+                      </button>
+                      ${hitOn ? deskDraft(hit.id, hit.draft, {
+                        kind: "market-draft",
+                        facts: `Client: ${hit.clientName}. Holding: ${hit.holding.name}, value ${hit.holding.value.toLocaleString("en-MY")} RM. News headline: ${row.event.headline}. What it means: ${row.event.impactNote}`,
+                        ask: "A short reassurance note about this news for this holding. No action needed from them, no figures beyond the facts.",
+                        key: hit.client,
+                      }) : ""}
+                    </div>`;
+                })
+                .join("")}
+              ${row.hitsMore > 0 ? `<span class="dmore">+${row.hitsMore} more above the RM 25k floor</span>` : ""}
+            </div>`
+          : ""
+      }
+    </div>`;
+}
+
+function staleRow(row: StaleRow): string {
+  const on = state.desk === row.id;
+  return `
+    <div class="drow${on ? " on" : ""}">
+      <button class="dhead" data-act="desk-open" data-brief="${e(row.id)}" aria-expanded="${on}">
+        <span class="dd" style="color:var(--t4)">${row.days}d</span>
+        <span class="dwho">${e(row.clientName)}</span>
+        <span class="dwhat">${e(row.holding.name)} — no product update since ${row.days} days ago</span>
+        <span class="dcaret">${on ? "⌃" : "⌄"}</span>
+      </button>
+      ${
+        on
+          ? `<div class="dbody">
+              <div class="dfacts">
+                <span class="dspark" style="color:var(--foam)">${sparkline(row.report)}</span>
+                <span class="df"><i>stands at</i>${e(row.report.valueText)}</span>
+                <span class="df"><i>12 months</i>${row.report.yearPct >= 0 ? "+" : ""}${row.report.yearPct}%</span>
+              </div>
+              ${deskDraft(row.id, row.draft, {
+                kind: "stale-draft",
+                facts: `Client: ${row.clientName}. Holding: ${row.holding.name}, standing at ${row.report.valueText}, ${row.report.yearPct}% over 12 months. Days since last product update: ${row.days}.`,
+                ask: "A warm quarterly check-in about this holding, offering 15 minutes this week.",
+                key: row.client,
+              })}
+            </div>`
+          : ""
+      }
+    </div>`;
+}
+
+/**
+ * The section itself. Counts lead, rows follow, and the whole thing sits
+ * below the existing dashboard grid so nothing above it moved an inch —
+ * this is an experiment scrolled into, not a replacement.
+ */
+function deskSection(): string {
+  const d = deskView();
+  return `
+    <div class="desk">
+      <div class="deskhead">
+        <span class="hero-h d" style="font-size:21px">ChadBuddy · desk</span>
+        <span class="dstat">${d.needAction} need action ·
+          ${d.maturingTotal} maturing within ${60} days ·
+          ${d.marketClientTotal} client${d.marketClientTotal === 1 ? "" : "s"} touched by the market ·
+          checked ${e(d.checkedText)}</span>
+      </div>
+
+      ${
+        d.urgent.length || d.horizon.length
+          ? `<div class="dsec">
+              <span class="lbl">maturing soon</span>
+              ${d.urgent.map((r) => maturingRow(r, true)).join("")}
+              ${d.horizon.map((r) => maturingRow(r, false)).join("")}
+              ${d.horizonMore > 0 ? `<span class="dmore">+${d.horizonMore} more within 60 days</span>` : ""}
+            </div>`
+          : ""
+      }
+
+      ${
+        d.market.length
+          ? `<div class="dsec">
+              <span class="lbl">market watch</span>
+              ${d.market.map(marketRow).join("")}
+            </div>`
+          : ""
+      }
+
+      ${
+        d.stale.length
+          ? `<div class="dsec">
+              <span class="lbl">quiet holdings</span>
+              ${d.stale.map(staleRow).join("")}
+              ${d.staleMore > 0 ? `<span class="dmore">+${d.staleMore} more past ${90} days</span>` : ""}
+            </div>`
+          : ""
+      }
     </div>`;
 }
 
@@ -1737,6 +2481,32 @@ function searchKeeps(m: RecMessage): boolean {
  * — which is the one that can be fixed.
  */
 function keyInfoTile(c: ClientView): string {
+  /* Live mode: the agent's own notes, verbatim-gated server-side. Null means
+     no live data yet (seed renders); an empty array is a real answer. */
+  const live = liveNotes(c.key);
+  if (live !== null) {
+    const rows = live
+      .map(
+        (n) => `
+        <div class="kp" data-kind="fact">
+          <span class="g" title="Noted by ChadBuddy">✎</span>
+          <span class="col">
+            <span class="tx">${e(n.text)}</span>
+            <span class="mt">noted by chadbuddy · ${citeChips([n.cite], c.key)}</span>
+          </span>
+        </div>`,
+      )
+      .join("");
+    return `
+      <div class="tile keyinfo" style="gap:9px">
+        <div class="kihead">
+          <span class="t" style="font-size:14px;font-weight:500">Key information</span>
+          <span class="lbl">${live.length} noted</span>
+        </div>
+        ${rows || `<p class="empty" style="font-size:11px">Nothing noted yet — the agent reads every 15 minutes once a thread has a few messages.</p>`}
+      </div>`;
+  }
+
   const notes = notesFor(c.key);
 
   const rows = notes.moments
@@ -1786,6 +2556,69 @@ function keyInfoTile(c: ClientView): string {
     </div>`;
 }
 
+/**
+ * Call them, without leaving to find them.
+ *
+ * Honest about what it is: Telegram voice runs on MTProto's own call stack,
+ * which a webview cannot host — so this deep-links straight into the Telegram
+ * app's call screen for this exact person. One click here, one click there.
+ * The button only exists when there is a real Telegram peer behind the card:
+ * seeded clients have nobody to ring.
+ */
+function callButton(c: ClientView): string {
+  const meta = clientMeta(c.key);
+  if (!isTauri || !meta || meta.sourceId === "" || meta.sourceId.startsWith("seed:")) return "";
+  return `<button class="btn callbtn" data-act="call-tg" data-client="${c.key}"
+    title="Opens the call screen in Telegram">☏ Call</button>`;
+}
+
+/**
+ * The email on file, editable in place.
+ *
+ * Advisor-entered because no platform we read carries it. An empty save
+ * clears it — a wrong address is worse than none.
+ */
+function emailRow(c: ClientView): string {
+  const meta = clientMeta(c.key);
+  const email = meta?.email ?? "";
+  return `
+    <div class="fact emailrow">
+      <span class="g">✉</span><span class="k">Email</span><span class="d"></span>
+      <span class="v" style="display:flex;gap:5px;align-items:center">
+        <input class="emailbox" id="emailbox" type="email" value="${e(email)}" placeholder="none on file">
+        <button class="btn sm" data-act="email-save" data-client="${c.key}">Save</button>
+      </span>
+    </div>`;
+}
+
+/**
+ * Replying without leaving.
+ *
+ * Telegram goes through the outbox — the bridge holds the socket and its
+ * echo puts the sent message straight back into this thread. Email goes
+ * through the deployment's Gmail action. Both paths end at a human pressing
+ * this one button; nothing composes itself.
+ */
+function composer(c: ClientView): string {
+  const meta = clientMeta(c.key);
+  const emailReady = (meta?.email ?? "") !== "";
+  const via = state.replyVia;
+  return `
+    <div class="composer">
+      <div class="cvia">
+        <button class="cv${via === "tg" ? " on" : ""}" data-act="reply-via" data-via="tg">Telegram</button>
+        <button class="cv${via === "em" ? " on" : ""}" data-act="reply-via" data-via="em"
+          ${emailReady ? "" : `title="No email on file — add one in Basic information"`}>Email${emailReady ? "" : " ·?"}</button>
+      </div>
+      <textarea class="replybox" data-act="reply-input" rows="2"
+        placeholder="${via === "tg" ? `Message ${e(c.name.split(" ")[0]!)} on Telegram…` : `Email ${e(c.name.split(" ")[0]!)}…`}">${e(state.replyDraft)}</textarea>
+      <div class="crow">
+        <span class="mt">${via === "tg" ? "sends as you, lands in this thread" : emailReady ? `to ${e(meta?.email ?? "")}` : "add an email first"}</span>
+        <button class="btn acc" data-act="reply-send" data-client="${c.key}">Send</button>
+      </div>
+    </div>`;
+}
+
 function clientDetail(c: ClientView): string {
   const shown = c.messages.filter(searchKeeps);
   const filters: Array<[Filter, string]> = [["all", "all"], ["client", "theirs"], ["flagged", "flagged"]];
@@ -1798,6 +2631,7 @@ function clientDetail(c: ClientView): string {
         <span class="nm">${e(c.name)}</span>
         <span class="chip" data-tone="${c.chipTone}">${e(c.statusWord)}</span>
         ${pulse(c)}
+        ${callButton(c)}
       </div>
 
       <div class="dcols">
@@ -1809,6 +2643,7 @@ function clientDetail(c: ClientView): string {
               ${c.facts
                 .map((f) => `<div class="fact"><span class="g">${e(f.glyph)}</span><span class="k">${e(f.k)}</span><span class="d"></span><span class="v">${e(f.v)}</span></div>`)
                 .join("")}
+              ${emailRow(c)}
             </div>
           </div>
 
@@ -1838,6 +2673,7 @@ function clientDetail(c: ClientView): string {
               ? shown.map((m) => messageRow(m, state.q.trim())).join("")
               : `<p class="empty">No message matches “${e(state.q)}”.<br>Search runs over the text, the id and the timestamp.</p>`}
           </div>
+          ${composer(c)}
         </div>
 
         <!-- what to do about it -->
@@ -2090,12 +2926,16 @@ function render(): void {
   }
   if (state.st === "open") {
     const keep = new Map<string, number>();
-    for (const id of ["msgs", "asklog", "daylist", "dayctx", "keynotes", "dlist"]) {
+    /* dashbody is the page scroll itself. It joined this list with the desk —
+       the first page that scrolls — because a full innerHTML swap resets
+       scrollTop to 0, and expanding a row three screens down must not
+       teleport anyone back to the greeting. */
+    for (const id of ["dashbody", "msgs", "asklog", "daylist", "dayctx", "keynotes", "dlist"]) {
       const el = document.getElementById(id);
       if (el) keep.set(id, el.scrollTop);
     }
 
-    need("l-open").innerHTML = `<div class="dash">${header()}<div class="body sc">${body()}</div>${footer()}</div>`;
+    need("l-open").innerHTML = `<div class="dash">${header()}<div id="dashbody" class="body sc">${body()}</div>${footer()}</div>`;
 
     /* The funnel is React and this render just replaced the subtree it was in.
        Re-parenting the same node rather than recreating it is what keeps the
@@ -2156,6 +2996,34 @@ function ask(c: ClientView, q: string): void {
   if (!text) return;
   const log = (state.ask[c.key] ??= []);
   log.push({ from: "you", text: e(text) });
+
+  /* Live mode asks the actual model, which reads the actual thread — the
+     canned classifier below is only the seed demo's stand-in now. The reply
+     lands as a placeholder that swaps when the answer arrives, claims
+     verbatim-gated server-side; an answer whose evidence all died says so to
+     the advisor's face instead of dressing up. */
+  if (clientMeta(c.key) !== null) {
+    const turn: AskTurn = { from: "agent", text: "Reading the thread…" };
+    log.push(turn);
+    void askAgent(c.key, text)
+      .then((r) => {
+        turn.text = e(r.uncited ? `${r.answer}\n\n(No verbatim evidence survived the gate — treat this one as the model's guess.)` : r.answer);
+        turn.cites = r.cites;
+        render();
+      })
+      .catch((err) => {
+        turn.text = e(`The model is unreachable: ${err instanceof Error ? err.message : String(err)}`);
+        render();
+      });
+    state.draft = "";
+    render();
+    requestAnimationFrame(() => {
+      const el = document.getElementById("asklog");
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return;
+  }
+
   log.push(answer(c, classify(text)));
   state.draft = "";
   render();
@@ -2493,25 +3361,16 @@ island.addEventListener("click", (ev) => {
       }
       return;
     }
-    /* Stepping months. `0` is Today, which returns both the grid and the
-       open day to now rather than only one of them — landing on this month
-       with a day from three months ago still selected reads as a bug. */
     case "month-step": {
       const by = Number(hit.dataset.by ?? "0");
       const base = new Date(state.month ?? nowMs());
       base.setDate(1);
       base.setHours(0, 0, 0, 0);
 
-      if (by === 0) {
-        state.month = null;
-        state.pick = null;
-      } else {
+      if (by === 0) state.month = null;
+      else {
         base.setMonth(base.getMonth() + by);
         state.month = base.getTime();
-        /* The open day moves with the grid. Landing on November with a day in
-           August still selected leaves the right-hand panel showing a date
-           that is not on screen, which reads as the arrows being broken. */
-        state.pick = base.getTime();
       }
 
       void refreshMonth(state.month ?? nowMs()).then(render);
@@ -2519,22 +3378,291 @@ island.addEventListener("click", (ev) => {
       return;
     }
 
-    case "pick-day": {
-      const at = Number(hit.dataset.day ?? "");
-      if (Number.isFinite(at)) state.pick = at;
+    case "wk-step": {
+      const by = Number(hit.dataset.by ?? "0");
+      if (by === 0) state.wk = null;
+      else state.wk = mondayOf(state.wk ?? nowMs()) + by * 7 * 86_400_000;
+      void refreshWeek(state.wk ?? nowMs()).then(render);
       render();
       return;
     }
 
-    /* A block with nobody on the other side. The button still exists so the
+    /* A day, from either view. Closing the overlay here is what makes the
+       month usable as a jump: summon it, click the day, land on the day. */
+    case "cal-day": {
+      const at = Number(hit.dataset.day ?? "");
+      if (Number.isFinite(at)) {
+        state.calDay = at;
+        state.calOverlay = false;
+        void refreshMonth(at).then(render);
+      }
+      render();
+      return;
+    }
+
+    case "cal-back":
+      state.calDay = null;
+      render();
+      return;
+
+    case "cal-over":
+      state.calOverlay = !state.calOverlay;
+      render();
+      return;
+
+    case "cal-view": {
+      const v = hit.dataset.view === "month" ? "month" : "week";
+      state.calView = v;
+      state.calOverlay = false;
+      try {
+        localStorage.setItem("cb-calview", v);
+      } catch {
+        /* private mode: the choice lasts the session */
+      }
+      render();
+      return;
+    }
+
+    /* The weekly dot: cycle the rating in place. An unrated meeting jumps
+       straight to "important" — that is the likeliest intent of the tap. */
+    case "cal-rate": {
+      const id = hit.dataset.ev;
+      const ev = id ? findCalEvent(id) : undefined;
+      if (id && ev) {
+        const next: Importance =
+          ev.importance === undefined || ev.importance === "routine"
+            ? ev.importance === undefined
+              ? "important"
+              : "important"
+            : ev.importance === "important"
+              ? "key"
+              : "routine";
+        void calendarSource()
+          .annotate(id, { importance: next })
+          .then(refreshCalendar)
+          .then(() => {
+            if (next === "key") prepTaskFor(id);
+            render();
+          })
+          .catch((err) => console.error("[chadbuddy] could not rate", id, err));
+      }
+      return;
+    }
+
+    /* The explicit three-way control, on rail cards and the day page. */
+    case "cal-set": {
+      const id = hit.dataset.ev;
+      const imp = hit.dataset.imp as Importance | undefined;
+      if (id && imp) {
+        void calendarSource()
+          .annotate(id, { importance: imp })
+          .then(refreshCalendar)
+          .then(() => {
+            if (imp === "key") prepTaskFor(id);
+            render();
+          })
+          .catch((err) => console.error("[chadbuddy] could not rate", id, err));
+      }
+      return;
+    }
+
+    /* Confirming from the rail writes everything at once: the rating chosen
+       (routine if none was), the prep note as typed, and the booking itself.
+       All three land on the real Google event, because the calendar on the
+       advisor's phone is the real one. */
+    case "rail-confirm":
+    case "rail-save":
+    case "rail-drop": {
+      const id = hit.dataset.ev;
+      if (!id) return;
+      const ev = findCalEvent(id);
+      const ta = document.getElementById(`prep-${id}`) as HTMLTextAreaElement | null;
+      const prepUser = ta?.value.trim() ?? "";
+
+      const run = async (): Promise<void> => {
+        if (act === "rail-drop") {
+          await calendarSource().settle(id, "cancelled");
+        } else {
+          await calendarSource().annotate(id, {
+            importance: ev?.importance ?? (ev ? suggestImportance(ev) : "routine"),
+            ...(prepUser !== "" || ev?.prepUser ? { prepUser } : {}),
+          });
+          if (act === "rail-confirm") {
+            await calendarSource().settle(id, "confirmed");
+            if ((ev?.importance ?? (ev ? suggestImportance(ev) : "routine")) === "key") prepTaskFor(id);
+          }
+        }
+        await refreshCalendar();
+        render();
+      };
+      void run().catch((err) => console.error("[chadbuddy] rail action failed", id, err));
+      return;
+    }
+
+    /* The call: Telegram Web in ChadBuddy's own window, on this client's
+       chat — no desktop app needed, first use links the device by QR. The
+       OS deep link survives only as the fallback for when the window cannot
+       be created. */
+    case "call-tg": {
+      const who = hit.dataset.client;
+      const meta2 = who ? clientMeta(who) : null;
+      if (meta2 && meta2.sourceId !== "" && !meta2.sourceId.startsWith("seed:")) {
+        const id = meta2.sourceId;
+        void openTelegram(id).catch(() => openExternal(`tg://user?id=${id}`));
+      }
+      return;
+    }
+
+    case "email-save": {
+      const who = hit.dataset.client;
+      const box = document.getElementById("emailbox") as HTMLInputElement | null;
+      if (who && box) {
+        void setClientEmail(who, box.value)
+          .then(() => render())
+          .catch((err) => {
+            console.error("[chadbuddy] email save failed", err);
+            showNotif({ kind: "reminder", client: null, title: "Not saved", body: String(err instanceof Error ? err.message : err).slice(0, 60), meta: "", tag: "EMAIL", tone: "critical", dwell: 6000 });
+          });
+      }
+      return;
+    }
+
+    case "reply-via": {
+      state.replyVia = hit.dataset.via === "em" ? "em" : "tg";
+      render();
+      return;
+    }
+
+    /* The send. Both channels end here, at a person pressing a button on a
+       message they wrote — nothing about this path is autonomous. Telegram
+       rides the outbox and comes back into the thread through the bridge's
+       echo; email is fire-and-notify because it is not part of the citation
+       record. */
+    case "reply-send": {
+      const who = hit.dataset.client;
+      const text = state.replyDraft.trim();
+      if (!who || text === "") return;
+
+      const done = (title: string, body: string, tone: "butter" | "critical"): void => {
+        showNotif({ kind: "reminder", client: who, title, body: body.slice(0, 60), meta: "", tag: tone === "critical" ? "FAILED" : "SENT", tone, dwell: 6000 });
+      };
+
+      if (state.replyVia === "tg") {
+        void queueSend(who, text)
+          .then(() => {
+            state.replyDraft = "";
+            render();
+            done("Queued", "the bridge delivers it in about a second", "butter");
+          })
+          .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
+      } else {
+        void sendEmail(who, `Message from ${ADVISOR}`, text)
+          .then(() => {
+            state.replyDraft = "";
+            render();
+            done("Email sent", clientMeta(who)?.email ?? "", "butter");
+          })
+          .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
+      }
+      return;
+    }
+
+    case "task-done": {
+      const id = hit.dataset.task;
+      const t = id ? tasks().find((x) => x.id === id) : undefined;
+      if (id && t) void taskDone(id, !t.done).then(() => render());
+      return;
+    }
+
+    case "task-remove": {
+      const id = hit.dataset.task;
+      if (id) void taskRemove(id).then(() => render());
+      return;
+    }
+
+    /* The quick-add: what, and by when. Undated work is refused by shape —
+       the date input always has a value. */
+    case "task-add": {
+      const box = document.getElementById("taskbox") as HTMLInputElement | null;
+      const date = document.getElementById("taskdate") as HTMLInputElement | null;
+      const title = box?.value.trim() ?? "";
+      const when = date?.value ? Date.parse(`${date.value}T12:00:00`) : NaN;
+      if (title === "" || !Number.isFinite(when)) return;
+      void taskCreate({ title, dueMs: when, source: "advisor" }).then(() => render());
+      return;
+    }
+
+    /* The desk handing dated work to the calendar. */
+    case "task-plan": {
+      const title = hit.dataset.title ?? "";
+      const due = Number(hit.dataset.due ?? "");
+      if (title === "" || !Number.isFinite(due)) return;
+      void taskCreate({
+        title,
+        dueMs: due,
+        ...(hit.dataset.client ? { clientKey: hit.dataset.client as ClientKey } : {}),
+        ...(hit.dataset.hard ? { hardMs: Number(hit.dataset.hard) } : {}),
+        ...(hit.dataset.ref ? { ref: hit.dataset.ref } : {}),
+        source: "chadbuddy",
+      }).then(() => {
+        showNotif({ kind: "reminder", client: (hit.dataset.client as ClientKey) ?? null, title: "Planned", body: title.slice(0, 50), meta: "on the calendar", tag: "TASK", tone: "butter", dwell: 5000 });
+        render();
+      });
+      return;
+    }
+
+    /* A block with nobody on the other side.    /* A block with nobody on the other side. The button still exists so the
        whole row is one hit target rather than a mix of live and dead pixels. */
     case "noop":
       return;
 
+    /* Desk rows expand in place, one at a time — the queue stays scannable
+       with a detail open, which matters more as the book grows. */
+    case "desk-open": {
+      const id = hit.dataset.brief ?? null;
+      state.desk = state.desk === id ? null : id;
+      state.deskHit = null;
+      render();
+      return;
+    }
+
+    case "desk-hit": {
+      const id = hit.dataset.brief ?? null;
+      state.deskHit = state.deskHit === id ? null : id;
+      render();
+      return;
+    }
+
+    case "desk-dismiss":
+    case "desk-snooze": {
+      const id = hit.dataset.brief;
+      if (id) {
+        if (act === "desk-dismiss") dismissBrief(id);
+        else snoozeBrief(id);
+        if (state.desk === id) state.desk = null;
+        if (state.deskHit === id) state.deskHit = null;
+      }
+      render();
+      return;
+    }
+
     case "running-over": {
       const id = hit.dataset.slot;
       const ev = id ? calendarDay().find((x) => x.id === id) : undefined;
-      if (ev) markRunningOver(ev, nowMs());
+      if (ev) {
+        markRunningOver(ev, nowMs());
+        /* The consequences were on screen before the tap — that is the
+           consent. Each affected client with a real chat behind them now
+           actually hears; seeded ones are refused by the outbox and logged. */
+        const over = overrunFor(ev.id);
+        if (over) {
+          for (const c of conflictsFrom(over, laterToday(calendarDay(), nowMs()), nowMs())) {
+            void queueSend(c.client, delayText(c)).catch((err) =>
+              console.warn(`[chadbuddy] delay note to ${c.client} not sent: ${err instanceof Error ? err.message : err}`),
+            );
+          }
+        }
+      }
       render();
       return;
     }
@@ -2653,6 +3781,54 @@ island.addEventListener("click", (ev) => {
    it filters as you type, the composer because the send button enables on the
    first non-space character — and both name themselves for refocus so the
    caret survives the swap. */
+/* ── drag and drop for tasks ─────────────────────────────────────────
+   Native HTML5 DnD, delegated from the island so it survives every render.
+   No render fires during a drag — hover feedback is a class toggled on the
+   real DOM, and the one render happens after the drop commits. */
+let dragTaskId: string | null = null;
+let dropHover: Element | null = null;
+
+island.addEventListener("dragstart", (ev) => {
+  const chip = (ev.target as HTMLElement).closest?.("[data-task]");
+  if (!chip) return;
+  dragTaskId = (chip as HTMLElement).dataset["task"] ?? null;
+  if (ev.dataTransfer) {
+    ev.dataTransfer.setData("text/plain", dragTaskId ?? "");
+    ev.dataTransfer.effectAllowed = "move";
+  }
+});
+
+island.addEventListener("dragover", (ev) => {
+  if (dragTaskId === null) return;
+  const zone = (ev.target as HTMLElement).closest?.("[data-drop-day]");
+  if (!zone) return;
+  ev.preventDefault();
+  if (dropHover !== zone) {
+    dropHover?.classList.remove("dropok");
+    zone.classList.add("dropok");
+    dropHover = zone;
+  }
+});
+
+island.addEventListener("drop", (ev) => {
+  const zone = (ev.target as HTMLElement).closest?.("[data-drop-day]");
+  dropHover?.classList.remove("dropok");
+  dropHover = null;
+  if (!zone || dragTaskId === null) return;
+  ev.preventDefault();
+  const day = Number((zone as HTMLElement).dataset["dropDay"]);
+  const id = dragTaskId;
+  dragTaskId = null;
+  // Noon, not midnight: day-granular, and immune to timezone edges.
+  if (Number.isFinite(day)) void taskMove(id, day + 12 * 3_600_000).then(() => render());
+});
+
+island.addEventListener("dragend", () => {
+  dropHover?.classList.remove("dropok");
+  dropHover = null;
+  dragTaskId = null;
+});
+
 island.addEventListener("input", (ev) => {
   const el = ev.target as HTMLInputElement;
   const act = el.dataset.act;
@@ -2660,6 +3836,11 @@ island.addEventListener("input", (ev) => {
     state.q = el.value;
     refocus = ".qbox";
     render();
+  } else if (act === "reply-input") {
+    /* No render: nothing on screen depends on the draft, and re-rendering
+       per keystroke would fight the caret. State is only the lifeboat for
+       when something ELSE re-renders mid-thought. */
+    state.replyDraft = el.value;
   } else if (act === "edit-draft") {
     /* Held in state rather than read off the DOM at send time, because the
        island re-renders by swapping innerHTML — the textarea the advisor typed
@@ -2773,6 +3954,7 @@ void refreshCalendar().then(render);
    visit, so stepping onto the tab shows a filled grid rather than an empty one
    that populates a frame later — an empty calendar reads as a free month. */
 void refreshMonth(nowMs()).then(render);
+void refreshWeek(nowMs()).then(render);
 
 render();
 watchHotRect(island);
@@ -2843,6 +4025,12 @@ const live = initLive(
        block it creates arrives back through the calendar subscription. */
   },
 );
+
+/* Tasks after live is decided: the seam subscribes to Convex when there is
+   a client to subscribe to, and falls back to localStorage when there is not
+   — the browser demo needs no backend. */
+initTasks(render);
+initDeskAi(render);
 
 if (live) {
   /* The day, from Google rather than the seed file.

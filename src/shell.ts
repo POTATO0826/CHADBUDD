@@ -195,6 +195,25 @@ export function watchHotRect(island: HTMLElement): void {
   window.addEventListener("resize", () => reportHotRect(island));
 }
 
+/**
+ * Open a deep link in whatever the OS has registered for it — tg:// for the
+ * Telegram app, mailto: for the mail client. The Rust side allowlists the
+ * schemes; anything else is refused there, not here, because the page is the
+ * less trusted party in that conversation.
+ */
+/**
+ * Telegram Web in a ChadBuddy-owned window, opened on one client's chat.
+ * Returns the invoke promise so the caller can fall back to the OS deep link
+ * when window creation fails.
+ */
+export function openTelegram(peer: string): Promise<unknown> {
+  return rawInvoke?.("open_telegram", { peer }) ?? Promise.reject(new Error("not in tauri"));
+}
+
+export function openExternal(url: string): void {
+  void rawInvoke?.("open_external", { url });
+}
+
 export function quit(): void {
   invoke("quit");
 }

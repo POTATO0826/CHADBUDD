@@ -100,4 +100,47 @@ http.route({
   }),
 });
 
+/**
+ * The phone's call log, arriving.
+ *
+ * A desktop app cannot see missed calls; the phone can, and automation apps
+ * (MacroDroid, Tasker) can POST on every call ended or missed. This is the
+ * receiver: token-checked, matched to a client by the last eight digits —
+ * enough to survive +60 vs 0 prefix differences — and stored either way.
+ *
+ * The token rule is the same as the Google push route: the URL is public by
+ * construction, so the shared secret is the entire difference between the
+ * advisor's phone and anyone who guesses the address.
+ */
+http.route({
+  path: "/phone/call",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const token = new URL(request.url).searchParams.get("token") ?? request.headers.get("x-phone-token") ?? "";
+    const expected = process.env["PHONE_WEBHOOK_TOKEN"] ?? "";
+    if (expected === "" || token !== expected) return new Response("no", { status: 401 });
+
+    let body: { number?: string; direction?: string; durationSec?: number; ts?: number };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return new Response("bad json", { status: 400 });
+    }
+
+    const number = String(body.number ?? "").trim();
+    const direction =
+      body.direction === "outgoing" ? "outgoing" : body.direction === "missed" ? "missed" : "incoming";
+    if (number === "") return new Response("no number", { status: 400 });
+
+    await ctx.runMutation(internal.calls.record, {
+      number,
+      direction,
+      durationSec: Math.max(0, Math.round(Number(body.durationSec ?? 0))),
+      ts: Number.isFinite(body.ts) ? Number(body.ts) : Date.now(),
+    });
+
+    return new Response("ok", { status: 200 });
+  }),
+});
+
 export default http;

@@ -63,6 +63,11 @@ export const list = query({
           key: c.key,
           clientName: c.name,
           handle: c.handle,
+          /* For the reply composer and the call button. sourceId lets the
+             page deep-link into Telegram; email is where written replies go
+             when the advisor picks that channel. */
+          sourceId: c.sourceId,
+          email: c.email ?? null,
           messages: messages
             .sort((a, b) => a.ts - b.ts)
             .map((m) => ({
@@ -118,6 +123,25 @@ export const ideas = query({
  * rejection rate nobody believes. Rising numbers here are a fact about the
  * model, not a bug in the gate.
  */
+/** What the agent noticed about each person, verbatim-gated. */
+export const notes = query({
+  args: {},
+  handler: async (ctx) => {
+    const clients = await ctx.db.query("clients").collect();
+    return await Promise.all(
+      clients.map(async (c) => ({
+        key: c.key,
+        notes: (
+          await ctx.db
+            .query("notes")
+            .withIndex("by_client", (q) => q.eq("clientId", c._id))
+            .collect()
+        ).map((n) => ({ text: n.text, cite: n.cite, updatedAt: n.updatedAt })),
+      })),
+    );
+  },
+});
+
 export const rejections = query({
   args: {},
   handler: async (ctx) => {

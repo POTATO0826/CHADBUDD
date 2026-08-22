@@ -282,6 +282,9 @@ function shape(e: GoogleEvent, calendarId: string) {
           ? ("tentative" as const)
           : ("confirmed" as const),
     ...(priv["chadbuddyClient"] ? { clientKey: priv["chadbuddyClient"] } : {}),
+    ...(priv["chadbuddyImportance"] ? { importance: priv["chadbuddyImportance"] } : {}),
+    ...(priv["chadbuddyPrepUser"] ? { prepUser: priv["chadbuddyPrepUser"] } : {}),
+    ...(priv["chadbuddyPrepAi"] ? { prepAi: priv["chadbuddyPrepAi"] } : {}),
     ...(e.hangoutLink ? { conferenceUrl: e.hangoutLink } : {}),
     updatedAt: Date.now(),
   };
@@ -405,6 +408,7 @@ export const createEvent = action({
     clientKey: v.optional(v.string()),
     tentative: v.optional(v.boolean()),
     inferredCite: v.optional(v.string()),
+    prepAi: v.optional(v.string()),
     calendarId: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<string> => {
@@ -426,6 +430,7 @@ export const createEvent = action({
             chadbuddyKind: a.kind,
             ...(a.clientKey ? { chadbuddyClient: a.clientKey } : {}),
             ...(a.inferredCite ? { chadbuddyCite: a.inferredCite } : {}),
+            ...(a.prepAi ? { chadbuddyPrepAi: a.prepAi } : {}),
           },
         },
       }),
@@ -456,6 +461,47 @@ export const moveEvent = action({
     });
 
     if (!res.ok) throw new Error(`Calendar patch failed: ${res.status} ${await res.text()}`);
+    await ctx.runMutation(internal.calendar.upsertEvents, { events: [shape(await res.json(), cal)] });
+  },
+});
+
+/**
+ * Attach the advisor's judgement to an event: importance, prep note, or both.
+ *
+ * Rides the same private extended properties as `kind` and the client key, so
+ * a rating survives the Google round trip and syncs everywhere the calendar
+ * does. Patching extendedProperties merges by key — the properties this call
+ * does not name are left exactly as they were.
+ */
+export const annotateEvent = action({
+  args: {
+    googleId: v.string(),
+    importance: v.optional(v.string()),
+    prepUser: v.optional(v.string()),
+    calendarId: v.optional(v.string()),
+  },
+  handler: async (ctx, a): Promise<void> => {
+    const cal = a.calendarId ?? "primary";
+    const access = await token(ctx);
+
+    const res = await fetch(`${CAL}/calendars/${encodeURIComponent(cal)}/events/${a.googleId}`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        extendedProperties: {
+          private: {
+            ...(a.importance ? { chadbuddyImportance: a.importance } : {}),
+            // Google caps a private property value at 1024 chars; a prep note
+            // longer than that loses its tail rather than failing the save.
+            ...(a.prepUser !== undefined
+              ? { chadbuddyPrepUser: a.prepUser.slice(0, 1000) }
+              : {}),
+          },
+        },
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Calendar annotate failed: ${res.status} ${await res.text()}`);
     await ctx.runMutation(internal.calendar.upsertEvents, { events: [shape(await res.json(), cal)] });
   },
 });
