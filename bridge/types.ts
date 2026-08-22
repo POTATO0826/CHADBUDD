@@ -124,6 +124,9 @@ export interface Source {
   /** Live arrivals. Called once; the adapter owns the subscription. */
   onMessage(cb: (chatId: string, message: BridgeMessage) => void): void;
 
+  /** Deliver a file with an optional caption. Optional per platform. */
+  sendFile?(chatId: string, file: { name: string; bytes: Uint8Array; caption: string }): Promise<void>;
+
   /**
    * The phone ringing, live. ringing=false means whatever was ringing has
    * stopped — Telegram's end event does not say which call, and one at a

@@ -13,6 +13,7 @@
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { NewMessage } from "telegram/events/index.js";
+import { CustomFile } from "telegram/client/uploads.js";
 import type { NewMessageEvent } from "telegram/events/index.js";
 import type { Api } from "telegram";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -271,6 +272,15 @@ export class TelegramSource implements Source {
         durationSec: action.duration ?? 0,
         ts: (msg?.date ?? Math.floor(Date.now() / 1000)) * 1000,
       });
+    });
+  }
+
+  async sendFile(chatId: string, file: { name: string; bytes: Uint8Array; caption: string }): Promise<void> {
+    const buf = Buffer.from(file.bytes);
+    await this.#need().sendFile(chatId, {
+      file: new CustomFile(file.name, buf.length, "", buf),
+      caption: file.caption.trim() === "" ? undefined : file.caption,
+      forceDocument: true,
     });
   }
 

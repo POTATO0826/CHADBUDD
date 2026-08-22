@@ -1028,6 +1028,12 @@ html[data-shell="tauri"] #desk{ display: none; }
 .rmdraft textarea:focus{ outline: none;
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--iris) 45%, transparent); }
 
+/* the staged attachment on a draft */
+.attchip{ display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono);
+  font-size: 10px; padding: 3px 5px 3px 9px; border-radius: 999px; color: var(--t2);
+  background: color-mix(in oklab, var(--glacial) 9%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 25%, transparent); }
+
 /* ── the task, opened ── */
 .tctx{ display: flex; flex-direction: column; gap: 8px; padding: 13px 14px;
   border-radius: var(--r-md);

@@ -282,6 +282,9 @@ export default defineSchema({
     text: v.string(),
     /** Which recommendation this came from, for auditing what was acted on. */
     ideaRank: v.optional(v.string()),
+    /** An attached file, held in Convex storage until the bridge delivers. */
+    fileId: v.optional(v.id("_storage")),
+    fileName: v.optional(v.string()),
     state: v.union(v.literal("queued"), v.literal("sent"), v.literal("failed")),
     queuedTs: v.number(),
     sentTs: v.optional(v.number()),

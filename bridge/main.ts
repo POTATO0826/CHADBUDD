@@ -473,7 +473,13 @@ async function main(): Promise<void> {
   const sending = new Set<string>();
 
   live.onUpdate(API.pendingSends, {}, (value) => {
-    const rows = value as Array<{ _id: string; sourceId: string; text: string }>;
+    const rows = value as Array<{
+      _id: string;
+      sourceId: string;
+      text: string;
+      fileUrl?: string | null;
+      fileName?: string | null;
+    }>;
     for (const row of rows) {
       // onUpdate can fire again before a send resolves; without this the same
       // row goes out twice and the client gets the message twice.
@@ -482,9 +488,20 @@ async function main(): Promise<void> {
 
       void (async () => {
         try {
-          await source.sendMessage(row.sourceId, row.text);
+          if (row.fileUrl && source.sendFile) {
+            const res = await fetch(row.fileUrl);
+            if (!res.ok) throw new Error(`attachment fetch ${res.status}`);
+            const bytes = new Uint8Array(await res.arrayBuffer());
+            await source.sendFile(row.sourceId, {
+              name: row.fileName ?? "attachment",
+              bytes,
+              caption: row.text,
+            });
+          } else {
+            await source.sendMessage(row.sourceId, row.text);
+          }
           await convex.mutation(API.markSent, { id: row._id });
-          console.log(`[sent] ${row.sourceId}: ${row.text.slice(0, 60)}`);
+          console.log(`[sent] ${row.sourceId}: ${row.text.slice(0, 60)}${row.fileUrl ? " +file" : ""}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           await convex.mutation(API.markFailed, { id: row._id, error: msg });

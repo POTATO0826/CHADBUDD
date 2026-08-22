@@ -27,7 +27,7 @@ import { funnelElement } from "./funnel.tsx";
 import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
-import { acceptProposal, askAgent, clientMeta, declineProposal, initLive, liveHoldings, liveNotes, queueSend, sendEmail, setClientEmail } from "./live.ts";
+import { acceptProposal, askAgent, clientMeta, declineProposal, initLive, liveHoldings, liveNotes, queueSend, sendEmail, sendEmailWithFile, setClientEmail, uploadFile } from "./live.ts";
 import { aiText, initDeskAi } from "./deskAi.ts";
 import type { Task } from "./tasks.ts";
 import { initTasks, taskCreate, taskDone, taskMove, taskRemove, tasks, tasksOn, urgencyOf } from "./tasks.ts";
@@ -146,6 +146,8 @@ interface State {
   roomNonce: number;
   /** The advisor's in-progress edit of the room draft, surviving re-renders. */
   roomText: string | null;
+  /** A file staged onto the room draft, already in Convex storage. */
+  roomFile: { fileId: string; fileName: string } | null;
   /** Week view: Monday of the week shown. Null follows the clock. */
   wk: number | null;
   /** Desk: the expanded row, by brief id. Null is everything collapsed. */
@@ -207,6 +209,7 @@ const state: State = {
   room: null,
   roomNonce: 0,
   roomText: null,
+  roomFile: null,
   agendaDay: null,
   taskSel: null,
   calFilters: ((): { meetings: boolean; emails: boolean; outreach: boolean } => {
@@ -1878,7 +1881,7 @@ function railCard(ev: CalendarEvent): string {
           : ""
       }
       ${railPrep(ev, ai)}
-      <textarea class="prepin" id="prep-${e(ev.id)}" rows="2"
+      <textarea class="prepin" id="prep-${e(ev.id)}" rows="2" data-keep
         placeholder="Your prep note — what to have ready">${e(ev.prepUser ?? "")}</textarea>
       <div class="ctxacts">
         ${
@@ -2137,7 +2140,7 @@ function daySlotCards(dayMs: number, events: CalendarEvent[]): string {
                   ${ai.map((p) => `<span class="prep">▢ ${e(p)}</span>`).join("")}</div>`
               : ""
           }
-          <textarea class="prepin" id="prep-${e(x.id)}" rows="2"
+          <textarea class="prepin" id="prep-${e(x.id)}" rows="2" data-keep
             placeholder="Your prep note">${e(x.prepUser ?? "")}</textarea>
           <div class="ctxacts">
             ${
@@ -2202,7 +2205,7 @@ function dayPlan(dayMs: number): string {
           <button class="trm" data-act="task-remove" data-task="${e(t.id)}" title="Remove">✕</button>
         </div>`).join("")}
       <div class="taddrow">
-        <input class="tadd" id="taskbox" type="text" placeholder="Add dated work — what must be done…">
+        <input class="tadd" id="taskbox" type="text" data-keep placeholder="Add dated work — what must be done…">
         <input class="tdate" id="taskdate" type="date" value="${iso}">
         <button class="btn acc sm" data-act="task-add">Add</button>
       </div>
@@ -3861,7 +3864,7 @@ function stageRoom(key: ClientKey, stage: Stage): string {
           <div class="rmright">
             <div class="rmdraft">
               <span class="lbl" style="color:var(--iris)">${e(draftLabel)}</span>
-              <textarea id="roomdraft">${e(state.roomText ?? draft)}</textarea>
+              <textarea id="roomdraft" data-keep>${e(state.roomText ?? draft)}</textarea>
               <div class="ctxacts">
                 <span class="seg2" style="display:inline-flex">
                   <button aria-current="${state.replyVia === "tg"}" data-act="reply-via" data-via="tg">Telegram</button>
@@ -3869,6 +3872,13 @@ function stageRoom(key: ClientKey, stage: Stage): string {
                 </span>
                 <button class="btn acc" data-act="room-send" data-client="${c.key}">Approve & send</button>
                 <button class="btn" data-act="room-regen">↻ Regenerate</button>
+                <button class="btn" data-act="room-attach">⊕ Attach file</button>
+                <input type="file" id="roomfile" style="display:none" aria-hidden="true">
+                ${
+                  state.roomFile
+                    ? `<span class="attchip">${e(state.roomFile.fileName)}<button class="trm" data-act="room-detach" title="Remove attachment">✕</button></span>`
+                    : ""
+                }
               </div>
               <span class="m" style="font-size:9.5px;color:var(--t4)">nothing sends without this button — figures come from the book or the draft is refused</span>
             </div>
@@ -3929,6 +3939,17 @@ function body(): string {
    cursor while a search narrows. */
 let refocus: string | null = null;
 
+/* In-progress edits survive the render storm. Every input/textarea carrying
+   data-keep mirrors its live value here on each keystroke, and render() puts
+   the value back after the innerHTML swap — the minute ticker and every
+   subscription re-render, and an edit that reverts under the advisor's
+   hands is how trust dies. Handlers that consume a value call dropKeep so a
+   deliberate clear stays cleared. */
+const keepEdits = new Map<string, string>();
+function dropKeep(id: string): void {
+  keepEdits.delete(id);
+}
+
 function render(): void {
   // The compact layers are rebuilt every render: the idle pill carries a live
   // countdown and the peek card live counts, and both are cheap strings with
@@ -3937,6 +3958,18 @@ function render(): void {
   need("l-idle").innerHTML = idleLayer();
   need("l-peek").innerHTML = peekLayer();
   if (state.st === "open") {
+    /* Whatever the advisor is typing in survives the swap: the focused
+       editable's id and caret are captured here and restored below. */
+    const active = document.activeElement as HTMLElement | null;
+    const activeId =
+      active && active.id !== "" && (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement)
+        ? active.id
+        : null;
+    const caret =
+      activeId && (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement)
+        ? ((active as HTMLTextAreaElement).selectionStart ?? 0)
+        : 0;
+
     const keep = new Map<string, number>();
     /* dashbody is the page scroll itself. It joined this list with the desk —
        the first page that scrolls — because a full innerHTML swap resets
@@ -3960,6 +3993,10 @@ function render(): void {
       const el = document.getElementById(id);
       if (el) el.scrollTop = y;
     }
+    for (const [id, v] of keepEdits) {
+      const el = document.getElementById(id);
+      if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) el.value = v;
+    }
     if (refocus) {
       const el = island.querySelector<HTMLInputElement>(refocus);
       if (el) {
@@ -3967,6 +4004,13 @@ function render(): void {
         el.setSelectionRange(el.value.length, el.value.length);
       }
       refocus = null;
+    } else if (activeId) {
+      const el = document.getElementById(activeId);
+      if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+        el.focus();
+        const at = Math.min(caret, el.value.length);
+        el.setSelectionRange(at, at);
+      }
     }
   }
   reportHotRect(island);
@@ -4497,6 +4541,7 @@ island.addEventListener("click", (ev) => {
       const ta = document.getElementById(`prep-${id}`) as HTMLTextAreaElement | null;
       const prepUser = ta?.value.trim() ?? "";
 
+      dropKeep(`prep-${id}`);
       const run = async (): Promise<void> => {
         if (act === "rail-drop") {
           await calendarSource().settle(id, "cancelled");
@@ -4776,6 +4821,18 @@ island.addEventListener("click", (ev) => {
     case "room-back": {
       state.room = null;
       state.roomText = null;
+      dropKeep("roomdraft");
+      render();
+      return;
+    }
+
+    case "room-attach": {
+      (document.getElementById("roomfile") as HTMLInputElement | null)?.click();
+      return;
+    }
+
+    case "room-detach": {
+      state.roomFile = null;
       render();
       return;
     }
@@ -4783,6 +4840,7 @@ island.addEventListener("click", (ev) => {
     case "room-regen": {
       state.roomNonce++;
       state.roomText = null;
+      dropKeep("roomdraft");
       render();
       return;
     }
@@ -4802,16 +4860,24 @@ island.addEventListener("click", (ev) => {
         btn.textContent = "Approve & send";
         showNotif({ kind: "reminder", client: who, title, body: body.slice(0, 60), meta: "stage outreach", tag: tone === "critical" ? "FAILED" : "SENT", tone, dwell: 6000 });
       };
+      const attachment = state.roomFile ?? undefined;
+      const sent = (): void => {
+        state.roomFile = null;
+        dropKeep("roomdraft");
+        state.roomText = null;
+      };
       if (state.replyVia === "tg") {
-        void queueSend(who, text)
+        void queueSend(who, text, undefined, attachment)
           .then(() => {
-            finish("Queued", "the bridge delivers it in about a second", "butter");
+            sent();
+            finish("Queued", `the bridge delivers it${attachment ? " with the file" : ""} in about a second`, "butter");
             showSendExternally(who, "tg");
           })
           .catch((err) => finish("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       } else {
-        void sendEmail(who, `Message from ${ADVISOR}`, text)
+        void sendEmailWithFile(who, `Message from ${ADVISOR}`, text, attachment)
           .then(() => {
+            sent();
             finish("Email sent", clientMeta(who)?.email ?? "", "butter");
             showSendExternally(who, "em");
           })
@@ -4853,6 +4919,8 @@ island.addEventListener("click", (ev) => {
       const title = box?.value.trim() ?? "";
       const when = date?.value ? Date.parse(`${date.value}T12:00:00`) : NaN;
       if (title === "" || !Number.isFinite(when)) return;
+      dropKeep("taskbox");
+      if (box) box.value = "";
       void taskCreate({ title, dueMs: when, source: "advisor" }).then(() => render());
       return;
     }
@@ -5105,8 +5173,25 @@ island.addEventListener("dragend", () => {
   dragTaskId = null;
 });
 
+island.addEventListener("change", (ev) => {
+  const el = ev.target as HTMLInputElement;
+  if (el.id !== "roomfile" || !el.files || el.files.length === 0) return;
+  const f = el.files[0]!;
+  el.value = "";
+  void uploadFile(f)
+    .then((att) => {
+      state.roomFile = att;
+      render();
+      showNotif({ kind: "reminder", client: null, title: "Attached", body: att.fileName.slice(0, 50), meta: "rides the next send", tag: "FILE", tone: "butter", dwell: 4000 });
+    })
+    .catch((err: unknown) => {
+      showNotif({ kind: "reminder", client: null, title: "Not attached", body: err instanceof Error ? err.message : String(err), meta: "", tag: "FAILED", tone: "critical", dwell: 6000 });
+    });
+});
+
 island.addEventListener("input", (ev) => {
   const el = ev.target as HTMLInputElement;
+  if (el.dataset["keep"] !== undefined && el.id !== "") keepEdits.set(el.id, el.value);
   const act = el.dataset.act;
   if (act === "search") {
     state.q = el.value;

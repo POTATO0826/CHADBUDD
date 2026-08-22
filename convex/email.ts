@@ -33,8 +33,10 @@ export const send = action({
     to: v.string(),
     subject: v.string(),
     text: v.string(),
+    fileId: v.optional(v.id("_storage")),
+    fileName: v.optional(v.string()),
   },
-  handler: async (_ctx, { to, subject, text }): Promise<{ sent: boolean; id: string }> => {
+  handler: async (ctx, { to, subject, text, fileId, fileName }): Promise<{ sent: boolean; id: string }> => {
     const user = process.env["GMAIL_USER"] ?? "";
     const pass = process.env["GMAIL_APP_PASSWORD"] ?? "";
     if (user === "" || pass === "") {
@@ -43,7 +45,14 @@ export const send = action({
           "(Google account → Security → 2-Step Verification → App passwords).",
       );
     }
-    if (text.trim() === "") throw new Error("Refusing to send an empty email.");
+    if (text.trim() === "" && fileId === undefined) throw new Error("Refusing to send an empty email.");
+
+    let attachments: Array<{ filename: string; content: Buffer }> = [];
+    if (fileId !== undefined) {
+      const blob = await ctx.storage.get(fileId);
+      if (!blob) throw new Error("The attached file is gone from storage.");
+      attachments = [{ filename: fileName ?? "attachment", content: Buffer.from(await blob.arrayBuffer()) }];
+    }
 
     const transport = nodemailer.createTransport({
       host: "smtp.gmail.com",

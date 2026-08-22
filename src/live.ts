@@ -132,12 +132,36 @@ export async function declineProposal(id: string): Promise<void> {
   await convex.mutation(mut("scheduling", "decline"), { id });
 }
 
-export async function queueSend(key: ClientKey, text: string, ideaRank?: string): Promise<string> {
+export interface Attachment {
+  fileId: string;
+  fileName: string;
+}
+
+/**
+ * A local file into Convex storage, ready to ride a send. 8 MB cap: the
+ * mutation arg ceiling is 16 and a demo should never crawl.
+ */
+export async function uploadFile(file: File): Promise<Attachment> {
+  if (!convex) throw new Error("Attachments need live mode.");
+  if (file.size > 8_000_000) throw new Error("Keep attachments under 8 MB.");
+  const url = (await convex.mutation(mut("outbox", "uploadUrl"), {})) as string;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": file.type === "" ? "application/octet-stream" : file.type },
+    body: file,
+  });
+  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  const { storageId } = (await res.json()) as { storageId: string };
+  return { fileId: storageId, fileName: file.name };
+}
+
+export async function queueSend(key: ClientKey, text: string, ideaRank?: string, file?: Attachment): Promise<string> {
   if (!convex) throw new Error("Not connected to the backend — sending needs live mode.");
   const res = (await convex.mutation(mut("outbox", "queueSend"), {
     key,
     text,
     ...(ideaRank === undefined ? {} : { ideaRank }),
+    ...(file === undefined ? {} : { fileId: file.fileId, fileName: file.fileName }),
   })) as { to: string };
   return res.to;
 }
@@ -283,6 +307,20 @@ export function liveMarketEvents(): Array<{
 }
 
 /** Send an email through the deployment. Throws plainly when not connected. */
+export async function sendEmailWithFile(key: ClientKey, subject: string, text: string, file?: Attachment): Promise<void> {
+  if (!convex) throw new Error("Not connected to the backend — email needs live mode.");
+  const em = meta.get(key)?.email ?? null;
+  if (em === null || em === "") {
+    throw new Error("No email on file for this client — add one in Basic information.");
+  }
+  await convex.action(act("email", "send"), {
+    to: em,
+    subject,
+    text,
+    ...(file === undefined ? {} : { fileId: file.fileId, fileName: file.fileName }),
+  });
+}
+
 export async function sendEmail(key: ClientKey, subject: string, text: string): Promise<void> {
   if (!convex) throw new Error("Not connected to the backend — email needs live mode.");
   const to = meta.get(key)?.email;

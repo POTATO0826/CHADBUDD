@@ -32,10 +32,12 @@ export const queueSend = mutation({
     key: v.string(),
     text: v.string(),
     ideaRank: v.optional(v.string()),
+    fileId: v.optional(v.id("_storage")),
+    fileName: v.optional(v.string()),
   },
-  handler: async (ctx, { key, text, ideaRank }) => {
+  handler: async (ctx, { key, text, ideaRank, fileId, fileName }) => {
     const trimmed = text.trim();
-    if (trimmed === "") throw new Error("Refusing to queue an empty message.");
+    if (trimmed === "" && fileId === undefined) throw new Error("Refusing to queue an empty message.");
 
     const client = await ctx.db
       .query("clients")
@@ -54,6 +56,8 @@ export const queueSend = mutation({
       sourceId: client.sourceId,
       text: trimmed,
       ...(ideaRank === undefined ? {} : { ideaRank }),
+      ...(fileId === undefined ? {} : { fileId }),
+      ...(fileName === undefined ? {} : { fileName }),
       state: "queued",
       queuedTs: Date.now(),
     });
@@ -65,11 +69,25 @@ export const queueSend = mutation({
 /** What the bridge should deliver. Subscribed to, so a click sends in about a second. */
 export const pending = query({
   args: {},
-  handler: async (ctx) =>
-    await ctx.db
+  handler: async (ctx) => {
+    const rows = await ctx.db
       .query("outbox")
       .withIndex("by_state", (q) => q.eq("state", "queued"))
-      .collect(),
+      .collect();
+    // The bridge cannot reach storage directly; a signed URL rides along.
+    return await Promise.all(
+      rows.map(async (r) => ({
+        ...r,
+        fileUrl: r.fileId ? await ctx.storage.getUrl(r.fileId) : null,
+      })),
+    );
+  },
+});
+
+/** Where the page PUTs an attachment before queueing the send. */
+export const uploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => await ctx.storage.generateUploadUrl(),
 });
 
 export const markSent = mutation({
