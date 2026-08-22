@@ -332,7 +332,6 @@ const notifs: Notif[] = (() => {
 function messageLayer(n: Notif): string {
   return `
     <button class="row pad" data-act="notif-open" aria-label="Open ${e(n.title)}'s message">
-      <span class="sweepline" aria-hidden="true"></span>
       <span class="ava-sq" aria-hidden="true">${e(n.initials ?? "")}</span>
       <span class="txt">${e(n.title)}: “${e(n.body)}”</span>
       <span class="ago">${e(n.meta)}</span>
@@ -2431,7 +2430,6 @@ function clientTile(c: ClientView): string {
 
   return `
     <button class="pcard" data-act="open-client" data-client="${c.key}" aria-label="Open ${e(c.name)}">
-      <span class="rail" style="background:${markOf(c.tone)}"></span>
       <span class="glow" aria-hidden="true" style="background:radial-gradient(closest-side, ${tint(markOf(c.tone), 12)}, transparent)"></span>
 
       <span class="top">
@@ -3027,7 +3025,7 @@ function openLedgerTile(c: ClientView): string {
 function queueRow(r: QueueRow): string {
   const cites = r.who ? citeChips(r.cites, r.who) : "";
   return `
-    <div class="lrow" style="${r.rail ? `box-shadow:inset 2px 0 0 ${markOf(r.tone)}` : ""}${r.dim ? ";opacity:.72" : ""}">
+    <div class="lrow" style="${r.dim ? "opacity:.72" : ""}">
       <span class="sq" style="background:${tint(markOf(r.tone), 16)};color:${inkOf(r.tone)}">${e(r.initials)}</span>
       <span class="who">
         <span class="n">${e(r.name)}</span>
@@ -3066,7 +3064,7 @@ function proposalCards(): string {
     .map((p) => {
       const initials = p.name.split(" ").map((w) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
       return `
-    <div class="lrow" style="box-shadow:inset 2px 0 0 var(--gold)">
+    <div class="lrow">
       <span class="sq" style="background:${tint("var(--gold)", 16)};color:var(--gold)">${e(initials)}</span>
       <span class="who">
         <span class="n">${e(p.name)}</span>

@@ -156,8 +156,8 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
      hue, same quietness — so a box reads as a box without needing a border.
      Surface tint only, never an ink. */
   --glacial:   #a8c8dc;
-  --tile:      color-mix(in oklab, var(--glacial) 11%, color-mix(in oklab, var(--card) 58%, transparent));
-  --tile-2:    color-mix(in oklab, var(--glacial) 12%, color-mix(in oklab, var(--card) 66%, transparent));
+  --tile:      color-mix(in oklab, var(--glacial) 11%, color-mix(in oklab, var(--card) 72%, transparent));
+  --tile-2:    color-mix(in oklab, var(--glacial) 12%, color-mix(in oklab, var(--card) 80%, transparent));
   /* wells — a step *down* from the plane, which on the light ramp means ink */
   /* Wells go DARK glacial — glacial is a light hue, so an inset surface
      mixes only a whisper of it into the base and reads colder, not
@@ -314,7 +314,6 @@ button{ font: inherit; color: inherit; background: none; border: 0; padding: 0; 
 .sc::-webkit-scrollbar-thumb{ background: color-mix(in oklab, var(--foreground) 18%, transparent); border-radius: var(--r-sm); }
 .sc::-webkit-scrollbar-track{ background: transparent; }
 
-@keyframes sweep{ 0%{ transform: translateX(-100%); } 100%{ transform: translateX(320%); } }
 @keyframes breathe{ 0%,100%{ opacity:.4 } 50%{ opacity:1 } }
 
 /* A custom property has no type by default, so the browser can only swap it at
@@ -503,11 +502,6 @@ html[data-shell="tauri"] #desk{ display: none; }
 .island[data-state="open"]  .l-open{ opacity: 1; pointer-events: auto; }
 .l-open{ transition-delay: .08s; }
 
-.sweepline{
-  position: absolute; top: 0; left: 0; width: 26%; height: 1px;
-  background: linear-gradient(90deg, transparent, var(--butter), transparent);
-  animation: sweep 2.6s linear infinite;
-}
 
 /* ── compact rows: idle / alert / call ── */
 /* line-height:1 so the flex centring lands on the glyphs rather than on a line
@@ -1534,11 +1528,6 @@ html[data-shell="tauri"] #desk{ display: none; }
 .dlist{ flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .drow{ border-radius: var(--r-lg); background: var(--tile); box-shadow: var(--edge);
   padding: 13px 15px; display: flex; flex-direction: column; gap: 6px; }
-/* The outcome is carried on the left edge, so the shape of the log reads before
-   any of the words do. */
-.drow[data-outcome="sent"]    { box-shadow: var(--edge), inset 3px 0 0 var(--m-good); }
-.drow[data-outcome="held"]    { box-shadow: var(--edge), inset 3px 0 0 var(--m-warn); }
-.drow[data-outcome="refused"] { box-shadow: var(--edge), inset 3px 0 0 var(--butter); }
 
 .drow .dhd{ display: flex; align-items: center; gap: 10px; }
 .drow .tier{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; padding: 3px 7px;
@@ -1788,14 +1777,6 @@ html[data-shell="tauri"] #desk{ display: none; }
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 34%, transparent), var(--lift-2);
   transform: translateY(-1px);
 }
-/* A 2px rail in the client's own status colour, so the grid is scannable by
-   severity before a single word is read. */
-.pcard .rail{ position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
-  /* Fades out down the card. A hard bar edge-to-edge is the thing that reads
-     as a component default; the same colour, released before it reaches the
-     bottom, still sorts the grid by severity without framing the card. */
-  -webkit-mask-image: linear-gradient(to bottom, #000 0 42%, transparent 92%);
-  mask-image: linear-gradient(to bottom, #000 0 42%, transparent 92%); }
 .pcard .glow{ position: absolute; right: -50px; top: -50px; width: 170px; height: 170px; pointer-events: none; }
 
 .pcard .top{ display: flex; align-items: flex-start; gap: 11px; }
