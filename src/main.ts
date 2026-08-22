@@ -238,16 +238,73 @@ const island = need("island");
 
 /* ── island: compact states ──────────────────────────────────────── */
 
+/** What the advisor owes right now — shared by the idle pill and the peek card. */
+function owedNow(): { tasksLeft: number; overdue: number; unreplied: number; toReturn: number } {
+  const today = startOfDay(nowMs());
+  const undone = tasks().filter((t) => !t.done);
+  return {
+    tasksLeft: undone.length,
+    overdue: undone.filter((t) => startOfDay(t.dueMs) < today).length,
+    unreplied: clients.filter((c) => c.thread.messages[c.thread.messages.length - 1]?.from === "client").length,
+    toReturn: clients.reduce((n, c) => n + callStats(c.key).unreturned, 0),
+  };
+}
+
+/**
+ * The resting pill answers one question: what matters most right now?
+ *
+ * A priority ladder, first match wins — a meeting bearing down beats owed
+ * work, owed work beats a quiet book, and a genuinely clear plate says so
+ * with the next commitment attached. Book-health (decaying/silent) moved to
+ * the overview page, where reading it is a choice rather than wallpaper.
+ * Re-rendered every minute by the live ticker, so the countdown is real.
+ */
 function idleLayer(): string {
-  const parts: string[] = [];
-  if (totals.decaying > 0) parts.push(`${totals.decaying} decaying`);
-  if (totals.silent > 0) parts.push(`${totals.silent} silent`);
-  const line = parts.length ? parts.join(" · ") : "All steady";
+  const owed = owedNow();
+  const now = nowMs();
+
+  // The next commitment, today or across days — for the headline when close,
+  // for the trailing countdown otherwise.
+  const todayNext = nextUp && !nextUp.past ? { when: nextUp.start, title: nextUp.title, who: nextUp.withClient ? clientById(nextUp.withClient.toLowerCase()).name.split(" ")[0]! : nextUp.title } : null;
+  const ahead = todayNext === null ? nextAhead() : null;
+  const upcoming = todayNext ?? (ahead && ahead.kind === "event" ? { when: ahead.when, title: ahead.title, who: ahead.who.split(" ")[0]! } : null);
+  const minsToNext = upcoming ? (upcoming.when - now) / 60_000 : null;
+  const farCountdown = minsToNext !== null ? untilText(minsToNext).replace(/^in /, "") : "";
+
+  let dot = "var(--m-good)";
+  let live = false;
+  let line: string;
+  let far = farCountdown;
+
+  if (upcoming && minsToNext !== null && minsToNext <= 120) {
+    line = `${upcoming.who} · ${untilText(minsToNext)}`;
+    dot = "var(--iris)";
+    live = minsToNext <= 15;
+    far = "";
+  } else if (owed.overdue > 0) {
+    line = `${owed.overdue} overdue task${owed.overdue === 1 ? "" : "s"}`;
+    dot = "var(--love)";
+  } else if (owed.unreplied > 0 || owed.toReturn > 0) {
+    const bits: string[] = [];
+    if (owed.unreplied > 0) bits.push(`↩ ${owed.unreplied} unreplied`);
+    if (owed.toReturn > 0) bits.push(`☏ ${owed.toReturn} to return`);
+    line = bits.join(" · ");
+    dot = "var(--foam)";
+  } else if (owed.tasksLeft > 0) {
+    line = `○ ${owed.tasksLeft} task${owed.tasksLeft === 1 ? "" : "s"} left`;
+    dot = "var(--gold)";
+  } else if (upcoming) {
+    line = `✓ clear · next ${untilText(minsToNext ?? 0)}`;
+    far = "";
+  } else {
+    line = "✓ all steady";
+  }
+
   return `
-    <button class="row" data-act="open" aria-label="Open ChadBuddy">
-      <span class="dot" aria-hidden="true"></span>
+    <button class="row" data-act="open" aria-label="Open ChadBuddy — ${e(line)}">
+      <span class="dot${live ? " live" : ""}" aria-hidden="true" style="background:${dot}"></span>
       <span class="txt">${e(line)}</span>
-      <span class="far">${totals.clients}</span>
+      ${far !== "" ? `<span class="far">${e(far)}</span>` : ""}
     </button>`;
 }
 
@@ -472,12 +529,7 @@ function nextNotif(): void {
  * shape of the whole book still reads in a quarter of a second.
  */
 function peekLayer(): string {
-  const tasksLeft = tasks().filter((t) => !t.done).length;
-  // The client spoke last: whatever they said, it has had no answer yet.
-  const unreplied = clients.filter(
-    (c) => c.thread.messages[c.thread.messages.length - 1]?.from === "client",
-  ).length;
-  const toReturn = clients.reduce((n, c) => n + callStats(c.key).unreturned, 0);
+  const { tasksLeft, unreplied, toReturn } = owedNow();
   const meetingsLeft = bigSlots.filter((s) => !s.past).length;
   const strip = clients
     .map((c) => `<i style="background:${markOf(c.tone)}" title="${e(c.name)} · ${e(c.statusWord)}"></i>`)
@@ -3868,8 +3920,6 @@ function body(): string {
   return queuePage(state.page);
 }
 
-let compactRendered = false;
-
 /* Rendering is a full innerHTML swap, which throws away the focused element —
    fine for a screen you click, fatal for one you type into. Any handler that
    fires per keystroke names the input it wants back and render() restores it,
@@ -3879,12 +3929,12 @@ let compactRendered = false;
 let refocus: string | null = null;
 
 function render(): void {
-  if (!compactRendered) {
-    // Alert and call layers are rendered per-notification by showNotif.
-    need("l-idle").innerHTML = idleLayer();
-    need("l-peek").innerHTML = peekLayer();
-    compactRendered = true;
-  }
+  // The compact layers are rebuilt every render: the idle pill carries a live
+  // countdown and the peek card live counts, and both are cheap strings with
+  // no focus or inputs inside. Alert and call layers stay per-notification,
+  // written by showNotif.
+  need("l-idle").innerHTML = idleLayer();
+  need("l-peek").innerHTML = peekLayer();
   if (state.st === "open") {
     const keep = new Map<string, number>();
     /* dashbody is the page scroll itself. It joined this list with the desk —
