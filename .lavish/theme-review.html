@@ -83,8 +83,8 @@ td.num{font-family:var(--mono); white-space:nowrap}
 .a-chip.decay{color:var(--love-hi); background:color-mix(in oklab,#eb6f92 22%, var(--bg))}
 .a-chip.watch{color:var(--gold-hi); background:color-mix(in oklab,#f6c177 20%, var(--bg))}
 .a-tchip{display:inline-flex; align-items:center; gap:6px; padding:4px 9px; border-radius:5px; font-size:10.5px}
-.a-tchip.week{background:#4a4858; box-shadow:inset 3px 0 0 color-mix(in oklab,var(--gold) 55%,transparent)}
-.a-tchip.soon{background:#585666; box-shadow:inset 3px 0 0 var(--gold)}
+.a-tchip.week{background:#4a4858}
+.a-tchip.soon{background:#585666}
 .a-tchip.today{background:var(--gold); color:var(--bg)}
 .a-tchip.today .late{font-family:var(--mono); color:#8c1d3f; font-weight:700}
 .a-tchip.over{background:var(--love); color:var(--bg)}
@@ -102,19 +102,23 @@ td.num{font-family:var(--mono); white-space:nowrap}
 .a-bub.client{background:color-mix(in oklab,var(--foamI) 9%,var(--bg));
   box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--foamI) 14%,transparent)}
 .a-fact{font-family:var(--mono); font-size:10.5px; display:flex; gap:9px; align-items:baseline}
-.a-fact .g{color:var(--foam)}
+.a-fact .g{color:var(--t4)}
 .a-badge{font-family:var(--mono); font-size:10px; padding:2px 7px; border-radius:999px;
-  color:var(--gold-hi); background:color-mix(in oklab,var(--gold) 24%,var(--bg))}
+  color:var(--t2); background:color-mix(in oklab,var(--t1) 10%,transparent)}
 .a-sec{display:flex; flex-direction:column; gap:6px}
 .a-seclbl{font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase}
 .a-secrow{border-radius:11px; background:color-mix(in oklab,var(--t1) 3%,transparent);
   padding:8px 12px; font-size:12px; color:var(--t2)}
 .a-prop{font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase;
   padding:3px 8px; border-radius:999px; color:var(--gold); border:1px dashed color-mix(in oklab,var(--gold) 50%,transparent)}
-.a-ki{color:var(--rose-hi); font-weight:500; font-size:14px}
-.a-kp{font-size:12px; color:var(--t2)} .a-kp b{color:var(--rose); font-weight:400; margin-right:6px}
+.a-ki{color:var(--t1); font-weight:500; font-size:14px}
+.a-kp{font-size:12px; color:var(--t2)} .a-kp b{color:var(--t4); font-weight:400; margin-right:6px}
 .a-dot{font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--t4)}
 .a-dot i{display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:6px; vertical-align:1px}
+.ramp{display:flex; gap:3px; margin:6px 0 2px}
+.ramp i{height:16px; border-radius:4px}
+.r2 li{margin:0 0 8px; line-height:1.55}
+.r2 .done{color:var(--foamI); font-weight:600; margin-right:6px}
 
 form.opts{display:flex; flex-direction:column; gap:10px}
 form.opts label{display:flex; gap:9px; align-items:flex-start; font-size:13px; color:var(--t2); cursor:pointer}
@@ -218,7 +222,7 @@ form.opts button{align-self:flex-start; background:var(--iris); color:var(--bg);
           <span class="a-tchip today">○ Send the comparison <span class="late">!</span></span>
           <span class="a-tchip over">○ Renewal papers <span class="late">!</span></span>
         </div>
-        <span class="note">cool states: neutral well + gold rail · hot states: solid accent, dark ink — closer still reads darker</span>
+        <span class="note">round 2: the gold left rails are gone — cool states are a quiet two-step well, colour only arrives when the chip goes hot (solid gold today, solid love overdue)</span>
       </div>
     </div>
 
@@ -258,12 +262,11 @@ form.opts button{align-self:flex-start; background:var(--iris); color:var(--bg);
       </div>
       <div class="half after"><span class="tag">after</span>
         <div class="a-fact"><span class="g">☏</span><span style="color:var(--t3)">Phone</span><span>+60 17-556 ••23</span></div>
-        <div class="row"><span class="a-seclbl" style="color:var(--gold)">maturing soon</span> <span class="a-seclbl" style="color:var(--foam)">market watch</span> <span class="a-seclbl" style="color:var(--rose)">quiet holdings</span></div>
+        <div class="row"><span class="a-seclbl">maturing soon</span> <span class="a-seclbl">market watch</span> <span class="a-seclbl">quiet holdings</span></div>
         <div class="row"><span style="font-size:12px;color:var(--t3)">calls</span><span class="a-badge">2</span><span class="a-prop">asked in chat</span></div>
         <div class="a-ki">Key information</div>
         <div class="a-kp"><b>✎</b>Salary lands on the 24th</div>
-        <div class="row"><span class="a-dot"><i style="background:var(--pine)"></i>clients</span><span class="a-dot"><i style="background:var(--foam)"></i>messages</span></div>
-        <span class="note">fact glyphs foam · desk sections say their meaning · calls badge gold · proposals gold (a client offering time is time-and-money, not assistant output) · key info rose · hero stats get pine/foam dots</span>
+        <span class="note">round 2: the per-word costumes are off — glyphs, section labels, the calls badge and key-info all wear quiet ink again. Colour now only ever arrives as a block: status chips, hot task chips, week blocks, bubbles, charts.</span>
       </div>
     </div>
   </section>
@@ -285,7 +288,29 @@ form.opts button{align-self:flex-start; background:var(--iris); color:var(--bg);
   </section>
 
   <section class="card">
-    <h2>Open decisions — queue what you want</h2>
+    <h2>Round 2 — your comments, applied</h2>
+    <ul class="r2" style="list-style:none; padding:0; margin:0">
+      <li><span class="done">✓</span><b>"the colours on the left side look vibe coded"</b> — agreed, and it generalised:
+        the gold rails on cool task chips, the 2px rails on desk rows, and the twin pine/foam column dots were all
+        colour-as-decoration. All removed.</li>
+      <li><span class="done">✓</span><b>"colour changes between each few words"</b> — every small-text hue costume is
+        reverted to quiet ink: fact glyphs, desk section labels, the calls badge, the key-information heading.
+        The rule now: <i>a hue may paint a block, never a word.</i> Blocks that keep their colour: status chips,
+        hot task chips, the week-view importance ladder, client bubbles, charts.</li>
+      <li><span class="done">✓</span><b>Boxes more opaque</b> — the tiles now carry their own card backing
+        (~58–66% solid) while the plane between them stays glassy, so text stops fighting your wallpaper.
+        The plane itself is untouched, as you asked. Judge it live in the window.</li>
+      <li><span class="done">✓</span><b>Funnel recolour</b> — applied via the lead chart token as a five-step ramp,
+        light at the wide end, deep at the far end:
+        <span class="ramp"><i style="flex:5; background:color-mix(in oklab,var(--pine) 26%,var(--bg))"></i><i style="flex:4; background:color-mix(in oklab,var(--pine) 40%,var(--bg))"></i><i style="flex:3; background:color-mix(in oklab,var(--pine) 54%,var(--bg))"></i><i style="flex:2; background:color-mix(in oklab,var(--pine) 70%,var(--bg))"></i><i style="flex:1.4; background:color-mix(in oklab,var(--pine) 86%,var(--bg))"></i></span>
+        One honest deviation from the checkbox text: not one-token-per-stage. The stages are <i>ordered</i>, and five
+        unrelated hues across an ordered scale is the exact rainbow tell we are removing — a ramp of one hue says
+        "one journey, deepening". If you want the literal five-hue version anyway, tick it below.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Still open — queue what you want</h2>
     <form class="opts" data-lavish-question="theme-options"
       onsubmit="event.preventDefault();
         const fd=new FormData(event.currentTarget);
@@ -296,14 +321,12 @@ form.opts button{align-self:flex-start; background:var(--iris); color:var(--bg);
       <label><input type="checkbox" name="opt" value="convert UI glyphs (☏ ✉ ⌕ ◍ ✎ …) to a small inline-SVG icon set">
         <span><b>Replace glyph icons with real SVGs</b> — the one unfixed tell. The chrome currently uses unicode glyphs
         (☏ ✉ ⌕ ◍ ✎); a tiny inline-SVG set would render identically on every machine. ~1–2h of careful swapping.</span></label>
-      <label><input type="checkbox" name="opt" value="raise the open-dashboard plane opacity from 86-90% toward 94-96%">
-        <span><b>Make the open dashboard more opaque</b> — the plane lets your desktop bleed through at 86–90%. Raising it
-        would end the “sometimes muddy over a bright window” cases entirely, at the cost of some of the overlay feel.
-        (Compact island stays translucent either way.)</span></label>
-      <label><input type="checkbox" name="opt" value="recolor the funnel chart series to the new chart tokens (pine/foam/gold/rose/iris)">
-        <span><b>Recolor the funnel chart</b> to the freshly-rethemed chart tokens so the clients page matches the system.</span></label>
-      <label><input type="checkbox" name="opt" value="revert: keep client bubbles gray instead of foam">
-        <span><b>Revert option</b> — if the foam client bubbles feel like too much, they can go back to gray.</span></label>
+      <label><input type="checkbox" name="opt" value="boxes: go further — make the tiles fully opaque">
+        <span><b>Boxes: go further</b> — tiles at 100% solid card, glass only between them.</span></label>
+      <label><input type="checkbox" name="opt" value="boxes: dial the new backing back toward the old glassy tiles">
+        <span><b>Boxes: dial it back</b> — if the new backing kills too much of the overlay feel.</span></label>
+      <label><input type="checkbox" name="opt" value="funnel: use the literal five tokens (pine/foam/gold/rose/iris), one per stage, instead of the pine ramp">
+        <span><b>Funnel: literal five hues</b> — one chart token per stage, overriding my ramp reasoning above.</span></label>
       <span class="lbl">anything else</span>
       <textarea name="note" placeholder="e.g. 'the gold today-chip is too loud', 'give the desk header more presence'…"></textarea>
       <button type="submit">Queue my answers</button>
