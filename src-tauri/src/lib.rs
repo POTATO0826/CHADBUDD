@@ -133,6 +133,30 @@ fn open_telegram(app: AppHandle, peer: String) -> Result<(), String> {
     let _ = w.show();
     let _ = w.unminimize();
     let _ = w.set_focus();
+
+    /* One click means ringing, not "here is the chat, press their button".
+       The injected script presses Telegram's own call button and then its
+       confirm dialog, retrying for ten seconds so the chat has time to load.
+       Two guards keep it polite: it does nothing on the login screen (the
+       user still has to link the device once), and nothing when a call is
+       already up (no ongoing-call class check needed — the phone button
+       simply is not rendered mid-call, so the loop just times out).
+       Selectors are Telegram A's DOM, which is not an API and will someday
+       move; the failure mode is the old behaviour, one manual tap. */
+    let _ = w.eval(concat!(
+        "(function(){",
+        "if(document.querySelector('#auth-phone-number-form,#auth-qr-form')){return;}",
+        "var tries=0;var t=setInterval(function(){tries++;",
+        "var m=Array.prototype.find.call(document.querySelectorAll('.Modal button,[class*=confirm] button'),function(b){return /^\\s*call\\s*$/i.test(b.textContent);});",
+        "if(m){m.click();clearInterval(t);return;}",
+        "var i=document.querySelector('.icon-phone');",
+        "var btn=i&&i.closest('button');",
+        "if(!btn){btn=Array.prototype.find.call(document.querySelectorAll('button[title],button[aria-label]'),function(b){return /call/i.test(b.title||b.getAttribute('aria-label')||'');});}",
+        "if(btn){btn.click();}",
+        "if(tries>40){clearInterval(t);}",
+        "},250);})();",
+    ));
+    println!("[tgweb] shown on peer {peer}, auto-call armed");
     Ok(())
 }
 
