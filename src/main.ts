@@ -694,20 +694,92 @@ function slotTone(s: AgendaSlot): Tone {
  * from the same slot the countdown describes, so stepping to Ms Tan and
  * clicking lands on Ms Tan.
  */
+const weekdayFmt = new Intl.DateTimeFormat("en-GB", { weekday: "long", timeZone: "Asia/Kuala_Lumpur" });
+
+/**
+ * The first commitment or dated task after today, looked for over the
+ * coming week. What the tile shows once today is spent — a finished day
+ * should hand you tomorrow, never a countdown into the past.
+ */
+function nextAhead(): { when: number; title: string; who: string; kind: "event" | "task"; day: number } | null {
+  const endOfToday = startOfDay(nowMs()) + DAY_MS;
+  const horizon = endOfToday + 7 * DAY_MS;
+
+  const ev = allCalEvents()
+    .filter((x) => BIG.has(x.kind) && x.booking !== "cancelled")
+    .map((x) => ({ x, t: Date.parse(x.at) }))
+    .filter(({ t }) => t >= endOfToday && t < horizon)
+    .sort((a, b) => a.t - b.t)[0];
+  const task = tasks()
+    .filter((t) => !t.done && t.dueMs >= endOfToday && t.dueMs < horizon)
+    .sort((a, b) => a.dueMs - b.dueMs)[0];
+
+  const evAt = ev ? ev.t : Infinity;
+  const taskAt = task ? task.dueMs : Infinity;
+  if (evAt === Infinity && taskAt === Infinity) return null;
+
+  if (evAt <= taskAt && ev) {
+    const who = ev.x.withClient ? clientById(ev.x.withClient.toLowerCase()).name : (ev.x.withName ?? ev.x.title);
+    return { when: evAt, title: ev.x.title, who, kind: "event", day: startOfDay(evAt) };
+  }
+  const t = task!;
+  const who = t.clientKey ? clientById(t.clientKey.toLowerCase()).name : "Dated work";
+  return { when: t.dueMs, title: t.title, who, kind: "task", day: startOfDay(t.dueMs) };
+}
+
+/** The look-ahead face: tomorrow's first thing, clickable through to its day. */
+function aheadCard(n: NonNullable<ReturnType<typeof nextAhead>>, doneToday: number): string {
+  const today = startOfDay(nowMs());
+  const dayWord = n.day === today + DAY_MS ? "tomorrow" : weekdayFmt.format(n.day).toLowerCase();
+  return `
+    <div class="upnext">
+      <button class="face" data-act="goto-day" data-day="${n.day}"
+        aria-label="Next up ${e(dayWord)}: ${e(n.title)}. Open that day.">
+        <span class="grain" aria-hidden="true"></span>
+        <span class="glow" aria-hidden="true" style="background:radial-gradient(closest-side, ${tint("var(--m-good)", 18)}, transparent)"></span>
+        <span class="flag">next up · ${e(dayWord)}</span>
+        <span class="cd" style="color:var(--i-good)">${n.kind === "event" ? `${e(dayWord)} ${e(hhmmOf(n.when))}` : `${e(dayWord)} · task due`}</span>
+        <span class="btm">
+          <span style="display:flex;flex-direction:column;gap:3px;min-width:0">
+            <span class="nm">${e(n.who)}</span>
+            <span class="sub">${n.kind === "event" ? `${e(hhmmOf(n.when))} · ${e(n.title)}` : e(n.title)}</span>
+          </span>
+        </span>
+        ${doneToday > 0 ? `<span class="nowline">today is clear — ${doneToday} commitment${doneToday === 1 ? "" : "s"} done</span>` : ""}
+      </button>
+      ${
+        doneToday > 0
+          ? `<span class="step">
+        <button class="ar" data-act="up-step" data-dir="0" aria-label="Review today">‹</button>
+        <span class="pos">done</span>
+        <button class="ar" disabled aria-label="Nothing later">›</button>
+      </span>`
+          : ""
+      }
+    </div>`;
+}
+
 function upNextTile(): string {
   const list = bigSlots;
   const now = happeningNow;
 
-  if (!list.length) {
-    return `
+  /* A finished (or empty) day looks forward, unless the advisor is
+     deliberately stepping back through what happened. */
+  const spent = list.length === 0 || list.every((s) => s.past);
+  if (spent && state.up === null) {
+    const ahead = nextAhead();
+    if (ahead) return aheadCard(ahead, list.length);
+    if (list.length === 0) {
+      return `
       <div class="upnext"><button class="face" data-act="page" data-page="agenda">
         <span class="grain" aria-hidden="true"></span>
         <span class="flag">the day</span>
         <span class="btm"><span style="display:flex;flex-direction:column;gap:3px;min-width:0">
           <span class="nm">Nothing scheduled</span>
-          <span class="sub">no commitments on the book today</span>
+          <span class="sub">no commitments on the book today or ahead</span>
         </span></span>
       </button></div>`;
+    }
   }
 
   const at = Math.min(list.length - 1, Math.max(0, state.up ?? nextUpIndex));
@@ -4664,6 +4736,18 @@ island.addEventListener("click", (ev) => {
             showSendExternally(who, "em");
           })
           .catch((err) => finish("Not sent", err instanceof Error ? err.message : String(err), "critical"));
+      }
+      return;
+    }
+
+    /* The look-ahead tile: open the calendar on that day. */
+    case "goto-day": {
+      const day = Number(hit.dataset.day ?? "");
+      if (Number.isFinite(day)) {
+        state.page = "calendar";
+        state.calDay = day;
+        setState("open");
+        void refreshMonth(day).then(render);
       }
       return;
     }
