@@ -16,8 +16,8 @@ import { approvals, ideas, queues } from "./copy.ts";
 import type { Idea, QueueKind, QueueRow } from "./copy.ts";
 import type { ClientView, RecMessage, Tone } from "./derive.ts";
 import {
-  ADVISOR, INK, MARK, clientById, clients, dateShort, humanGap, replyClock, stamp,
-  totals, weekBars,
+  ADVISOR, INK, MARK, clientById, clients, dateShort, findClient, humanGap, replyClock,
+  stamp, totals, weekBars,
 } from "./derive.ts";
 import { openDays } from "./ledger.ts";
 import type { LedgerEntry } from "./ledger.ts";
@@ -28,7 +28,8 @@ import type { Stage } from "../data/book.ts";
 import { agenda, bigSlots, dayTotals, happeningNow, nextUp, nextUpIndex, slotById, untilText } from "./agenda.ts";
 import type { AgendaSlot } from "./agenda.ts";
 import { initLive, queueSend } from "./live.ts";
-import { emotionTone, latestEmotion } from "./emotions.ts";
+import { emotionTone, keyPointsFor, latestEmotion } from "./emotions.ts";
+import type { KeyPoint } from "./emotions.ts";
 import { connectCalendar } from "./convexCalendar.ts";
 import { initScramble } from "./scramble.ts";
 import { POINT_GLYPH, POINT_LABEL, notesFor } from "./contact.ts";
@@ -1809,6 +1810,8 @@ function clientDetail(c: ClientView): string {
 
           ${keyInfoTile(c)}
 
+          ${keyPointsTile(c)}
+
           ${c.open.length ? openLedgerTile(c) : ""}
         </div>
 
@@ -1872,6 +1875,39 @@ function messageRow(m: RecMessage, hit = ""): string {
         <span class="meta">${chips}<span class="id">${e(m.time)} · ${e(m.id)}</span></span>
       </div>
       ${m.flag ? `<span class="flag" style="color:${inkOf(m.flagTone)}">◆ ${e(m.flag)}</span>` : ""}
+    </div>`;
+}
+
+/**
+ * What the client actually told you, extracted and cited.
+ *
+ * The shape deliberately mirrors the open ledger below it: a kind chip, the
+ * fact, the verbatim quote it was read from, the cite that lights the message.
+ * `point` is the model's restatement and sits beside its evidence, which is
+ * the ideas panel's own precedent. Absent entirely when no pass has run —
+ * a tile of hatches would just be noise where the seed is concerned.
+ */
+function keyPointsTile(c: ClientView): string {
+  const points = keyPointsFor(c.key);
+  if (points.length === 0) return "";
+
+  const row = (p: KeyPoint) => `
+    <div style="display:flex;flex-direction:column;gap:5px;padding:8px 0;border-bottom:1px solid var(--hair)">
+      <div style="display:flex;align-items:baseline;gap:8px">
+        <span class="ec" style="color:var(--iris);border:1px dashed color-mix(in oklab, var(--iris) 55%, transparent)">${e(p.kind.replace(/_/g, " "))}</span>
+        <span style="font-size:12px">${e(p.point)}</span>
+      </div>
+      <blockquote style="margin:0;padding:5px 9px;border-left:2px solid color-mix(in oklab, var(--foreground) 18%, transparent);background:color-mix(in oklab, var(--foreground) 3.5%, transparent);font-size:11.5px;font-style:italic;color:var(--t3)">“${e(p.quote)}”</blockquote>
+      <span>${citeChips([p.sourceId], c.key)}</span>
+    </div>`;
+
+  return `
+    <div class="tile" style="gap:6px;flex:none">
+      <div style="display:flex;align-items:baseline;gap:9px;padding-bottom:6px">
+        <span class="t" style="font-size:14.5px;font-weight:500">Key points</span>
+        <span class="lbl" style="margin-left:auto">${points.length} extracted · every quote gate-checked</span>
+      </div>
+      <div class="sect" style="gap:0">${points.map(row).join("")}</div>
     </div>`;
 }
 
@@ -1954,7 +1990,11 @@ function body(): string {
   if (state.page === "assist") return assistPage();
   if (state.page === "clients") {
     if (state.cview === "grid") return clientsGrid();
-    return clientDetail(clientById(state.sel.toLowerCase()));
+    // The selection can go stale under the render: live mode swaps the book
+    // after connect, and a seed client open at that moment no longer exists.
+    // Falling back to clients[0] here is how a page changed people mid-look.
+    const sel = findClient(state.sel.toLowerCase());
+    return sel ? clientDetail(sel) : clientsGrid();
   }
   return queuePage(state.page);
 }
@@ -2018,6 +2058,16 @@ function render(): void {
  * keeps each conversation where you left it.
  */
 function openClient(key: ClientKey): void {
+  /* Authored copy — approvals, queues, agenda notes — still references seed
+     clients, and in live mode the book holds different people. clientById's
+     fallback made that click silently open the first client instead; the
+     grid is the honest landing when the person a row names is not in the
+     book. */
+  if (!findClient(key.toLowerCase())) {
+    state.page = "clients";
+    state.cview = "grid";
+    return;
+  }
   if (key !== state.sel) {
     state.q = "";
     state.filter = "all";

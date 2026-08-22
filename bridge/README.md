@@ -93,12 +93,19 @@ writes the rest through `emotions.record` — which re-verifies each span
 against the message text Convex actually holds, with the same gate the ideas
 pass. Fabrications land in `rejected` alongside the agent's.
 
-The UI shows the result twice: the latest read across the book as a chip in
-the dashboard's top-right orb cluster (tooltip carries the client, the
-verbatim span, and the message id), and a per-message chip in the
-conversation pane — the slot the design reserved and derive.ts:268 declined
-to fake. Seed mode shows the hatch in both places: no pass has run against
-those threads, and not-measured is never rendered as calm.
+The same pass extracts **key points** — a budget, a constraint, an
+instruction, a life event: the facts an advisor pages back through a thread
+to re-find before replying. Each is a category, a ten-word restatement, and
+the verbatim span it was read from, gate-checked like everything else.
+
+The UI shows all of it: the latest emotional read across the book as a chip
+in the dashboard's top-right orb cluster (tooltip carries the client, the
+verbatim span, and the message id); emotion and key-point chips on messages
+in the conversation pane — the slot the design reserved and derive.ts:268
+declined to fake; and a **Key points** tile in the client's info column,
+each fact above its quote and its cite. Seed mode shows the hatch and no
+tile: no pass has run against those threads, and not-measured is never
+rendered as calm.
 
 ## Three things the frontend has to change
 

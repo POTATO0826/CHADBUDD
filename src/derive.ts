@@ -22,7 +22,7 @@ import type { LedgerEntry } from "./ledger.ts";
 import type { Score, SignalScore } from "./score.ts";
 import { fmtMinutes, score } from "./score.ts";
 import { callStats, fmtGap } from "./contact.ts";
-import { emotionAt, emotionTone } from "./emotions.ts";
+import { emotionAt, emotionTone, keyPointAt } from "./emotions.ts";
 import { conversationStarts, isQuestion, windows } from "./signals.ts";
 import type { Windows } from "./signals.ts";
 
@@ -279,6 +279,11 @@ function chipsFor(m: SeedMessage, cited: Map<string, LedgerEntry>, starts: Set<s
 
   const emo = emotionAt(m.externalId);
   if (emo) out.push({ label: emo.label, tone: emotionTone(emo.label), dashed: false });
+
+  // Dashed, like the ledger's kind chips: the label names a category, and the
+  // fact itself sits in the Key points tile with its quote.
+  const kp = keyPointAt(m.externalId);
+  if (kp) out.push({ label: kp.kind.replace(/_/g, " "), tone: "butter", dashed: true });
 
   if (entry) {
     out.push({
@@ -605,8 +610,20 @@ export function rebuild(source: SeedThread[] = lastSource): void {
 // The seed remains the default. Live mode overwrites this after boot; without
 // it, the page behaves exactly as it did before any of this existed.
 rebuild(threads);
+/** The client, or nothing — for callers about to navigate or render a page. */
+export function findClient(id: string): ClientView | undefined {
+  return clients.find((c) => c.id === id);
+}
+
+/**
+ * The fallback here is for prose only — a name inside a sentence degrades
+ * politely when a reference is stale. Navigation must never use it: in live
+ * mode the book is real clients while approvals and queues still carry
+ * authored seed keys, and "client C isn't here, have the first stranger
+ * instead" is how a click on Michelle opened somebody else's page.
+ */
 export function clientById(id: string): ClientView {
-  return clients.find((c) => c.id === id) ?? clients[0]!;
+  return findClient(id) ?? clients[0]!;
 }
 
 /**

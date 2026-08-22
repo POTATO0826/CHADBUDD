@@ -26,23 +26,59 @@ export interface EmotionSpan {
   ts: number;
 }
 
+/**
+ * A fact the client stated, from the same pass.
+ *
+ * `point` is the model's restatement and renders AS one — small, scannable —
+ * with `quote` and the message id beside it. That is the ideas panel's own
+ * precedent: model prose is allowed on screen when its evidence stands next
+ * to it, and the quote passed the server's gate before this row existed.
+ */
+export interface KeyPoint {
+  sourceId: string;
+  quote: string;
+  /** "budget", "goal", "constraint", "deadline", "instruction", … */
+  kind: string;
+  point: string;
+  ts: number;
+}
+
 /** Oldest-first spans per client key. */
 export let emotions: Record<string, EmotionSpan[]> = {};
 
+/** Oldest-first key points per client key. */
+export let keyPoints: Record<string, KeyPoint[]> = {};
+
 /** sourceId → span, for the conversation pane's per-message chip. */
 let bySource = new Map<string, EmotionSpan>();
+let pointBySource = new Map<string, KeyPoint>();
 
-export function setEmotions(next: Record<string, EmotionSpan[]>): void {
+export function setEmotions(next: Record<string, EmotionSpan[]>, points?: Record<string, KeyPoint[]>): void {
   emotions = next;
   bySource = new Map();
   for (const spans of Object.values(next)) {
     // Later spans win a collision; one chip per message is all the row has room for.
     for (const s of spans) bySource.set(s.sourceId, s);
   }
+  if (points) {
+    keyPoints = points;
+    pointBySource = new Map();
+    for (const list of Object.values(points)) {
+      for (const p of list) pointBySource.set(p.sourceId, p);
+    }
+  }
 }
 
 export function emotionAt(externalId: string): EmotionSpan | undefined {
   return bySource.get(externalId);
+}
+
+export function keyPointAt(externalId: string): KeyPoint | undefined {
+  return pointBySource.get(externalId);
+}
+
+export function keyPointsFor(key: string): KeyPoint[] {
+  return keyPoints[key] ?? [];
 }
 
 /** The most recent read across the whole book, for the header. */

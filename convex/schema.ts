@@ -130,6 +130,29 @@ export default defineSchema({
   }).index("by_client", ["clientId"]),
 
   /**
+   * Key points the client stated, from the same extraction pass.
+   *
+   * A budget, a constraint, an instruction, a life event — the facts an
+   * advisor pages back through a thread to re-find before replying. `point` is
+   * the model's short restatement and is displayed AS a restatement, with the
+   * verbatim `quote` and its message id beside it; that is the ideas table's
+   * own precedent (model prose, evidence attached), and the quote passes the
+   * same gate before any of it is stored.
+   */
+  keypoints: defineTable({
+    clientId: v.id("clients"),
+    sourceId: v.string(),
+    quote: v.string(),
+    /** e.g. "budget", "goal", "constraint", "deadline", "instruction". */
+    kind: v.string(),
+    /** The point, restated small enough to scan. */
+    point: v.string(),
+    ts: v.number(),
+    generatedTs: v.number(),
+    model: v.string(),
+  }).index("by_client", ["clientId"]),
+
+  /**
    * Agent output that did NOT survive the gate. Kept, not discarded.
    *
    * Note `reason`: the gate can only prove a quote exists, not that the quote

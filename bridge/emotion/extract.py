@@ -84,13 +84,21 @@ def convex(kind: str, path: str, args: dict) -> object:
 # vocabulary.
 
 PROMPT = """\
-Extract expressions of the client's emotional state from their messages.
+Extract two things from the client's messages, always as exact text spans —
+never paraphrase extraction_text.
 
-Use exact text spans from the input for extraction_text — never paraphrase.
-Label each span with the emotion it expresses (e.g. frustrated, anxious,
-appreciative, trusting, curt, disengaged, apologetic, enthusiastic) and an
-intensity of low, medium or high. Only extract spans that genuinely carry
-emotion; plain factual sentences are not extractions. Do not overlap spans."""
+1. emotion — spans expressing the client's emotional state. Attributes:
+   label (e.g. frustrated, anxious, appreciative, trusting, curt, disengaged,
+   apologetic, enthusiastic) and intensity (low, medium or high). Only spans
+   that genuinely carry emotion; plain factual sentences are not emotions.
+
+2. key_point — spans where the client states a fact an advisor would need to
+   re-find before replying: a budget or amount, a goal, a product they asked
+   about, a constraint or refusal, a deadline, an instruction, a life event.
+   Attributes: kind (budget, goal, product, constraint, deadline, instruction,
+   life_event, question) and point (the fact restated in at most ten words).
+
+Do not overlap spans within a class."""
 
 EXAMPLES = [
     lx.data.ExampleData(
@@ -109,6 +117,34 @@ EXAMPLES = [
                 extraction_class="emotion",
                 extraction_text="honestly I'm a bit nervous about moving everything at once",
                 attributes={"label": "anxious", "intensity": "low"},
+            ),
+            lx.data.Extraction(
+                extraction_class="key_point",
+                extraction_text="I'm a bit nervous about moving everything at once",
+                attributes={"kind": "constraint", "point": "hesitant to switch all funds at once"},
+            ),
+        ],
+    ),
+    lx.data.ExampleData(
+        text=(
+            "Can we look at education savings for my daughter? She starts uni in "
+            "2029 and I can put aside maybe RM800 a month."
+        ),
+        extractions=[
+            lx.data.Extraction(
+                extraction_class="key_point",
+                extraction_text="education savings for my daughter",
+                attributes={"kind": "goal", "point": "education savings for daughter"},
+            ),
+            lx.data.Extraction(
+                extraction_class="key_point",
+                extraction_text="She starts uni in 2029",
+                attributes={"kind": "deadline", "point": "daughter starts university 2029"},
+            ),
+            lx.data.Extraction(
+                extraction_class="key_point",
+                extraction_text="I can put aside maybe RM800 a month",
+                attributes={"kind": "budget", "point": "RM800/month available"},
             ),
         ],
     ),
@@ -144,7 +180,7 @@ CONFIG = ModelConfig(
 )
 
 
-def spans_for(messages: list[dict]) -> list[dict]:
+def spans_for(messages: list[dict]) -> tuple[list[dict], list[dict]]:
     """One LangExtract pass over a client's messages, mapped back to ids.
 
     The document is the client's messages joined raw — no id prefixes, no
@@ -157,7 +193,7 @@ def spans_for(messages: list[dict]) -> list[dict]:
     """
     client_msgs = [m for m in messages if m["from"] == "client"]
     if not client_msgs:
-        return []
+        return [], []
 
     ranges: list[tuple[int, int, str]] = []
     parts: list[str] = []
@@ -176,25 +212,36 @@ def spans_for(messages: list[dict]) -> list[dict]:
     )
 
     rows: list[dict] = []
+    points: list[dict] = []
     for ex in result.extractions or []:
         if ex.char_interval is None:
             continue  # ungrounded — LangExtract could not find the span
         attrs = ex.attributes or {}
-        intensity = str(attrs.get("intensity", "medium")).lower()
-        if intensity not in ("low", "medium", "high"):
-            intensity = "medium"
         start = ex.char_interval.start_pos
         end = ex.char_interval.end_pos
         source = next((r[2] for r in ranges if r[0] <= start and end <= r[1]), None)
         if source is None:
             continue  # straddles a message boundary; cannot cite one message
+
+        if ex.extraction_class == "key_point":
+            points.append({
+                "sourceId": source,
+                "quote": ex.extraction_text,
+                "kind": str(attrs.get("kind", "")).lower().replace(" ", "_") or "note",
+                "point": str(attrs.get("point", "")).strip() or ex.extraction_text[:60],
+            })
+            continue
+
+        intensity = str(attrs.get("intensity", "medium")).lower()
+        if intensity not in ("low", "medium", "high"):
+            intensity = "medium"
         rows.append({
             "sourceId": source,
             "quote": ex.extraction_text,
             "label": str(attrs.get("label", "")).lower() or "unlabelled",
             "intensity": intensity,
         })
-    return rows
+    return rows, points
 
 
 def main() -> None:
@@ -204,18 +251,20 @@ def main() -> None:
     for t in threads:
         if only and t["key"] not in only:
             continue
-        rows = spans_for(t["messages"])
-        if not rows:
+        rows, points = spans_for(t["messages"])
+        if not rows and not points:
             print(f"[emotion] {t['key']} · {t['clientName']}: nothing extractable")
             continue
         res = convex("mutation", "emotions:record", {
             "key": t["key"],
             "model": MODEL_ID,
             "rows": rows,
+            "points": points,
         })
         print(
             f"[emotion] {t['key']} · {t['clientName']}: "
-            f"{res['kept']} kept, {res['rejected']} rejected at the gate"
+            f"{res['kept']} emotions, {res.get('points', 0)} key points, "
+            f"{res['rejected']} rejected at the gate"
         )
 
 
