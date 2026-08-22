@@ -29,6 +29,7 @@ import type * as suggestions from "../suggestions.js";
 import type * as tasks from "../tasks.js";
 import type * as threads from "../threads.js";
 import type * as verbatim from "../verbatim.js";
+import type * as voice from "../voice.js";
 
 import type {
   ApiFromModules,
@@ -58,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   tasks: typeof tasks;
   threads: typeof threads;
   verbatim: typeof verbatim;
+  voice: typeof voice;
 }>;
 
 /**

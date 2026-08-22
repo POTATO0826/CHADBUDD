@@ -17,7 +17,7 @@ import type { NewMessageEvent } from "telegram/events/index.js";
 import type { Api } from "telegram";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
-import { DAY, WANTED_DAYS, type BridgeCall, type BridgeChat, type BridgeMessage, type Source } from "../types.ts";
+import { DAY, WANTED_DAYS, type BridgeCall, type BridgeChat, type BridgeMessage, type BridgeVoice, type Source } from "../types.ts";
 
 const SESSION_FILE = ".tg/session.txt";
 
@@ -164,6 +164,47 @@ export class TelegramSource implements Source {
       if (!message) return;
       const chatId = m.chatId?.toString();
       if (chatId) cb(chatId, message);
+    }, new NewMessage({}));
+  }
+
+  /**
+   * Voice notes: a document whose audio attribute says voice. Downloaded
+   * here — the backend cannot reach Telegram — and capped, because a
+   * fifteen-minute ramble is an upload nobody asked for.
+   */
+  onVoice(cb: (chatId: string, voice: BridgeVoice) => void): void {
+    const client = this.#need();
+    client.addEventHandler((event: NewMessageEvent) => {
+      const msg = event.message;
+      if (msg.out === true) return; // the advisor's own notes are not client input
+      const media = msg.media as
+        | {
+            document?: {
+              mimeType?: string;
+              attributes?: Array<{ className?: string; voice?: boolean; duration?: number }>;
+            };
+          }
+        | undefined;
+      const doc = media?.document;
+      const audio = doc?.attributes?.find((x) => x.className === "DocumentAttributeAudio");
+      if (!audio || audio.voice !== true) return;
+      const chatId = msg.chatId?.toString();
+      if (!chatId) return;
+      void (async () => {
+        try {
+          const buf = (await this.#need().downloadMedia(msg)) as Buffer | undefined;
+          if (!buf || buf.length === 0 || buf.length > 15_000_000) return;
+          cb(chatId, {
+            sourceId: String(msg.id),
+            ts: msg.date * 1000,
+            durationSec: audio.duration ?? 0,
+            mime: doc?.mimeType ?? "audio/ogg",
+            bytes: new Uint8Array(buf),
+          });
+        } catch (err) {
+          console.error("[voice] download failed:", err instanceof Error ? err.message : String(err));
+        }
+      })();
     }, new NewMessage({}));
   }
 

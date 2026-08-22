@@ -23,6 +23,15 @@ export type Platform = "whatsapp" | "telegram";
 /** Matches SeedMessage.from in data/types.ts — the dashboard's only distinction. */
 export type Sender = "advisor" | "client";
 
+export interface BridgeVoice {
+  /** The platform's own message id, for dedupe. */
+  sourceId: string;
+  ts: number;
+  durationSec: number;
+  mime: string;
+  bytes: Uint8Array;
+}
+
 export interface BridgeMessage {
   /**
    * The source platform's own id, stable across restarts and re-syncs.
@@ -114,6 +123,12 @@ export interface Source {
 
   /** Live arrivals. Called once; the adapter owns the subscription. */
   onMessage(cb: (chatId: string, message: BridgeMessage) => void): void;
+
+  /**
+   * Voice notes, as they arrive. Optional: a source without audio simply
+   * never calls it. Same chatId convention as onMessage.
+   */
+  onVoice?(cb: (chatId: string, voice: BridgeVoice) => void): void;
 
   /** Voice calls, as they end. Same chatId convention as onMessage. */
   onCall(cb: (chatId: string, call: BridgeCall) => void): void;

@@ -3051,9 +3051,16 @@ function messageRow(m: RecMessage, hit = ""): string {
     .join("");
 
   return `
-    <div class="msg${state.lit === m.id ? " lit" : ""}" data-who="${m.who}" data-mid="${e(m.id)}">
+    <div class="msg${state.lit === m.id ? " lit" : ""}" data-who="${m.who}" data-mid="${e(m.id)}"${m.via ? ` data-via="${m.via}"` : ""}>
       ${m.gap ? `<span class="gap"><i></i><span style="color:${inkOf(m.gapTone)}">${e(m.gap)}</span><i></i></span>` : ""}
       <div class="bub">
+        ${
+          m.via === "voice"
+            ? `<span class="viachip vv">♪ voice note · transcribed</span>`
+            : m.via === "call"
+              ? `<span class="viachip vc">☏ only you see this</span>`
+              : ""
+        }
         <span class="tx">${mark(m.text, hit)}</span>
         <span class="meta">${chips}<span class="id">${e(m.time)} · ${e(m.id)}</span></span>
       </div>

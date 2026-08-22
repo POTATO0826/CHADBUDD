@@ -940,6 +940,16 @@ html[data-shell="tauri"] #desk{ display: none; }
 .nxrow .trm:hover, .apitem .trm:hover{ color: var(--alarm);
   background: color-mix(in oklab, var(--foreground) 8%, transparent); }
 
+/* ── voice notes & call logs in the thread ── */
+.viachip{ font-family: var(--mono); font-size: 9px; letter-spacing: .08em;
+  text-transform: uppercase; display: block; margin-bottom: 4px; }
+.viachip.vv{ color: var(--foam); }
+.viachip.vc{ color: var(--t4); }
+.msg[data-via="call"] .bub{
+  background: color-mix(in oklab, var(--glacial) 8%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 22%, transparent); }
+.msg[data-via="call"] .tx{ font-style: italic; color: var(--t3); }
+
 /* ── today's work on the day page ── */
 .aplan{ display: flex; flex-wrap: wrap; gap: 6px 4px; align-items: center;
   padding: 10px 14px; border-radius: var(--r-xl); background: var(--tile);

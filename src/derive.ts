@@ -273,6 +273,8 @@ export interface RecMessage {
   id: string;
   who: "advisor" | "client";
   text: string;
+  /** "voice" = transcribed voice note; "call" = advisor-only log line. */
+  via?: "voice" | "call";
   time: string;
   /** Divider above the bubble, when the delay is worth naming. */
   gap: string;
@@ -339,6 +341,7 @@ function recMessages(thread: SeedThread, ledgerBySource: Map<string, LedgerEntry
       id: m.externalId,
       who: m.from,
       text: m.text,
+      ...(m.via ? { via: m.via } : {}),
       time: stamp.format(tsOf(m)),
       gap: nameGap ? humanGap(delta) : "",
       gapTone: veryLong ? "critical" : "warn",

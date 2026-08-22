@@ -75,6 +75,7 @@ export const list = query({
               from: m.sender,
               at: new Date(m.ts).toISOString(),
               text: m.text,
+              ...(m.via ? { via: m.via } : {}),
             })),
         };
       }),

@@ -200,6 +200,69 @@ export const ingestBatch = mutation({
  * not channels, which is the whole point of ingesting email here rather than
  * building an email pipeline beside the chat one.
  */
+/** Which client tracks this chat, for actions that only hold a sourceId. */
+export const clientForSource = internalQuery({
+  args: { sourceId: v.string() },
+  handler: async (ctx, { sourceId }) => {
+    const c = await ctx.db
+      .query("clients")
+      .withIndex("by_source", (q) => q.eq("sourceId", sourceId))
+      .unique();
+    return c ? { clientId: c._id, key: c.key } : null;
+  },
+});
+
+/**
+ * A transcribed voice note enters the thread as the client's own words —
+ * which they are — and gets the same second reader chat gets: "Thursday 4pm
+ * works" said aloud is the same agreement it is typed.
+ */
+export const ingestVoice = internalMutation({
+  args: { clientId: v.id("clients"), sourceId: v.string(), ts: v.number(), text: v.string() },
+  handler: async (ctx, { clientId, sourceId, ts, text }) => {
+    if (text.trim() === "") return { inserted: 0 };
+    const client = await ctx.db.get(clientId);
+    if (!client) return { inserted: 0 };
+
+    const dupe = await ctx.db
+      .query("messages")
+      .withIndex("by_client_source", (q) => q.eq("clientId", clientId).eq("sourceId", sourceId))
+      .unique();
+    if (dupe) return { inserted: 0 };
+
+    const externalId = `${client.key}-${String(client.seq).padStart(3, "0")}`;
+    await ctx.db.insert("messages", {
+      clientId, externalId, sourceId, sender: "client", ts, text, via: "voice",
+    });
+    await ctx.db.patch(clientId, { seq: client.seq + 1 });
+
+    await ctx.scheduler.runAfter(0, internal.scheduling.consider, {
+      clientId, cite: externalId, text, ts,
+    });
+    return { inserted: 1 };
+  },
+});
+
+/** An advisor-only line in the thread: call logs, voice-note digests. */
+export const noteInThread = internalMutation({
+  args: { clientId: v.id("clients"), sourceId: v.string(), ts: v.number(), text: v.string() },
+  handler: async (ctx, { clientId, sourceId, ts, text }) => {
+    const client = await ctx.db.get(clientId);
+    if (!client) return { inserted: 0 };
+    const dupe = await ctx.db
+      .query("messages")
+      .withIndex("by_client_source", (q) => q.eq("clientId", clientId).eq("sourceId", sourceId))
+      .unique();
+    if (dupe) return { inserted: 0 };
+    const externalId = `${client.key}-${String(client.seq).padStart(3, "0")}`;
+    await ctx.db.insert("messages", {
+      clientId, externalId, sourceId, sender: "advisor", ts, text, via: "call",
+    });
+    await ctx.db.patch(clientId, { seq: client.seq + 1 });
+    return { inserted: 1 };
+  },
+});
+
 export const ingestEmail = internalMutation({
   args: {
     key: v.string(),

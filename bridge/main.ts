@@ -116,10 +116,13 @@ const q = (module: string, name: string): FunctionReference<"query"> =>
   lookup[module]?.[name] as FunctionReference<"query">;
 const m = (module: string, name: string): FunctionReference<"mutation"> =>
   lookup[module]?.[name] as FunctionReference<"mutation">;
+const act = (module: string, name: string): FunctionReference<"action"> =>
+  lookup[module]?.[name] as FunctionReference<"action">;
 
 const API = {
   pickClients: m("ingest", "pickClients"),
   telegramCall: m("calls", "fromTelegram"),
+  voiceIngest: act("voice", "ingest"),
   replaceHoldings: m("holdings", "replaceAll"),
   setEmail: m("ingest", "setEmail"),
   pendingSends: q("outbox", "pending"),
@@ -401,6 +404,23 @@ async function main(): Promise<void> {
      iPhone answer: the phone's own call log is sealed, but Telegram calls
      ride the socket this process already holds — ended or missed, any
      device, nothing installed anywhere. */
+  source.onVoice?.((chatId, vmsg) => {
+    console.log(`[voice] note from ${chatId} · ${vmsg.durationSec}s — transcribing…`);
+    void convex
+      .action(API.voiceIngest, {
+        chatSourceId: chatId,
+        sourceId: vmsg.sourceId,
+        ts: vmsg.ts,
+        durationSec: vmsg.durationSec,
+        mime: vmsg.mime,
+        bytes: vmsg.bytes.buffer.slice(vmsg.bytes.byteOffset, vmsg.bytes.byteOffset + vmsg.bytes.byteLength),
+      })
+      .then((r) => console.log("[voice]", JSON.stringify(r)))
+      .catch((err) =>
+        console.error("[voice] ingest failed:", err instanceof Error ? err.message : String(err)),
+      );
+  });
+
   source.onCall((chatId, call) => {
     void convex
       .mutation(API.telegramCall, {

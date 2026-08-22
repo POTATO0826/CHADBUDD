@@ -90,6 +90,32 @@ export const fromTelegram = mutation({
       ts: a.ts,
       ...(client ? { clientId: client._id } : {}),
     });
+
+    /* The call also lands in the chat log as an advisor-only line, so the
+       thread reads as the relationship actually happened — texts and calls
+       interleaved. Metadata only: call audio is end-to-end encrypted and
+       this system does not pretend otherwise. */
+    if (client) {
+      const logSource = `calllog:${a.ts}`;
+      const dupeLog = await ctx.db
+        .query("messages")
+        .withIndex("by_client_source", (q) => q.eq("clientId", client._id).eq("sourceId", logSource))
+        .unique();
+      if (!dupeLog) {
+        const mins = Math.max(1, Math.round(a.durationSec / 60));
+        const text = a.missed
+          ? a.outgoing
+            ? "Call log — you called, no answer."
+            : "Call log — missed call from them, not yet returned."
+          : `Call log — ${a.outgoing ? "you called them" : "they called you"}, ${mins} min.`;
+        const externalId = `${client.key}-${String(client.seq).padStart(3, "0")}`;
+        await ctx.db.insert("messages", {
+          clientId: client._id, externalId, sourceId: logSource,
+          sender: "advisor", ts: a.ts, text, via: "call",
+        });
+        await ctx.db.patch(client._id, { seq: client.seq + 1 });
+      }
+    }
     return { recorded: true, matched: client !== null };
   },
 });

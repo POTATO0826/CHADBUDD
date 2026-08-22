@@ -73,6 +73,14 @@ export default defineSchema({
     sender: v.union(v.literal("advisor"), v.literal("client")),
     ts: v.number(),
     text: v.string(),
+    /**
+     * How it arrived, when not typed: "voice" is a transcribed voice note —
+     * the client's real words, a legitimate quote surface — and "call" is
+     * an advisor-only log line (call metadata, voice-note digests). Nothing
+     * in a thread is ever sent to a client, so both are advisor-only by
+     * construction; the flag exists so the page can say so.
+     */
+    via: v.optional(v.union(v.literal("voice"), v.literal("call"))),
   })
     // The index data/types.ts:13 specifies, kept verbatim.
     .index("by_client_ts", ["clientId", "ts"])
