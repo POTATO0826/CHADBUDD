@@ -950,6 +950,22 @@ html[data-shell="tauri"] #desk{ display: none; }
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 22%, transparent); }
 .msg[data-via="call"] .tx{ font-style: italic; color: var(--t3); }
 
+/* ── the task, opened ── */
+.tctx{ display: flex; flex-direction: column; gap: 8px; padding: 13px 14px;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--glacial) 8%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--glacial) 20%, transparent); }
+.tctx .tt2{ font-size: 14.5px; color: var(--t1); line-height: 1.35; }
+.tctx.tdone .tt2{ text-decoration: line-through; color: var(--t4); }
+.tctx .trow2{ font-family: var(--mono); font-size: 10px; color: var(--t4); line-height: 1.5; }
+.tctx .tq{ font-size: 11.5px; font-style: italic; color: var(--t2); line-height: 1.55;
+  border-left: 2px solid color-mix(in oklab, var(--foam) 45%, transparent); padding-left: 9px; }
+.tctx .tcp{ font-size: 10.5px; color: var(--t3); line-height: 1.5; }
+.tmrow{ display: flex; gap: 6px; align-items: center; }
+
+/* one-click complete: the circle is a real target on the day pages */
+.aplan .tchip .tk, .trow .tchip .tk{ width: 20px; height: 20px; font-size: 12px; }
+
 /* ── today's work on the day page ── */
 .aplan{ display: flex; flex-wrap: wrap; gap: 6px 4px; align-items: center;
   padding: 10px 14px; border-radius: var(--r-xl); background: var(--tile);

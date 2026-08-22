@@ -136,6 +136,10 @@ interface State {
   calFilters: { meetings: boolean; emails: boolean; outreach: boolean };
   /** Which of the contract's four numbers is opened into its list. */
   contractOpen: "meetings" | "due" | "done" | "overdue" | null;
+  /** Day page: which day is shown. Null follows the clock. */
+  agendaDay: number | null;
+  /** Day page: the task whose detail panel is open. */
+  taskSel: string | null;
   /** Week view: Monday of the week shown. Null follows the clock. */
   wk: number | null;
   /** Desk: the expanded row, by brief id. Null is everything collapsed. */
@@ -194,6 +198,8 @@ const state: State = {
   calOverlay: false,
   calDay: null,
   contractOpen: null,
+  agendaDay: null,
+  taskSel: null,
   calFilters: ((): { meetings: boolean; emails: boolean; outreach: boolean } => {
     const all = { meetings: true, emails: true, outreach: true };
     try {
@@ -841,18 +847,93 @@ function slotContext(s: AgendaSlot): string {
 }
 
 function agendaPage(): string {
+  const today = startOfDay(nowMs());
+  const day = state.agendaDay ?? today;
+  const nav = `
+        <span class="dnav">
+          <button class="ico" data-act="agenda-step" data-by="-1" aria-label="Previous day">‹</button>
+          <button class="btn" data-act="agenda-step" data-by="0">Today</button>
+          <button class="ico" data-act="agenda-step" data-by="1" aria-label="Next day">›</button>
+        </span>`;
+
+  /* Another day has no authored agenda — it shows the calendar's own truth
+     for that day: the drawn-to-scale track, the plan, the meeting cards. */
+  if (day !== today) {
+    const events = allCalEvents();
+    return `
+    <div class="page fixed">
+      <div class="qhead" style="flex-direction:row;align-items:baseline;gap:14px">
+        <span class="hero-h d">${e(dayTitleFmt.format(day))}</span>
+        ${nav}
+      </div>
+      <div class="daycols2">
+        <div class="dayside sc">${dayBlocks(day, events)}</div>
+        <div class="dayslots sc">
+          ${state.taskSel !== null ? taskContext(state.taskSel) : ""}
+          ${dayPlan(day)}
+          ${daySlotCards(day, events)}
+        </div>
+      </div>
+    </div>`;
+  }
+
   const sel = slotById(state.slot ?? "") ?? nextUp ?? agenda[0]!;
   return `
     <div class="page fixed">
-      <div class="qhead">
-        <span class="hero-h d">Monday</span>
-        <span class="mt">${dayTotals.meetings} commitments · ${dayTotals.travelMinutes} min on the road ·
+      <div class="qhead" style="flex-direction:row;align-items:baseline;gap:14px;flex-wrap:wrap">
+        <span class="hero-h d">${e(dayTitleFmt.format(day))}</span>
+        ${nav}
+        <span class="mt" style="flex-basis:100%">${dayTotals.meetings} commitments · ${dayTotals.travelMinutes} min on the road ·
           ${dayTotals.breakMinutes} min of break the assistant is protecting. These are the plan, not a guess.</span>
       </div>
       ${agendaPlanStrip()}
       <div class="daycols">
         <div class="daylist sc" id="daylist">${agenda.map((x) => slotRow(x, x.id === sel.id)).join("")}</div>
-        <div class="dayctx sc" id="dayctx">${slotContext(sel)}</div>
+        <div class="dayctx sc" id="dayctx">${state.taskSel !== null ? taskContext(state.taskSel) : slotContext(sel)}</div>
+      </div>
+    </div>`;
+}
+
+/**
+ * One task, opened: what it is for, the message that created it, the
+ * client's standing key points, the meeting it prepares — and every action
+ * in reach. This is what a click on a task chip summons on the day pages.
+ */
+function taskContext(id: string): string {
+  const t = tasks().find((x) => x.id === id);
+  if (!t) return "";
+  const c = t.clientKey ? findClient(t.clientKey.toLowerCase()) : undefined;
+  const quote = t.cite && c ? c.thread.messages.find((x) => x.externalId === t.cite)?.text : undefined;
+  const iso = new Date(startOfDay(t.dueMs) + 12 * 3_600_000).toISOString().slice(0, 10);
+  const late = t.hardMs !== undefined && startOfDay(t.dueMs) > startOfDay(t.hardMs);
+
+  const notes = c ? (liveNotes(c.key) ?? []) : [];
+  const points =
+    notes.length > 0
+      ? notes.slice(0, 3).map((n) => `<span class="tcp">✎ ${e(n.text)}</span>`).join("")
+      : (c?.facts ?? []).slice(0, 3).map((f) => `<span class="tcp">${e(f.glyph)} ${e(f.k)} — ${e(f.v)}</span>`).join("");
+
+  const prepEv = t.ref?.startsWith("prep:") ? findCalEvent(t.ref.slice(5)) : undefined;
+
+  return `
+    <div class="tctx${t.done ? " tdone" : ""}">
+      <span class="lbl">the task, opened</span>
+      <span class="tt2">${e(t.title)}</span>
+      <span class="trow2">due ${e(shortDayFmt.format(t.dueMs))}${
+        t.hardMs !== undefined ? ` · hard deadline ${e(shortDayFmt.format(t.hardMs))}${late ? " — PLANNED AFTER IT" : ""}` : ""
+      }${t.kind ? ` · ${e(t.kind)}` : ""} · ${t.source === "chadbuddy" ? "suggested by chadbuddy" : "yours"}</span>
+      ${prepEv ? `<span class="trow2">prepares: ${e(prepEv.title)} · ${e(railWhenFmt.format(Date.parse(prepEv.at)))}</span>` : ""}
+      ${quote ? `<span class="tq">“${e(quote.length > 220 ? quote.slice(0, 220) + "…" : quote)}”</span>` : ""}
+      ${t.cite && t.clientKey ? `<div class="citerow">${citeChips([t.cite], t.clientKey)}</div>` : ""}
+      ${points ? `<span class="lbl">their key points</span>${points}` : ""}
+      <div class="ctxacts">
+        <button class="btn acc" data-act="task-done" data-task="${e(t.id)}">${t.done ? "○ Reopen" : "✓ Mark done"}</button>
+        ${c ? `<button class="btn" data-act="open-client" data-client="${c.key}">Open ${e(c.name.split(" ")[0]!)}</button>` : ""}
+        <button class="btn" data-act="task-remove" data-task="${e(t.id)}">✕ Clear</button>
+      </div>
+      <div class="tmrow">
+        <input class="tdate" type="date" id="tmove-${e(t.id)}" value="${iso}">
+        <button class="btn sm" data-act="task-move-to" data-task="${e(t.id)}">Move deadline</button>
       </div>
     </div>`;
 }
@@ -875,7 +956,7 @@ function agendaPlanStrip(): string {
         .map(
           (t) => `
         <span class="apitem">
-          ${taskChip(t)}
+          ${taskChip(t, "task-sel")}
           <button class="trm" data-act="task-remove" data-task="${e(t.id)}" title="Clear it">✕</button>
         </span>`,
         )
@@ -1262,11 +1343,11 @@ function miniTask(t: Task): string {
     </span>`;
 }
 
-function taskChip(t: Task): string {
+function taskChip(t: Task, act: "task-ref" | "task-sel" = "task-ref"): string {
   const late = t.hardMs !== undefined && startOfDay(t.dueMs) > startOfDay(t.hardMs);
   return `
     <div class="tchip urg-${urgencyOf(t)}${t.done ? " tdone" : ""}" draggable="true"
-      data-task="${e(t.id)}" data-act="task-ref"
+      data-task="${e(t.id)}" data-act="${act}"
       title="${e(t.title)}${late ? " — planned AFTER the hard deadline" : ""}${t.cite ? " — click for the message behind it" : ""}">
       <button class="tk" data-act="task-done" data-task="${e(t.id)}"
         aria-label="${t.done ? "Reopen" : "Mark done"}">${t.done ? "✓" : "○"}</button>
@@ -1468,7 +1549,7 @@ function weekGrid(anchor: number): string {
           <span class="wd">${DOW[i]}</span><span class="wn">${new Date(day).getDate()}</span>
           ${dayTasks.filter((t) => !t.done).length ? `<span class="wtc">${dayTasks.filter((t) => !t.done).length}</span>` : ""}
         </button>
-        <div class="wtasks">${dayTasks.map(taskChip).join("")}</div>
+        <div class="wtasks">${dayTasks.map((t) => taskChip(t)).join("")}</div>
         <div class="wtrack">${blocks}</div>
       </div>`;
   }).join("");
@@ -1827,17 +1908,19 @@ function calSide(): string {
 
 /* ── the single-day page ──────────────────────────────────────────── */
 
-function dayPage(dayMs: number): string {
-  const events = (() => {
-    const seen = new Map<string, CalendarEvent>();
-    for (const ev of [...calendarMonth(), ...calendarWeek(), ...calendarDay()]) seen.set(ev.id, ev);
-    return [...seen.values()];
-  })();
+/** Every event any view has fetched, one per id. */
+function allCalEvents(): CalendarEvent[] {
+  const seen = new Map<string, CalendarEvent>();
+  for (const ev of [...calendarMonth(), ...calendarWeek(), ...calendarDay()]) seen.set(ev.id, ev);
+  return [...seen.values()];
+}
+
+function daySlotCards(dayMs: number, events: CalendarEvent[]): string {
   const list = events
     .filter((x) => startOfDay(Date.parse(x.at)) === startOfDay(dayMs))
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
-  const slots = list
+  return list
     .filter((x) => BIG.has(x.kind))
     .map((x) => {
       const tent = x.booking === "tentative";
@@ -1870,6 +1953,11 @@ function dayPage(dayMs: number): string {
         </div>`;
     })
     .join("");
+}
+
+function dayPage(dayMs: number): string {
+  const events = allCalEvents();
+  const slots = daySlotCards(dayMs, events);
 
   return `
     <div class="page fixed">
@@ -1880,6 +1968,7 @@ function dayPage(dayMs: number): string {
       <div class="daycols2">
         <div class="dayside sc">${dayBlocks(dayMs, events)}</div>
         <div class="dayslots sc">
+          ${state.taskSel !== null ? taskContext(state.taskSel) : ""}
           ${dayPlan(dayMs)}
           ${slots || `<div class="empty"><span class="hero-h d" style="font-size:19px">No meetings</span><span class="mt">Own time only. Worth protecting.</span></div>`}
         </div>
@@ -1909,7 +1998,7 @@ function dayPlan(dayMs: number): string {
       <span class="lbl">the plan — finish these and the day is clear</span>
       ${list.map((t) => `
         <div class="trow${t.done ? " tdone" : ""}">
-          ${taskChip(t)}
+          ${taskChip(t, "task-sel")}
           ${t.hardMs !== undefined ? `<span class="thard">hard: ${e(shortDayFmt.format(t.hardMs))}</span>` : ""}
           ${t.clientKey ? `<button class="btn sm" data-act="open-client" data-client="${t.clientKey}">${e(clientById(t.clientKey.toLowerCase()).name.split(" ")[0]!)}</button>` : ""}
           <button class="trm" data-act="task-remove" data-task="${e(t.id)}" title="Remove">✕</button>
@@ -3914,6 +4003,38 @@ island.addEventListener("click", (ev) => {
           })
           .catch((err) => done("Not sent", err instanceof Error ? err.message : String(err), "critical"));
       }
+      return;
+    }
+
+    /* A task chip on the day pages opens its detail panel in place. */
+    case "task-sel": {
+      const id = hit.dataset.task;
+      if (id) {
+        state.taskSel = state.taskSel === id ? null : id;
+        render();
+      }
+      return;
+    }
+
+    case "agenda-step": {
+      const by = Number(hit.dataset.by ?? "0");
+      const today = startOfDay(nowMs());
+      if (by === 0) state.agendaDay = null;
+      else {
+        const next = startOfDay((state.agendaDay ?? today) + by * DAY_MS);
+        state.agendaDay = next === today ? null : next;
+      }
+      state.taskSel = null;
+      void refreshMonth(state.agendaDay ?? today).then(render);
+      render();
+      return;
+    }
+
+    case "task-move-to": {
+      const id = hit.dataset.task;
+      const inp = id ? (document.getElementById(`tmove-${id}`) as HTMLInputElement | null) : null;
+      const when = inp?.value ? Date.parse(`${inp.value}T12:00:00`) : NaN;
+      if (id && Number.isFinite(when)) void taskMove(id, when).then(() => render());
       return;
     }
 
