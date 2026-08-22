@@ -36,7 +36,7 @@ import { digestFor, emotionTone, keyPointsFor, latestEmotion } from "./emotions.
 import type { KeyPoint } from "./emotions.ts";
 import { connectCalendar } from "./convexCalendar.ts";
 import { initScramble } from "./scramble.ts";
-import { POINT_GLYPH, POINT_LABEL, notesFor } from "./contact.ts";
+import { POINT_GLYPH, POINT_LABEL, callStats, notesFor } from "./contact.ts";
 import type { TaskKind } from "./inbox.ts";
 import { TASK_GLYPH, TASK_LABEL, decisions, inboxTotals, tasksOfKind } from "./inbox.ts";
 import { GATE_REASON, TIER_ACTION } from "./gates.ts";
@@ -406,14 +406,21 @@ function nextNotif(): void {
 }
 
 /**
- * The hover card is a book-level glance, not a single client: how many are
- * silent, how many are decaying, how much the clients actually said this
- * week, and whether anything sits in the call queue. The strip underneath
- * is one band per client in their status colour, so the shape of the whole
- * book reads in a quarter of a second.
+ * The hover card is a "what do I still owe" glance: tasks not done yet,
+ * threads where the client spoke last, missed calls never returned, and the
+ * commitments still ahead of now. Every number is something the advisor can
+ * clear before the day ends — book-health lives on the overview page. The
+ * strip underneath is one band per client in their status colour, so the
+ * shape of the whole book still reads in a quarter of a second.
  */
 function peekLayer(): string {
-  const callQ = queues.calls.rows.filter((r) => r.btn !== "").length;
+  const tasksLeft = tasks().filter((t) => !t.done).length;
+  // The client spoke last: whatever they said, it has had no answer yet.
+  const unreplied = clients.filter(
+    (c) => c.thread.messages[c.thread.messages.length - 1]?.from === "client",
+  ).length;
+  const toReturn = clients.reduce((n, c) => n + callStats(c.key).unreturned, 0);
+  const meetingsLeft = bigSlots.filter((s) => !s.past).length;
   const strip = clients
     .map((c) => `<i style="background:${markOf(c.tone)}" title="${e(c.name)} · ${e(c.statusWord)}"></i>`)
     .join("");
@@ -433,15 +440,13 @@ function peekLayer(): string {
         <span class="sc-n">${e(dateShort.format(NOW))} · ${totals.clients} clients</span>
       </span>
       <span class="stats">
-        ${stat("silent", totals.silent, "var(--butter)")}
+        ${stat("tasks left", tasksLeft, tasksLeft > 0 ? "var(--butter)" : undefined)}
         <i class="div"></i>
-        ${stat("decaying", totals.decaying, "var(--m-crit)")}
+        ${stat("unreplied", unreplied, unreplied > 0 ? "var(--foam)" : undefined)}
         <i class="div"></i>
-        ${stat("msgs · 7d", weekBars.total)}
+        ${stat("calls to return", toReturn, toReturn > 0 ? "var(--m-crit)" : "var(--m-good)")}
         <i class="div"></i>
-        ${stat("calls", callQ, callQ > 0 ? "var(--m-warn)" : "var(--m-good)")}
-        <i class="div"></i>
-        ${stat("owed by you", totals.owedByAdvisor, totals.owedByAdvisor > 0 ? "var(--butter)" : undefined)}
+        ${stat("meetings left", meetingsLeft)}
       </span>
       <span class="strip" aria-hidden="true">${strip}</span>
     </button>`;
