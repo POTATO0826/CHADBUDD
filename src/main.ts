@@ -134,6 +134,8 @@ interface State {
   calDay: number | null;
   /** Month view: which layers are drawn. A filter hides, it never deletes. */
   calFilters: { meetings: boolean; emails: boolean; outreach: boolean };
+  /** Which of the contract's four numbers is opened into its list. */
+  contractOpen: "meetings" | "due" | "done" | "overdue" | null;
   /** Week view: Monday of the week shown. Null follows the clock. */
   wk: number | null;
   /** Desk: the expanded row, by brief id. Null is everything collapsed. */
@@ -191,6 +193,7 @@ const state: State = {
   })(),
   calOverlay: false,
   calDay: null,
+  contractOpen: null,
   calFilters: ((): { meetings: boolean; emails: boolean; outreach: boolean } => {
     const all = { meetings: true, emails: true, outreach: true };
     try {
@@ -1294,25 +1297,86 @@ function todayContract(): string {
   const doneN = due.length - open;
   const overdue = tasks().filter((t) => !t.done && startOfDay(t.dueMs) < today).length;
 
-  const parts = [
-    `${meets.length} meeting${meets.length === 1 ? "" : "s"}`,
-    `${open} task${open === 1 ? "" : "s"} due`,
-    ...(doneN > 0 ? [`${doneN} done`] : []),
-    ...(overdue > 0 ? [`<b class="odue">${overdue} overdue</b>`] : []),
+  const seg = (id: string, label: string): string =>
+    `<button class="cseg${state.contractOpen === id ? " on" : ""}" data-act="contract-open"
+      data-seg="${id}" aria-expanded="${state.contractOpen === id}">${label}</button>`;
+
+  const segs = [
+    seg("meetings", `${meets.length} meeting${meets.length === 1 ? "" : "s"}`),
+    seg("due", `${open} task${open === 1 ? "" : "s"} due`),
+    ...(doneN > 0 ? [seg("done", `${doneN} done`)] : []),
+    ...(overdue > 0 ? [seg("overdue", `${overdue} overdue`)] : []),
   ];
 
   return `
-    <button class="contract${open === 0 && overdue === 0 ? " clear" : ""}"
-      data-act="cal-day" data-day="${today}"
-      aria-label="Open today: ${meets.length} meetings, ${open} tasks due, ${overdue} overdue">
-      <span class="clabel">today</span>
-      <span class="cbody">${parts.join(" · ")}</span>
+    <div class="contract${open === 0 && overdue === 0 ? " clear" : ""}">
+      <button class="clabel" data-act="cal-day" data-day="${today}" title="Open today's page">today</button>
+      <span class="cbody">${segs.join(`<span class="cdot">·</span>`)}</span>
       <span class="cnote">${
         open === 0 && overdue === 0
           ? "clear — finish the meetings and nothing slips today"
           : "finish these and you are genuinely free"
       }</span>
-    </button>`;
+    </div>
+    ${contractDetail(meets)}`;
+}
+
+/**
+ * The list behind whichever contract number is open. Tasks come as the same
+ * chips as everywhere — the circle completes, the ✕ clears, the body opens
+ * the cited message — so the detail is a place to act, not just to read.
+ */
+function contractDetail(meets: CalendarEvent[]): string {
+  const which = state.contractOpen;
+  if (which === null) return "";
+  const today = startOfDay(nowMs());
+
+  const taskRows = (list: Task[], tail?: (t: Task) => string): string =>
+    list.length === 0
+      ? ""
+      : list
+          .map(
+            (t) => `
+      <span class="apitem">
+        ${taskChip(t)}
+        ${tail ? tail(t) : ""}
+        ${t.clientKey ? `<button class="btn sm" data-act="open-client" data-client="${t.clientKey}">${e(clientById(t.clientKey.toLowerCase()).name.split(" ")[0]!)}</button>` : ""}
+        <button class="trm" data-act="task-remove" data-task="${e(t.id)}" title="Clear it">✕</button>
+      </span>`,
+          )
+          .join("");
+
+  let inner = "";
+  if (which === "meetings") {
+    inner =
+      meets.length === 0
+        ? `<span class="sempty">No meetings booked today. Own time — worth protecting.</span>`
+        : meets
+            .map(
+              (ev) => `
+      <button class="crow" data-act="cal-day" data-day="${today}">
+        <span class="ctime">${e(hhmmOf(Date.parse(ev.at)))}</span>
+        <span class="cttl">${e(ev.title)}</span>
+        <span class="cmin">${ev.minutes} min${ev.booking === "tentative" ? " · pencilled in" : ""}</span>
+      </button>`,
+            )
+            .join("");
+  } else if (which === "due") {
+    const list = tasksOn(today).filter((t) => !t.done);
+    inner = taskRows(list) || `<span class="sempty">Nothing due today. Genuinely clear.</span>`;
+  } else if (which === "done") {
+    const list = tasksOn(today).filter((t) => t.done);
+    inner = taskRows(list) || `<span class="sempty">Nothing finished yet today.</span>`;
+  } else {
+    const list = tasks().filter((t) => !t.done && startOfDay(t.dueMs) < today);
+    inner =
+      taskRows(list, (t) => {
+        const late = Math.round((today - startOfDay(t.dueMs)) / DAY_MS);
+        return `<span class="clate">${late}d late</span>`;
+      }) || `<span class="sempty">Nothing overdue. Keep it that way.</span>`;
+  }
+
+  return `<div class="cdetail">${inner}</div>`;
 }
 
 function weekTitle(anchor: number): string {
@@ -3853,6 +3917,15 @@ island.addEventListener("click", (ev) => {
       if (page === "clients") state.cview = "grid";
       if (page === "calendar") state.calDay = null;
       setState("open");
+      return;
+    }
+
+    case "contract-open": {
+      const seg = hit.dataset.seg as "meetings" | "due" | "done" | "overdue" | undefined;
+      if (seg) {
+        state.contractOpen = state.contractOpen === seg ? null : seg;
+        render();
+      }
       return;
     }
 
