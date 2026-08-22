@@ -46,7 +46,7 @@ import { holdings } from "../data/holdings.ts";
 import type { MarketRow, MaturingRow, Report, StaleRow } from "./desk.ts";
 import { deskView, dismissBrief, snoozeBrief } from "./desk.ts";
 import { initDrag } from "./drag.ts";
-import { focusWindow, isTauri, openExternal, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
+import { focusWindow, isTauri, openExternal, openTelegram, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
 
 /* ── tiny helpers ────────────────────────────────────────────────── */
 
@@ -3321,11 +3321,16 @@ island.addEventListener("click", (ev) => {
       return;
     }
 
+    /* The call: Telegram Web in ChadBuddy's own window, on this client's
+       chat — no desktop app needed, first use links the device by QR. The
+       OS deep link survives only as the fallback for when the window cannot
+       be created. */
     case "call-tg": {
       const who = hit.dataset.client;
       const meta2 = who ? clientMeta(who) : null;
       if (meta2 && meta2.sourceId !== "" && !meta2.sourceId.startsWith("seed:")) {
-        openExternal(`tg://user?id=${meta2.sourceId}`);
+        const id = meta2.sourceId;
+        void openTelegram(id).catch(() => openExternal(`tg://user?id=${id}`));
       }
       return;
     }

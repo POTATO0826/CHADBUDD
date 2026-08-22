@@ -100,6 +100,47 @@ fn set_content_protected(protected: bool, app: AppHandle) -> Result<bool, String
 /// receives the keystroke — it goes to the editor behind instead.
 ///
 /// So focus is taken on open and never on idle, alert or peek.
+/// Telegram, inside a ChadBuddy window.
+///
+/// A real MTProto voice stack in this app would be a native project; Telegram
+/// Web already carries calls over WebRTC, so the honest in-app answer is a
+/// second webview window pointed at web.telegram.org with the client's chat
+/// open. First use asks for a QR link-device scan — after that, one click
+/// lands on the chat with the call button a tap away, and the bridge logs the
+/// call either way because the service message rides the socket regardless of
+/// where the call ran.
+///
+/// A normal decorated window on purpose: it must inherit none of the
+/// overlay's transparency or click-through machinery. The peer is digits-only
+/// by validation, so the URL cannot be steered anywhere but a Telegram chat.
+/// The window gets no IPC capabilities — a remote page has no business
+/// invoking anything.
+#[tauri::command]
+fn open_telegram(app: AppHandle, peer: String) -> Result<(), String> {
+    if peer.is_empty() || !peer.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!("not a telegram peer id: {peer}"));
+    }
+
+    if let Some(w) = app.get_webview_window("tgweb") {
+        let _ = w.eval(&format!("location.hash = '#{peer}'"));
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+
+    let url: tauri::Url = format!("https://web.telegram.org/k/#{peer}")
+        .parse()
+        .map_err(|e| format!("{e}"))?;
+
+    tauri::WebviewWindowBuilder::new(&app, "tgweb", tauri::WebviewUrl::External(url))
+        .title("Telegram · ChadBuddy")
+        .inner_size(440.0, 720.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Hand a URL to the operating system — the Telegram deep link, mailto.
 ///
 /// The scheme allowlist is the entire security model, and it is enough:
@@ -165,7 +206,8 @@ pub fn run() {
             quit,
             set_content_protected,
             focus_window,
-            open_external
+            open_external,
+            open_telegram
         ])
         .setup(move |app| {
             let window = app
