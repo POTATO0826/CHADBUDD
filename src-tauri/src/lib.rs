@@ -121,21 +121,27 @@ fn open_telegram(app: AppHandle, peer: String) -> Result<(), String> {
         return Err(format!("not a telegram peer id: {peer}"));
     }
 
+    // Rebuilt fresh on every click rather than reused: the login lives in the
+    // WebView2 profile, not the window, so closing costs nothing — and a
+    // window that wedged (white screen, dead worker) would otherwise be
+    // faithfully refocused in its wedged state forever.
     if let Some(w) = app.get_webview_window("tgweb") {
-        let _ = w.eval(&format!("location.hash = '#{peer}'"));
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-        return Ok(());
+        let _ = w.close();
     }
 
     let url: tauri::Url = format!("https://web.telegram.org/k/#{peer}")
         .parse()
         .map_err(|e| format!("{e}"))?;
 
+    /* A plain Chrome user-agent, because Telegram Web sniffs. The embedded
+       WebView2 UA reads as an in-app browser and the K client answers it
+       with a silent white page rather than an error — the same treatment
+       Google's login gives webviews. The engine underneath is the same
+       Chromium either way; the string is the only thing being judged. */
     tauri::WebviewWindowBuilder::new(&app, "tgweb", tauri::WebviewUrl::External(url))
         .title("Telegram · ChadBuddy")
         .inner_size(440.0, 720.0)
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
         .build()
         .map_err(|e| e.to_string())?;
     Ok(())
