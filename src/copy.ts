@@ -307,3 +307,41 @@ export const approvals: ApprovalRow[] = [
 export function setIdeas(next: Record<ClientKey, Idea[]>): void {
   ideas = next;
 }
+
+
+/* ── the advisor's live verdicts on the approval queue ─────────────
+   Two-way and persisted: the override OUTRANKS the authored done flag, so
+   un-ticking a pre-approved row genuinely reopens it. Lives here — beside
+   the queue — so the inbox, the overview and the island all read the SAME
+   verdict. globalThis guard: verify-ui imports this module under bun,
+   where localStorage does not exist. */
+const APPROVED_STORE = "cb-approved-v2";
+const webStore: Storage | undefined = (globalThis as { localStorage?: Storage }).localStorage;
+const approvedOverride = new Map<string, boolean>(
+  ((): Array<[string, boolean]> => {
+    try {
+      return Object.entries(JSON.parse(webStore?.getItem(APPROVED_STORE) ?? "{}") as Record<string, boolean>);
+    } catch {
+      return [];
+    }
+  })(),
+);
+
+export function apDone(a: ApprovalRow): boolean {
+  return approvedOverride.get(a.title) ?? a.done;
+}
+
+export function toggleApproval(title: string): void {
+  const row = approvals.find((x) => x.title === title);
+  const cur = approvedOverride.get(title) ?? row?.done ?? false;
+  approvedOverride.set(title, !cur);
+  try {
+    webStore?.setItem(APPROVED_STORE, JSON.stringify(Object.fromEntries(approvedOverride)));
+  } catch {
+    /* private mode: verdicts last the session */
+  }
+}
+
+export function pendingApprovals(): ApprovalRow[] {
+  return approvals.filter((x) => !apDone(x));
+}

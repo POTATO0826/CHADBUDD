@@ -32,7 +32,7 @@ import type { HandledReply } from "../data/handled.ts";
 import { handled } from "../data/handled.ts";
 import type { ClientKey } from "../data/types.ts";
 import { threads } from "../data/threads/index.ts";
-import { approvals } from "./copy.ts";
+import { apDone, approvals } from "./copy.ts";
 import type { Decision } from "./gates.ts";
 import { decide } from "./gates.ts";
 import { notesFor } from "./contact.ts";
@@ -130,7 +130,7 @@ function followUps(): Task[] {
 /** Drafts the assistant will not send on its own. */
 function toApprove(): Task[] {
   return approvals
-    .filter((a) => !a.done && a.go)
+    .filter((a) => !apDone(a) && a.go)
     .map((a) => ({
       kind: "approve" as const,
       client: a.go!.client,
@@ -145,7 +145,7 @@ function toApprove(): Task[] {
 
 
 export function tasksOfKind(kind: TaskKind): Task[] {
-  return tasks.filter((t) => t.kind === kind);
+  return allTasks().filter((t) => t.kind === kind);
 }
 
 export interface Assisted {
@@ -240,16 +240,16 @@ function fromGates(): Task[] {
   return [...mine, ...held];
 }
 
-/** Everything needing the advisor, most overdue first. */
-export const tasks: Task[] = [
-  ...callBacks(),
-  ...followUps(),
-  ...toApprove(),
-  ...fromGates(),
-].sort((a, b) => b.days - a.days);
+/** Everything needing the advisor, most overdue first — computed per call,
+    so an approval ticked anywhere drops out of every count at once. */
+function allTasks(): Task[] {
+  return [...callBacks(), ...followUps(), ...toApprove(), ...fromGates()].sort((a, b) => b.days - a.days);
+}
 
-export const inboxTotals = {
-  needsYou: tasks.length,
+export function inboxTotals() {
+  const t = allTasks();
+  return {
+  needsYou: t.length,
   callBacks: tasksOfKind("call-back").length,
   approve: tasksOfKind("approve").length,
   followUp: tasksOfKind("follow-up").length,
@@ -257,10 +257,11 @@ export const inboxTotals = {
   held: heldByGate.length,
   refused: refused.length,
   /** Everything that arrived, so the split can be stated as a share. */
-  arrived: tasks.length + handledToday.length,
+  arrived: t.length + handledToday.length,
   /** The single most overdue thing. */
-  worst: tasks[0] ?? null,
-};
+  worst: t[0] ?? null,
+  };
+}
 
 /** Glyph per kind — a count list should be scannable without reading it. */
 export const TASK_GLYPH: Record<TaskKind, string> = {

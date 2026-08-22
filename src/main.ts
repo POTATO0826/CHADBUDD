@@ -12,7 +12,7 @@
 
 import { NOW } from "../data/clock.ts";
 import type { ClientKey } from "../data/types.ts";
-import { approvals, ideas, queues } from "./copy.ts";
+import { apDone, approvals, ideas, pendingApprovals, queues, toggleApproval } from "./copy.ts";
 import type { Idea, QueueKind, QueueRow } from "./copy.ts";
 import type { ClientView, RecMessage, Tone } from "./derive.ts";
 import {
@@ -515,8 +515,18 @@ function resumeParked(): boolean {
 
 function nextNotif(): void {
   if (state.st !== "idle" || notifs.length === 0) return;
-  showNotif(notifs[notifIdx % notifs.length]!);
-  notifIdx++;
+  // A reminder whose approval has since been ticked is not news any more —
+  // skip it at pick time, so the rotation always reflects the live queue.
+  for (let i = 0; i < notifs.length; i++) {
+    const n = notifs[(notifIdx + i) % notifs.length]!;
+    if (n.kind === "reminder") {
+      const row = approvals.find((a) => a.title === n.title);
+      if (row && apDone(row)) continue;
+    }
+    notifIdx = notifIdx + i + 1;
+    showNotif(n);
+    return;
+  }
 }
 
 /**
@@ -680,35 +690,8 @@ const byIntent = (want: Idea["intent"]): number =>
 /* Computed per render inside overviewPage — as module constants they froze
    the seed before live ideas arrived, and the pills lied all day. */
 
-/* The advisor's live verdicts on the authored approval queue, persisted so
-   they survive a refresh. Two-way: the override OUTRANKS the authored done
-   flag, so un-ticking Priya's pre-approved row genuinely un-strikes it. */
-const APPROVED_STORE = "cb-approved-v2";
-const approvedOverride = new Map<string, boolean>(
-  ((): Array<[string, boolean]> => {
-    try {
-      return Object.entries(JSON.parse(localStorage.getItem(APPROVED_STORE) ?? "{}") as Record<string, boolean>);
-    } catch {
-      return [];
-    }
-  })(),
-);
-function apDone(a: (typeof approvals)[number]): boolean {
-  return approvedOverride.get(a.title) ?? a.done;
-}
-function toggleApproval(title: string): void {
-  const row = approvals.find((a) => a.title === title);
-  const cur = approvedOverride.get(title) ?? row?.done ?? false;
-  approvedOverride.set(title, !cur);
-  try {
-    localStorage.setItem(APPROVED_STORE, JSON.stringify(Object.fromEntries(approvedOverride)));
-  } catch {
-    /* private mode: verdicts last the session */
-  }
-}
-function pendingApprovals(): Array<(typeof approvals)[number]> {
-  return approvals.filter((a) => !apDone(a));
-}
+/* Approval verdicts live in src/copy.ts now, beside the queue they judge,
+   so the inbox, the overview and the island read the same truth. */
 
 /* ── the day ─────────────────────────────────────────────────────
    The top-left tile used to name the most urgent client. That is a fact the
@@ -2310,6 +2293,7 @@ function stageFunnel(): string {
  * already live. A summary that tries to be the detail ends up being neither.
  */
 function needsYouTile(): string {
+  const it = inboxTotals();
   const kinds: TaskKind[] = ["call-back", "follow-up", "answer", "approve"];
 
   const rows = kinds
@@ -2339,17 +2323,17 @@ function needsYouTile(): string {
     <div class="needs">
       <div class="nhead">
         <span class="lbl">needs you</span>
-        <span class="fig">${inboxTotals.needsYou}</span>
+        <span class="fig">${it.needsYou}</span>
       </div>
-      <span class="sub">of ${inboxTotals.arrived} that arrived today</span>
+      <span class="sub">of ${it.arrived} that arrived today</span>
 
       <div class="nlist">${rows || `<p class="nempty">Nothing waiting. Everything that came in was answered.</p>`}</div>
 
       <button class="done" data-act="page" data-page="assist"
-        aria-label="${inboxTotals.handled} answered automatically. Review them.">
+        aria-label="${it.handled} answered automatically. Review them.">
         <span class="g">✓</span>
         <span class="col">
-          <span class="k">${inboxTotals.handled} sent · ${inboxTotals.held + inboxTotals.refused} stopped</span>
+          <span class="k">${it.handled} sent · ${it.held + it.refused} stopped</span>
           <span class="m">see what the gates decided</span>
         </span>
       </button>
@@ -2369,6 +2353,7 @@ function needsYouTile(): string {
  * would have cost more than silence, and handing over a question instead.
  */
 function assistPage(): string {
+  const it = inboxTotals();
   const rows = decisions
     .map((a) => {
       const c = clientById(a.reply.client.toLowerCase());
@@ -2410,8 +2395,8 @@ function assistPage(): string {
     <div class="page fixed">
       <div class="qhead">
         <span class="hero-h d">What the assistant decided</span>
-        <span class="mt">${inboxTotals.handled} sent · ${inboxTotals.held} held for you ·
-          ${inboxTotals.refused} it would not write. Nine gates run before anything goes out, and
+        <span class="mt">${it.handled} sent · ${it.held} held for you ·
+          ${it.refused} it would not write. Nine gates run before anything goes out, and
           any one of them forces a person. Every decision below records which fired — with no
           recall on a sent message, the log is the only recourse there is.</span>
       </div>
