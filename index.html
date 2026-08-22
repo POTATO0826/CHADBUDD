@@ -1296,7 +1296,11 @@ html[data-shell="tauri"] #desk{ display: none; }
 .fact .g{ font-size: 10px; color: var(--t4); flex: none; }
 .fact .k{ color: var(--t3); }
 .fact .d{ flex: 1; border-bottom: 1px dotted color-mix(in oklab, var(--foreground) 12%, transparent); margin-bottom: 3px; }
-.fact .v{ text-align: right; flex: none; color: var(--t1); }
+/* The value may shrink and wrap — flex:none here let a long one ("Telegram ·
+   phone · meetings") run off the tile edge once the dotted leader had given
+   up all its width. Wrapping keeps every character on screen, which matters
+   more than the single-line rhythm in a product that refuses to hide data. */
+.fact .v{ text-align: right; flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; color: var(--t1); }
 .evid{ display: flex; gap: 8px; }
 .evid > *{ flex: 1; border-radius: var(--r-md); padding: 10px; display: flex; align-items: center; gap: 8px; }
 .evid .k{ width: 26px; height: 26px; border-radius: var(--r-sm); display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 9px; flex: none; }
