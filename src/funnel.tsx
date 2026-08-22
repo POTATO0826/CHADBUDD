@@ -29,20 +29,22 @@ import { funnelStages } from "./book.ts";
 import { FunnelChart, type FunnelStage } from "./charts/funnel-chart.tsx";
 
 /**
- * One hue for the whole funnel.
+ * One hue, five depths.
  *
- * Giving each stage its own colour was wrong twice over. Five hues across
- * five *ordered* categories reads as five unrelated things rather than one
- * sequence, and it fought a palette built on a single cool accent — the tile
- * looked like it came from a different product.
+ * The stages are ordered, so the colour job is sequential — one hue stepped
+ * light-to-dark — never five unrelated hues (a rainbow across an ordered
+ * scale reads as five separate things, not one journey). The hue is the
+ * chart system's lead token, so the tile matches every other chart, and the
+ * ramp deepens toward the far end: the further a client is through the book,
+ * the more saturated the segment they stand in.
  *
- * The reference does the same thing: every segment is one grey, and the depth
- * comes from the halo rings rather than from hue.
- *
- * Mixed toward the card rather than used at full strength, so it sits on the
- * surface instead of shouting off it.
+ * The value pill floats on its own foreground chip, so no step of the ramp
+ * carries text.
  */
-const FUNNEL_COLOR = "color-mix(in oklab, var(--iris) 62%, var(--card))";
+const FUNNEL_RAMP = [26, 40, 54, 70, 86].map(
+  (pct) => `color-mix(in oklab, var(--chart-1) ${pct}%, var(--card))`,
+);
+const FUNNEL_COLOR = FUNNEL_RAMP[2] as string;
 
 interface Props {
   onStage: (stage: Stage) => void;
@@ -53,12 +55,13 @@ function Funnel({ onStage }: Props): React.JSX.Element {
 
   const data = useMemo<FunnelStage[]>(
     () =>
-      funnelStages.map((r) => ({
+      funnelStages.map((r, i) => ({
         label: r.stage,
         value: r.reached,
         // The width is everyone who got this far; the number shown is who is
         // standing here now. The gap between them is the conversion work.
         displayValue: String(r.here),
+        color: FUNNEL_RAMP[i] ?? FUNNEL_COLOR,
       })),
     [],
   );

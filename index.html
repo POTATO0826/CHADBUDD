@@ -147,8 +147,11 @@ if (window.__TAURI_INTERNALS__ || window.__TAURI__ ||
                                 color-mix(in oklab, var(--background) 77%, transparent));
   --plane-open: linear-gradient(color-mix(in oklab, var(--card) 86%, transparent),
                                 color-mix(in oklab, var(--background) 90%, transparent));
-  --tile:      color-mix(in oklab, var(--foreground) 4%, transparent);
-  --tile-2:    color-mix(in oklab, var(--foreground) 6%, transparent);
+  /* The boxes carry their own card backing now — the glassy look lives in
+     the plane BETWEEN tiles, not through them, so text never fights the
+     desktop wallpaper behind the window. */
+  --tile:      color-mix(in oklab, var(--foreground) 5%, color-mix(in oklab, var(--card) 58%, transparent));
+  --tile-2:    color-mix(in oklab, var(--foreground) 6%, color-mix(in oklab, var(--card) 66%, transparent));
   /* wells — a step *down* from the plane, which on the light ramp means ink */
   --deep:      color-mix(in oklab, var(--foreground) 7%, transparent);
   --deep-2:    color-mix(in oklab, var(--foreground) 11%, transparent);
@@ -662,14 +665,8 @@ html[data-shell="tauri"] #desk{ display: none; }
 .ico.sm{ width: 28px; height: 28px; box-shadow: var(--edge-3); }
 
 .hero-h{ font-family: var(--display); font-weight: 600; font-size: 46px; line-height: 1; letter-spacing: -.015em; }
-.nav button[data-page="calls"] .badge{ color: var(--gold-hi); background: color-mix(in oklab, var(--gold) 24%, var(--background)); }
 
 .stat{ display: flex; flex-direction: column; gap: 2px; }
-.pillcol:nth-child(1) .stat .lbl::before, .pillcol:nth-child(2) .stat .lbl::before{
-  content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-  margin-right: 6px; vertical-align: 1px; }
-.pillcol:nth-child(1) .stat .lbl::before{ background: var(--m-good); }
-.pillcol:nth-child(2) .stat .lbl::before{ background: var(--foam); }
 .stat .v{ font-size: 44px; line-height: .95; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
 .stat .v.acc{ color: var(--butter); }
 
@@ -952,8 +949,8 @@ html[data-shell="tauri"] #desk{ display: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tchip .tlate{ font-family: var(--mono); font-size: 10px; color: var(--alarm-hi); flex: none; }
 
-.tchip.urg-week{ background: var(--deep); box-shadow: inset 3px 0 0 color-mix(in oklab, var(--gold) 55%, transparent); }
-.tchip.urg-soon{ background: var(--deep-2); box-shadow: inset 3px 0 0 var(--gold); }
+.tchip.urg-week{ background: var(--deep); }
+.tchip.urg-soon{ background: var(--deep-2); }
 .tchip.urg-today{ background: var(--gold); box-shadow: none; }
 .tchip.urg-today .tt, .tchip.urg-today .tk{ color: var(--background); }
 .tchip.urg-today .tk:hover{ background: color-mix(in oklab, var(--background) 18%, transparent); color: var(--background); }
@@ -1166,12 +1163,6 @@ html[data-shell="tauri"] #desk{ display: none; }
 .dstat{ font-family: var(--mono); font-size: 10px; color: var(--t3); letter-spacing: .02em; }
 
 .dsec{ display: flex; flex-direction: column; gap: 4px; }
-.dsec--maturing > .lbl{ color: var(--gold); }
-.dsec--maturing .drow{ box-shadow: inset 2px 0 0 color-mix(in oklab, var(--gold) 55%, transparent); }
-.dsec--market > .lbl{ color: var(--i-good); }
-.dsec--market .drow{ box-shadow: inset 2px 0 0 color-mix(in oklab, var(--foam) 45%, transparent); }
-.dsec--stale > .lbl{ color: var(--rose); }
-.dsec--stale .drow{ box-shadow: inset 2px 0 0 color-mix(in oklab, var(--rose) 45%, transparent); }
 .dsec > .lbl{ margin-bottom: 3px; }
 
 .desk .drow{ border-radius: var(--r-md);
@@ -1580,7 +1571,7 @@ html[data-shell="tauri"] #desk{ display: none; }
 .sect{ display: flex; flex-direction: column; gap: 9px; }
 .sect > .h{ font-family: var(--display); font-size: 14px; font-weight: 500; letter-spacing: -.016em; }
 .fact{ display: flex; align-items: baseline; gap: 9px; font-family: var(--mono); font-size: 10.5px; }
-.fact .g{ font-size: 10px; color: var(--i-good); flex: none; }
+.fact .g{ font-size: 10px; color: var(--t4); flex: none; }
 .fact .k{ color: var(--t3); }
 .fact .d{ flex: 1; border-bottom: 1px dotted color-mix(in oklab, var(--foreground) 12%, transparent); margin-bottom: 3px; }
 /* The value may shrink and wrap — flex:none here let a long one ("Telegram ·
@@ -1617,8 +1608,6 @@ html[data-shell="tauri"] #desk{ display: none; }
    it better. This shows what was said. */
 .keyinfo{ min-height: 0; }
 .kihead{ display: flex; align-items: baseline; gap: 9px; }
-.keyinfo .kihead .t{ color: var(--rose-hi); }
-.kp .g{ color: var(--rose); }
 .kihead .lbl{ margin-left: auto; }
 /* `.dcol > *` is flex:none, so this cannot grow into the column — it needs a
    height of its own or it would run the whole page long. 268px is about six

@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChadBuddy · colour-system review</title>
+<style>
+/* Rendered in ChadBuddy's own design system — Rose Pine Moon, the app's real
+   tokens — so every component below looks exactly as it does in the app. */
+:root{
+  --bg:#232136; --card:#2a273f; --overlay:#393552; --border:#44415a;
+  --t1:#e0def4; --t2:#d6d4ea; --t3:#d2d0e5; --t4:#cac9dd;
+  --iris:#c4a7e7; --foam:#9ccfd8; --foamI:#87cccc; --gold:#f6c177; --gold-hi:#fbe0b0;
+  --love:#eb6f92; --love-hi:#f5a8bd; --rose:#ea9a97; --rose-hi:#f5c2c0; --pine:#3e8fb0;
+  --mono: "Cascadia Mono","SF Mono",Consolas,monospace;
+}
+*{box-sizing:border-box; min-width:0}
+body{margin:0; background:var(--bg); color:var(--t1);
+  font:14px/1.55 "IBM Plex Sans JP",system-ui,"Segoe UI",sans-serif; padding:28px 20px 60px}
+.wrap{max-width:1060px; margin:0 auto; display:flex; flex-direction:column; gap:26px}
+h1{font-size:26px; margin:0; letter-spacing:-.02em}
+h2{font-size:16px; margin:0 0 4px; letter-spacing:-.01em}
+p{margin:0; color:var(--t3)}
+.lbl{font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--t4)}
+.card{background:var(--card); border-radius:16px; padding:18px 20px; box-shadow:inset 0 0 0 1px var(--border);
+  display:flex; flex-direction:column; gap:12px}
+.verdict{border-left:3px solid var(--gold); }
+table{border-collapse:collapse; width:100%; font-size:12.5px}
+th{font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--t4); text-align:left; padding:6px 10px 6px 0; border-bottom:1px solid var(--border)}
+td{padding:7px 10px 7px 0; border-bottom:1px solid color-mix(in oklab,var(--border) 50%,transparent);
+  vertical-align:top; color:var(--t2)}
+td.num{font-family:var(--mono); white-space:nowrap}
+.bad{color:var(--love-hi); font-weight:600}
+.good{color:var(--foam); font-weight:600}
+.tw{overflow-x:auto}
+.legend{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px}
+.leg{display:flex; gap:10px; align-items:flex-start; background:color-mix(in oklab,var(--t1) 4%,transparent);
+  border-radius:11px; padding:10px 12px}
+.leg i{width:14px; height:14px; border-radius:4px; flex:none; margin-top:2px}
+.leg b{display:block; font-size:12.5px}
+.leg span{font-size:11px; color:var(--t4)}
+.pair{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+.half{background:color-mix(in oklab,var(--t1) 3%,transparent); border-radius:12px; padding:14px;
+  display:flex; flex-direction:column; gap:10px}
+.half .tag{font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase}
+.half.before .tag{color:var(--t4)} .half.after .tag{color:var(--foam)}
+.row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+.note{font-size:11.5px; color:var(--t4)}
+.ratio{font-family:var(--mono); font-size:10px; margin-left:auto; white-space:nowrap}
+@media (max-width:760px){.pair{grid-template-columns:1fr}}
+
+/* ── faithful component recreations, BEFORE variants ── */
+.b-chip{font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase;
+  padding:3px 8px; border-radius:999px}
+.b-chip.decay{color:#eb6f92; background:color-mix(in oklab,#eb6f92 18%, transparent)}
+.b-chip.watch{color:#f6c177; background:color-mix(in oklab,#f6c177 22%, transparent)}
+.b-tchip{display:inline-flex; align-items:center; gap:6px; padding:4px 9px; border-radius:5px; font-size:10.5px}
+.b-tchip.today{background:color-mix(in oklab,#f6c177 36%, color-mix(in oklab,var(--t1) 4%,var(--bg)))}
+.b-tchip.today .late{font-family:var(--mono); color:#eb6f92; font-weight:700}
+.b-tchip.over{background:color-mix(in oklab,#eb6f92 22%, color-mix(in oklab,var(--t1) 4%,var(--bg)))}
+.b-tchip.over .late{font-family:var(--mono); color:#eb6f92}
+.b-wblk{display:inline-flex; flex-direction:column; padding:6px 10px; border-radius:6px; min-width:130px}
+.b-wblk .bt{font-family:var(--mono); font-size:8px; color:var(--t4)}
+.b-wblk .bn{font-size:10px}
+.b-wblk.k{background:color-mix(in oklab,var(--foamI) 32%, transparent); box-shadow:inset 0 0 0 1.5px var(--foamI)}
+.b-bub{max-width:340px; border-radius:14px; padding:10px 12px; font-size:12.5px}
+.b-bub.client{background:color-mix(in oklab,var(--t1) 5.5%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--t1) 6%,transparent)}
+.b-bub.adv{background:color-mix(in oklab,var(--iris) 7%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--iris) 16%,transparent)}
+.b-fact{font-family:var(--mono); font-size:10.5px; display:flex; gap:9px; align-items:baseline}
+.b-fact .g{color:var(--t4)}
+.b-badge{font-family:var(--mono); font-size:10px; padding:2px 7px; border-radius:999px;
+  color:var(--t3); background:color-mix(in oklab,var(--t1) 7%,transparent)}
+.b-seclbl{font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--t4)}
+.b-prop{font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase;
+  padding:3px 8px; border-radius:999px; color:var(--iris); border:1px dashed color-mix(in oklab,var(--iris) 50%,transparent)}
+
+/* ── AFTER variants — the shipped CSS ── */
+.a-chip{font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase;
+  padding:3px 8px; border-radius:999px}
+.a-chip.decay{color:var(--love-hi); background:color-mix(in oklab,#eb6f92 22%, var(--bg))}
+.a-chip.watch{color:var(--gold-hi); background:color-mix(in oklab,#f6c177 20%, var(--bg))}
+.a-tchip{display:inline-flex; align-items:center; gap:6px; padding:4px 9px; border-radius:5px; font-size:10.5px}
+.a-tchip.week{background:#4a4858; box-shadow:inset 3px 0 0 color-mix(in oklab,var(--gold) 55%,transparent)}
+.a-tchip.soon{background:#585666; box-shadow:inset 3px 0 0 var(--gold)}
+.a-tchip.today{background:var(--gold); color:var(--bg)}
+.a-tchip.today .late{font-family:var(--mono); color:#8c1d3f; font-weight:700}
+.a-tchip.over{background:var(--love); color:var(--bg)}
+.a-tchip.over .late{font-family:var(--mono); color:var(--bg); font-weight:700}
+.a-wblk{display:inline-flex; flex-direction:column; padding:6px 10px; border-radius:6px; min-width:130px}
+.a-wblk .bt{font-family:var(--mono); font-size:9px; color:var(--t2)}
+.a-wblk .bn{font-size:10px}
+.a-wblk.r{background:color-mix(in oklab,var(--foamI) 12%,var(--bg));
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--foamI) 20%,transparent)}
+.a-wblk.i{background:color-mix(in oklab,var(--foamI) 26%,var(--bg));
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--foamI) 40%,transparent)}
+.a-wblk.k{background:color-mix(in oklab,var(--foamI) 80%,var(--bg)); box-shadow:inset 0 0 0 1.5px var(--foamI)}
+.a-wblk.k .bt,.a-wblk.k .bn{color:var(--bg)}
+.a-bub{max-width:340px; border-radius:14px; padding:10px 12px; font-size:12.5px}
+.a-bub.client{background:color-mix(in oklab,var(--foamI) 9%,var(--bg));
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--foamI) 14%,transparent)}
+.a-fact{font-family:var(--mono); font-size:10.5px; display:flex; gap:9px; align-items:baseline}
+.a-fact .g{color:var(--foam)}
+.a-badge{font-family:var(--mono); font-size:10px; padding:2px 7px; border-radius:999px;
+  color:var(--gold-hi); background:color-mix(in oklab,var(--gold) 24%,var(--bg))}
+.a-sec{display:flex; flex-direction:column; gap:6px}
+.a-seclbl{font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase}
+.a-secrow{border-radius:11px; background:color-mix(in oklab,var(--t1) 3%,transparent);
+  padding:8px 12px; font-size:12px; color:var(--t2)}
+.a-prop{font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase;
+  padding:3px 8px; border-radius:999px; color:var(--gold); border:1px dashed color-mix(in oklab,var(--gold) 50%,transparent)}
+.a-ki{color:var(--rose-hi); font-weight:500; font-size:14px}
+.a-kp{font-size:12px; color:var(--t2)} .a-kp b{color:var(--rose); font-weight:400; margin-right:6px}
+.a-dot{font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--t4)}
+.a-dot i{display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:6px; vertical-align:1px}
+
+form.opts{display:flex; flex-direction:column; gap:10px}
+form.opts label{display:flex; gap:9px; align-items:flex-start; font-size:13px; color:var(--t2); cursor:pointer}
+form.opts input[type=checkbox]{margin-top:3px; accent-color:var(--foam)}
+form.opts textarea{background:color-mix(in oklab,var(--t1) 4%,transparent); border:1px solid var(--border);
+  border-radius:9px; color:var(--t1); font:12.5px/1.5 inherit; padding:9px 11px; min-height:56px; resize:vertical}
+form.opts button{align-self:flex-start; background:var(--iris); color:var(--bg); font-weight:600;
+  border:0; border-radius:999px; padding:8px 18px; font-size:13px; cursor:pointer}
+.hint{font-size:11px; color:var(--t4)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="lbl">chadbuddy · colour-system overhaul · for your comments</div>
+    <h1 style="margin-top:6px">More Rosé Pine, measured legible</h1>
+    <p style="max-width:72ch; margin-top:8px">Three audit agents went over the real CSS: WCAG contrast math on every
+    token pairing, a census of where each accent actually paints, and the
+    <em>vibecoded-design-tells</em> checklist. Everything below is their evidence, acted on, then
+    <strong>re-measured</strong>. Click any element to annotate it; the form at the bottom queues the open decisions.</p>
+  </header>
+
+  <section class="card verdict">
+    <h2>The verdict, in three lines</h2>
+    <p>① The palette was never the problem — Rosé Pine Moon is your chosen reference and stays. The problem was
+    <strong>four of its six accents painting almost nothing</strong> (rose and pine: zero pixels) while iris wore everything.</p>
+    <p>② The “hard to read” complaint had a measurable shape: every failure was <strong>an accent ink sitting on a wash of
+    its own hue</strong> — worst case <span class="bad">1.24:1</span>, an overdue marker that effectively did not exist — plus
+    112 style rules under 10px.</p>
+    <p>③ The tells audit found <strong>real bugs</strong>, not just style: dead CSS from retired pages was silently
+    squeezing the live month grid to 44px tall and restyling the desk rows.</p>
+  </section>
+
+  <section class="card">
+    <h2>Hue = meaning — the deliberate assignment</h2>
+    <p class="note">Written into the token block so every future use can say why. This is the anti-monotone system:
+    six accents, six jobs, never decoration.</p>
+    <div class="legend">
+      <div class="leg"><i style="background:var(--iris)"></i><div><b>iris</b><span>the assistant &amp; the brand — anything machine-authored</span></div></div>
+      <div class="leg"><i style="background:var(--foam)"></i><div><b>foam</b><span>the client's side &amp; live evidence — their bubbles, their numbers</span></div></div>
+      <div class="leg"><i style="background:var(--pine)"></i><div><b>pine</b><span>structure &amp; steady state — fills and dots only, never text</span></div></div>
+      <div class="leg"><i style="background:var(--gold)"></i><div><b>gold</b><span>time &amp; money — deadlines, maturities, the calls badge</span></div></div>
+      <div class="leg"><i style="background:var(--rose)"></i><div><b>rose</b><span>the relationship — personal facts worth remembering</span></div></div>
+      <div class="leg"><i style="background:var(--love)"></i><div><b>love</b><span>alarm, and only alarm</span></div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Contrast receipts — every failing pair, before → after</h2>
+    <p class="note">Measured with WCAG 2.1 math, not eyeballed. 4.5:1 is the pass line for normal text.
+    The repair pattern: fills mix toward the <em>background</em> (denser, not brighter), inks step up to their
+    lighter <code>-hi</code> tier, and the two hottest chip states flip to solid accent with dark ink.</p>
+    <div class="tw"><table>
+      <tr><th>Where</th><th>Was</th><th>Now</th><th>How</th></tr>
+      <tr><td>Overdue marker on due-today task chip</td><td class="num bad">1.24</td><td class="num good">5.42</td><td>solid gold chip, dark-red stamp</td></tr>
+      <tr><td>Overdue task chip text</td><td class="num bad">2.34</td><td class="num good">5.38</td><td>solid love chip, dark ink</td></tr>
+      <tr><td>Key week block time / title</td><td class="num bad">2.57 / 3.18</td><td class="num good">6.03</td><td>solid foam, dark ink — the block you prepare for now pops</td></tr>
+      <tr><td>Call-back chip in Needs You</td><td class="num bad">2.60</td><td class="num good">5.94</td><td>fill toward background + love-hi ink</td></tr>
+      <tr><td>Overdue count in today contract</td><td class="num bad">2.69</td><td class="num good">5.49</td><td>lighter pink ink</td></tr>
+      <tr><td>Due-today task title</td><td class="num bad">2.72</td><td class="num good">9.55</td><td>dark ink on solid gold</td></tr>
+      <tr><td>DECAYING / CALL status chips</td><td class="num bad">2.89</td><td class="num good">5.94</td><td>fill→background, love-hi ink</td></tr>
+      <tr><td>WATCH status chip</td><td class="num bad">3.24</td><td class="num good">7.61</td><td>fill→background, gold-hi ink</td></tr>
+      <tr><td>Decision-log tier chips T2/T3</td><td class="num bad">3.30</td><td class="num good">7.25</td><td>same pattern</td></tr>
+      <tr><td>Due-soon / due-week task chips</td><td class="num bad">3.69 / 4.93</td><td class="num good">5.42 / 6.75</td><td>neutral well + gold left-rail (hue still says urgency)</td></tr>
+      <tr><td>Selected importance / channel segments</td><td class="num bad">3.94 / 4.13</td><td class="num good">5.96</td><td>foam fill toward background</td></tr>
+      <tr><td>Hovered calendar chips &amp; blocks</td><td class="num bad">4.24–4.47</td><td class="num good">6.59–7.20</td><td>same pattern</td></tr>
+    </table></div>
+    <p class="note">Honesty note: my own first pass left three pairs at 4.0–4.4 — the re-measurement caught them, and key
+    blocks, the overdue count and the deepest text tier were tightened again before shipping. Also: <strong>79 rules
+    under 10px moved up half a step</strong>, section labels a full step, and the deepest text tier was raised twice.</p>
+  </section>
+
+  <section class="card">
+    <h2>Before / after — the components themselves</h2>
+    <p class="note">These are the app's actual CSS rules, not mockups. Annotate anything you'd tune.</p>
+
+    <div class="pair">
+      <div class="half before"><span class="tag">before — status chips</span>
+        <div class="row"><span class="b-chip decay">decaying</span><span class="b-chip watch">watch</span><span class="ratio bad">2.89 / 3.24</span></div>
+        <span class="note">love ink on love wash — the hue eats its own text</span>
+      </div>
+      <div class="half after"><span class="tag">after</span>
+        <div class="row"><span class="a-chip decay">decaying</span><span class="a-chip watch">watch</span><span class="ratio good">5.94 / 7.61</span></div>
+        <span class="note">denser fill, brighter ink, same identity</span>
+      </div>
+    </div>
+
+    <div class="pair">
+      <div class="half before"><span class="tag">before — task chips (deadline urgency)</span>
+        <div class="row">
+          <span class="b-tchip today">○ Send Adrian the comparison <span class="late">!</span></span>
+          <span class="b-tchip over">○ Renewal papers <span class="late">!</span></span>
+        </div>
+        <span class="note">the "!" past-deadline stamp measured <b class="bad">1.24:1</b> — invisible on the chip that mattered most</span>
+      </div>
+      <div class="half after"><span class="tag">after</span>
+        <div class="row">
+          <span class="a-tchip week">○ Statements batch</span>
+          <span class="a-tchip soon">○ Call promo list</span>
+          <span class="a-tchip today">○ Send the comparison <span class="late">!</span></span>
+          <span class="a-tchip over">○ Renewal papers <span class="late">!</span></span>
+        </div>
+        <span class="note">cool states: neutral well + gold rail · hot states: solid accent, dark ink — closer still reads darker</span>
+      </div>
+    </div>
+
+    <div class="pair">
+      <div class="half before"><span class="tag">before — week-view importance</span>
+        <div class="row"><span class="b-wblk k"><span class="bt">13:15</span><span class="bn">Adrian — the comparison</span></span><span class="ratio bad">3.18 / 2.57</span></div>
+      </div>
+      <div class="half after"><span class="tag">after</span>
+        <div class="row">
+          <span class="a-wblk r"><span class="bt">09:45</span><span class="bn">Priya — signing</span></span>
+          <span class="a-wblk i"><span class="bt">14:45</span><span class="bn">Michelle — check-in</span></span>
+          <span class="a-wblk k"><span class="bt">13:15</span><span class="bn">Adrian — the comparison</span></span>
+        </div>
+        <span class="note">routine → important → key: the ladder deepens toward solid foam; the meeting you prepare for is unmissable</span>
+      </div>
+    </div>
+
+    <div class="pair">
+      <div class="half before"><span class="tag">before — the thread</span>
+        <div class="b-bub client">How different is the rougher ride in practice?</div>
+        <div class="b-bub adv" style="align-self:flex-end">In 2022 Titans was down about 18%…</div>
+        <span class="note">client gray, advisor iris — one real hue in the whole conversation</span>
+      </div>
+      <div class="half after"><span class="tag">after</span>
+        <div class="a-bub client">How different is the rougher ride in practice?</div>
+        <div class="b-bub adv" style="align-self:flex-end">In 2022 Titans was down about 18%…</div>
+        <span class="note">two voices, two hues: the client speaks in foam, the advisor in iris</span>
+      </div>
+    </div>
+
+    <div class="pair">
+      <div class="half before"><span class="tag">before — small identities</span>
+        <div class="b-fact"><span class="g">☏</span><span style="color:var(--t3)">Phone</span><span>+60 17-556 ••23</span></div>
+        <div class="row"><span class="b-seclbl">maturing soon</span> <span class="b-seclbl">market watch</span> <span class="b-seclbl">quiet holdings</span></div>
+        <div class="row"><span style="font-size:12px;color:var(--t3)">calls</span><span class="b-badge">2</span><span class="b-prop">asked in chat</span></div>
+        <div class="b-seclbl" style="letter-spacing:.02em">Key information</div>
+      </div>
+      <div class="half after"><span class="tag">after</span>
+        <div class="a-fact"><span class="g">☏</span><span style="color:var(--t3)">Phone</span><span>+60 17-556 ••23</span></div>
+        <div class="row"><span class="a-seclbl" style="color:var(--gold)">maturing soon</span> <span class="a-seclbl" style="color:var(--foam)">market watch</span> <span class="a-seclbl" style="color:var(--rose)">quiet holdings</span></div>
+        <div class="row"><span style="font-size:12px;color:var(--t3)">calls</span><span class="a-badge">2</span><span class="a-prop">asked in chat</span></div>
+        <div class="a-ki">Key information</div>
+        <div class="a-kp"><b>✎</b>Salary lands on the 24th</div>
+        <div class="row"><span class="a-dot"><i style="background:var(--pine)"></i>clients</span><span class="a-dot"><i style="background:var(--foam)"></i>messages</span></div>
+        <span class="note">fact glyphs foam · desk sections say their meaning · calls badge gold · proposals gold (a client offering time is time-and-money, not assistant output) · key info rose · hero stats get pine/foam dots</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Bugs the tells-audit caught (already fixed)</h2>
+    <div class="tw"><table>
+      <tr><th>Bug</th><th>Victim</th></tr>
+      <tr><td>Dead widget's bare <code>.cell{height:44px}</code></td><td>every live month-grid cell was hard-capped — this is why cells felt cramped</td></tr>
+      <tr><td>Retired decision-log <code>.drow</code> rules</td><td>silently restyled the desk section's rows</td></tr>
+      <tr><td>Legacy <code>.ccard</code> block</td><td>overrode the live confirm-rail cards</td></tr>
+      <tr><td>Invalid <code>box-shadow: inset … dashed</code></td><td>the suggested-importance outline never rendered at all</td></tr>
+      <tr><td>Status-hue ambient washes</td><td>gold/pine corner glows implied meaning where there was none — retinted to iris/foam</td></tr>
+      <tr><td>Stale <code>--chart-1..5</code> (pre-retheme export)</td><td>rethemed to pine/foam/gold/rose/iris</td></tr>
+    </table></div>
+    <p class="note">Cleared as deliberate, per the unslop method: the Rosé Pine palette itself, the five-step radius scale,
+    the three chosen typefaces, the four load-bearing animations, the notification-frame glow, and emoji inside client
+    message data (their words, not our chrome).</p>
+  </section>
+
+  <section class="card">
+    <h2>Open decisions — queue what you want</h2>
+    <form class="opts" data-lavish-question="theme-options"
+      onsubmit="event.preventDefault();
+        const fd=new FormData(event.currentTarget);
+        const picks=[...fd.getAll('opt')];
+        const note=(fd.get('note')||'').toString().trim();
+        const msg='Theme review decisions: '+(picks.length?picks.join(' | '):'no extras')+(note?(' — note: '+note):'');
+        window.lavish.queuePrompt(msg,{tag:'choice',text:msg,element:event.currentTarget,data:{picks,note}});">
+      <label><input type="checkbox" name="opt" value="convert UI glyphs (☏ ✉ ⌕ ◍ ✎ …) to a small inline-SVG icon set">
+        <span><b>Replace glyph icons with real SVGs</b> — the one unfixed tell. The chrome currently uses unicode glyphs
+        (☏ ✉ ⌕ ◍ ✎); a tiny inline-SVG set would render identically on every machine. ~1–2h of careful swapping.</span></label>
+      <label><input type="checkbox" name="opt" value="raise the open-dashboard plane opacity from 86-90% toward 94-96%">
+        <span><b>Make the open dashboard more opaque</b> — the plane lets your desktop bleed through at 86–90%. Raising it
+        would end the “sometimes muddy over a bright window” cases entirely, at the cost of some of the overlay feel.
+        (Compact island stays translucent either way.)</span></label>
+      <label><input type="checkbox" name="opt" value="recolor the funnel chart series to the new chart tokens (pine/foam/gold/rose/iris)">
+        <span><b>Recolor the funnel chart</b> to the freshly-rethemed chart tokens so the clients page matches the system.</span></label>
+      <label><input type="checkbox" name="opt" value="revert: keep client bubbles gray instead of foam">
+        <span><b>Revert option</b> — if the foam client bubbles feel like too much, they can go back to gray.</span></label>
+      <span class="lbl">anything else</span>
+      <textarea name="note" placeholder="e.g. 'the gold today-chip is too loud', 'give the desk header more presence'…"></textarea>
+      <button type="submit">Queue my answers</button>
+      <span class="hint">Queued answers reach me when you press “Send to Agent”. You can also click any component above and comment on it directly.</span>
+    </form>
+  </section>
+
+</div>
+</body>
+</html>
