@@ -25,11 +25,18 @@ the demo runs on one designated deployment (currently `bright-civet-444`).
 
 ```bash
 git checkout main && git pull
-bun install
-bunx convex dev        # once: creates/links YOUR deployment, pushes schema
-bun run seed:load      # the four seeded threads into YOUR database
-bun run dev            # the whole stack
+bunx convex dev        # ONCE: interactive login, creates your deployment. Ctrl+C after.
+bun run dev            # everything else, every day after
 ```
+
+`bun run dev` carries its own preflight now: it installs dependencies on a
+first clone, tells you when you are behind origin (`--pull` acts on it,
+fast-forward only), seeds an empty backend automatically, prints which
+features your deployment is armed with, skips the bridge with instructions
+when no Telegram session exists, and — under a demo override — refuses to
+run anything that could write into a teammate's database. The only thing it
+cannot do for you is the one-time interactive Convex login above.
+`--preflight-only` shows the verdicts without starting anything.
 
 Then arm your deployment. `bunx convex env set NAME value` for each:
 
