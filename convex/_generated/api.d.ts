@@ -13,6 +13,7 @@ import type * as agentData from "../agentData.js";
 import type * as calendar from "../calendar.js";
 import type * as chats from "../chats.js";
 import type * as crons from "../crons.js";
+import type * as emotions from "../emotions.js";
 import type * as http from "../http.js";
 import type * as ingest from "../ingest.js";
 import type * as outbox from "../outbox.js";
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   calendar: typeof calendar;
   chats: typeof chats;
   crons: typeof crons;
+  emotions: typeof emotions;
   http: typeof http;
   ingest: typeof ingest;
   outbox: typeof outbox;
