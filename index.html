@@ -1371,7 +1371,9 @@ html[data-shell="tauri"] #desk{ display: none; }
    gold, market pressure wears the alarm red sparingly, anything AI-drafted is
    labelled in iris — same vocabulary as everywhere else in the app. */
 .desk{ display: flex; flex-direction: column; gap: 14px; padding: 18px 20px 22px;
-  border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge); }
+  border-radius: var(--r-xl); box-shadow: var(--edge);
+  background: color-mix(in oklab, var(--glacial) 9%, color-mix(in oklab, var(--card) 96%, transparent)); }
+.desk .drow{ background: color-mix(in oklab, var(--glacial) 8%, var(--background)); }
 .deskhead{ display: flex; flex-direction: column; gap: 4px; }
 .dstat{ font-family: var(--mono); font-size: 10px; color: var(--t3); letter-spacing: .02em; }
 
@@ -1416,7 +1418,7 @@ html[data-shell="tauri"] #desk{ display: none; }
 /* The drafted message. Iris marks machine prose everywhere in this app. */
 .desk .ddraft{ display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
   border-radius: var(--r-md); border: 1px dashed var(--iris-b);
-  background: color-mix(in oklab, var(--iris) 4%, transparent); }
+  background: color-mix(in oklab, var(--glacial) 6%, var(--background)); }
 .desk .dtext{ font-size: 12.5px; line-height: 1.6; color: var(--t1); margin: 0; max-width: 70ch; }
 .desk .ddraft .btn[disabled]{ opacity: .45; cursor: not-allowed; }
 

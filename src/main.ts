@@ -4204,9 +4204,9 @@ const JITTER = 4;
 
 let lastPoint: { x: number; y: number } | null = null;
 
-/* The last pointer sighting over this window, wherever it landed. Presence
-   checks read THIS, not :hover — see pointerIsOnIsland. */
-const lastSeen = { x: 0, y: 0, t: 0 };
+/* The last pointer sighting over this window, and how fast it was moving.
+   Presence checks read THIS, not :hover — see pointerIsOnIsland. */
+const lastSeen = { x: 0, y: 0, t: 0, v: 0 };
 
 /** The states a deliberate hover may expand out of. */
 const COMPACT = new Set<IslandState>(["idle", "alert", "call"]);
@@ -4229,9 +4229,15 @@ const COMPACT = new Set<IslandState>(["idle", "alert", "call"]);
  * box is the only state that counts as "on it".
  */
 function pointerIsOnIsland(): boolean {
-  if (performance.now() - lastSeen.t > 150) return false;
   const r = island.getBoundingClientRect();
-  return lastSeen.x >= r.left && lastSeen.x <= r.right && lastSeen.y >= r.top && lastSeen.y <= r.bottom;
+  const inside =
+    lastSeen.x >= r.left && lastSeen.x <= r.right && lastSeen.y >= r.top && lastSeen.y <= r.bottom;
+  if (!inside) return false;
+  // Fresh sighting: present. Stale sighting: a resting hand produces no
+  // events either — only a FAST last movement means the cursor outran its
+  // pointerleave and is genuinely gone.
+  if (performance.now() - lastSeen.t < 150) return true;
+  return lastSeen.v < 0.35;
 }
 
 function armHover(): void {
@@ -4277,6 +4283,7 @@ island.addEventListener("pointerenter", (ev) => {
   lastSeen.x = ev.clientX;
   lastSeen.y = ev.clientY;
   lastSeen.t = performance.now();
+  lastSeen.v = 0;
   lastPoint = { x: ev.clientX, y: ev.clientY };
   armHover();
 });
@@ -4284,9 +4291,14 @@ island.addEventListener("pointerenter", (ev) => {
 /* Every real movement restarts the clock, so it can only elapse where the
    pointer has stopped. This is what makes a sweep cost nothing. */
 island.addEventListener("pointermove", (ev) => {
+  const now = performance.now();
+  const dt = now - lastSeen.t;
+  if (dt > 0 && dt < 200) {
+    lastSeen.v = Math.hypot(ev.clientX - lastSeen.x, ev.clientY - lastSeen.y) / dt;
+  }
   lastSeen.x = ev.clientX;
   lastSeen.y = ev.clientY;
-  lastSeen.t = performance.now();
+  lastSeen.t = now;
   if (!COMPACT.has(state.st)) return;
   if (lastPoint && Math.hypot(ev.clientX - lastPoint.x, ev.clientY - lastPoint.y) < JITTER) return;
   lastPoint = { x: ev.clientX, y: ev.clientY };
@@ -4296,6 +4308,8 @@ island.addEventListener("pointermove", (ev) => {
 island.addEventListener("pointerleave", () => {
   window.clearTimeout(hoverTimer);
   lastPoint = null;
+  lastSeen.t = 0;
+  lastSeen.v = 99;
   if (state.st === "peek") {
     window.clearTimeout(leaveTimer);
     leaveTimer = window.setTimeout(() => {
