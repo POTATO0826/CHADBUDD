@@ -14,13 +14,12 @@ import { NOW } from "../data/clock.ts";
 import type { ClientKey } from "../data/types.ts";
 import { apDone, approvals, ideas, pendingApprovals, queues, toggleApproval } from "./copy.ts";
 import type { Idea, QueueKind, QueueRow } from "./copy.ts";
-import type { ClientView, RecMessage, Tone } from "./derive.ts";
+import type { ClientView, RecMessage, Tone, Week } from "./derive.ts";
 import {
   ADVISOR, INK, MARK, clientById, clients, dateShort, findClient, humanGap, replyClock,
   stamp, totals, weekBars,
 } from "./derive.ts";
 import { openDays } from "./ledger.ts";
-import type { LedgerEntry } from "./ledger.ts";
 import { bookTotals, buckets, stageOf } from "./book.ts";
 import { STAGE_NOTE } from "../data/book.ts";
 import { funnelElement } from "./funnel.tsx";
@@ -32,13 +31,11 @@ import { aiText, initDeskAi } from "./deskAi.ts";
 import type { Task } from "./tasks.ts";
 import { initTasks, taskCreate, taskDone, taskMove, taskRemove, tasks, tasksOn, urgencyOf } from "./tasks.ts";
 import { initSuggest, resolveSuggestion, runSuggest, suggestions } from "./suggest.ts";
-import { initTrail } from "./trail.ts";
 import { openProposals, proposalReply, proposalWhen } from "./proposals.ts";
-import { digestFor, emotionTone, keyPointsFor, latestEmotion } from "./emotions.ts";
-import type { KeyPoint } from "./emotions.ts";
+import { digestFor, emotionTone, latestEmotion } from "./emotions.ts";
 import { connectCalendar } from "./convexCalendar.ts";
 import { initScramble } from "./scramble.ts";
-import { POINT_GLYPH, POINT_LABEL, callStats, notesFor } from "./contact.ts";
+import { POINT_LABEL, callStats, notesFor } from "./contact.ts";
 import type { TaskKind } from "./inbox.ts";
 import { TASK_GLYPH, TASK_LABEL, decisions, inboxTotals, tasksOfKind } from "./inbox.ts";
 import { GATE_REASON, TIER_ACTION } from "./gates.ts";
@@ -81,6 +78,17 @@ const markOf = (t: Tone): string => (t === "butter" ? "var(--butter)" : MARK[t])
  */
 const tint = (colour: string, pct: number): string =>
   `color-mix(in oklab, ${colour} ${pct}%, transparent)`;
+
+/**
+ * Per-message classification labels, off by default.
+ *
+ * The extraction still runs and the labels still ride on every message — this
+ * only decides whether they are painted. `?tags=1` (or localStorage) turns them
+ * back on for anyone debugging the classifier.
+ */
+const DEBUG_TAGS: boolean =
+  new URLSearchParams(location.search).get("tags") === "1" ||
+  localStorage.getItem("cb:tags") === "1";
 
 /* ── state ───────────────────────────────────────────────────────── */
 
@@ -670,11 +678,22 @@ function header(): string {
     </div>`;
 }
 
+/**
+ * The status line, reduced to a dot.
+ *
+ * The corpus counts, the verbatim-gate tally and the provisional-scoring
+ * caveat are all true and all worth being able to check — none of them is
+ * worth a permanent strip of text across the bottom of every page. They live
+ * in the tooltip now; the dot is what remains in the viewport.
+ */
 function footer(): string {
+  const detail =
+    `${totals.clients} clients · ${totals.messages} messages\n` +
+    `ledger verbatim-checked, ${totals.discarded} discarded\n` +
+    `scores provisional — stage 2 engine pending`;
   return `
     <div class="foot">
-      <span>${totals.clients} clients · ${totals.messages} messages · ledger verbatim-checked, ${totals.discarded} discarded</span>
-      <span class="prov"><i aria-hidden="true"></i>scores provisional — stage 2 engine pending</span>
+      <span class="prov" title="${e(detail)}" tabindex="0" role="note" aria-label="${e(detail)}"><i aria-hidden="true"></i></span>
     </div>`;
 }
 
@@ -3062,30 +3081,39 @@ function askTurn(t: AskTurn, c: ClientView): string {
     </div>`;
 }
 
-function askBox(c: ClientView): string {
+/**
+ * The one raised surface on the page.
+ *
+ * It opens already holding an opinion — the moment the relationship turned,
+ * quoted at reading size, one sentence of diagnosis, and the single button
+ * that acts on it. The old panel led with an empty transcript and four opener
+ * chips, which spent the most valuable rectangle on screen asking the advisor
+ * to think of a question. The freeform box still exists; it sits at the very
+ * bottom, one line tall, where a follow-up belongs.
+ */
+function insightPanel(c: ClientView): string {
   const log = state.ask[c.key] ?? [];
-  const opening: AskTurn = {
-    from: "agent",
-    text: `I have read all <b>${c.messageCount}</b> of ${e(c.name.split(" ")[0]!)}'s messages. Ask me what to say next — or pick one below.`,
-  };
 
   return `
-    <div class="ask">
-      <div class="hd">
-        <span class="t">Ask the agent</span>
-        <span class="tag">reads this thread only</span>
+    <div class="panel">
+      <div class="pbody sc">
+        <div class="pin">
+          <span class="kick" style="color:${inkOf(c.turn.tone)}">${e(c.turn.head)}</span>
+          <p class="pq">${e(c.turn.quote)}</p>
+          <p class="pdx">${e(c.turn.note)}</p>
+          <button class="btn acc pgo" data-act="ask-preset" data-q="${e(ASK_PRESETS[0]![0])}">Draft the reply</button>
+          ${
+            c.turn.cite !== "—"
+              ? `<button class="pev" data-act="cite" data-client="${c.key}" data-id="${e(c.turn.cite)}" title="Show this message in the thread">${e(c.turn.cite)}</button>`
+              : ""
+          }
+        </div>
+        ${log.length ? `<div class="plog" id="asklog">${log.map((t) => askTurn(t, c)).join("")}</div>` : ""}
       </div>
-      <div class="log sc" id="asklog">
-        ${[opening, ...log].map((t) => askTurn(t, c)).join("")}
-      </div>
-      <div class="chips">
-        ${ASK_PRESETS.map(([label]) => `<button data-act="ask-preset" data-q="${e(label)}">${e(label)}</button>`).join("")}
-      </div>
-      <div class="composer">
+      <div class="pask">
         <input data-act="draft" type="text" value="${e(state.draft)}" placeholder="Ask about ${e(c.name.split(" ")[0]!)}…" aria-label="Ask the agent about ${e(c.name)}">
         <button class="send" data-act="ask" title="Ask" aria-label="Ask"${state.draft.trim() ? "" : " disabled"}>→</button>
       </div>
-      <span class="note" title="Answers are derived from this thread and cite the messages they came from. Nothing is sent to ${e(c.name)} without your click.">Derived from this thread · cited · nothing sends without your click</span>
     </div>`;
 }
 
@@ -3134,79 +3162,52 @@ function searchKeeps(m: RecMessage): boolean {
  * the advisor, and collapsing both into an empty list would conceal the second
  * — which is the one that can be fixed.
  */
-function keyInfoTile(c: ClientView): string {
+function notedSection(c: ClientView): string {
   /* Live mode: the agent's own notes, verbatim-gated server-side. Null means
-     no live data yet (seed renders); an empty array is a real answer. */
+     no live data yet (seed renders); an empty array is a real answer, and an
+     empty answer renders nothing at all rather than an empty module. */
   const live = liveNotes(c.key);
   if (live !== null) {
-    const rows = live
-      .map(
-        (n) => `
-        <div class="kp" data-kind="fact">
-          <span class="g" title="Noted by ChadBuddy">✎</span>
-          <span class="col">
-            <span class="tx">${e(n.text)}</span>
-            <span class="mt">noted by chadbuddy · ${citeChips([n.cite], c.key)}</span>
-          </span>
-        </div>`,
-      )
-      .join("");
+    if (live.length === 0) return "";
     return `
-      <div class="tile keyinfo" style="gap:9px">
-        <div class="kihead">
-          <span class="t" style="font-size:14px;font-weight:500">Key information</span>
-          <span class="lbl">${live.length} noted</span>
-        </div>
-        ${rows || `<p class="empty" style="font-size:11px">Nothing noted yet — the agent reads every 15 minutes once a thread has a few messages.</p>`}
+      <div class="rsec">
+        <span class="rlbl">Noted</span>
+        ${live
+          .slice(0, 4)
+          .map((n) => `<div class="owe"><span class="ot">${e(n.text)}</span><span class="om">${e(n.cite)}</span></div>`)
+          .join("")}
+        ${live.length > 4 ? `<span class="rmore">+ ${live.length - 4} more</span>` : ""}
       </div>`;
   }
 
   const notes = notesFor(c.key);
-
-  const rows = notes.moments
-    .map(
-      (m) => `
-      <div class="kp" data-kind="${e(m.kind)}">
-        <span class="g" title="${e(POINT_LABEL[m.kind])}">${e(POINT_GLYPH[m.kind])}</span>
-        <span class="col">
-          <span class="tx">${e(m.text)}</span>
-          <span class="mt">${e(stamp.format(Date.parse(m.at)))} · ${m.daysAgo}d ago · ${e(m.where)}</span>
-        </span>
+  const rows = notes.moments.slice(0, 4).map(
+    (m) => `
+      <div class="owe">
+        <span class="ot">${e(m.text)}</span>
+        <span class="om">${e(POINT_LABEL[m.kind].toLowerCase())} · ${m.daysAgo}d ago · ${e(m.where)}</span>
       </div>`,
-    )
-    .join("");
+  );
 
-  const quiet = notes.silent
-    .map(
-      (s) => `
-      <div class="kp quiet">
-        <span class="g">○</span>
-        <span class="col">
-          <span class="tx">${e(s.meeting.where)} · ${s.meeting.minutes} min</span>
-          <span class="mt">${e(dateShort.format(Date.parse(s.meeting.at)))} · ${
-            s.reason === "declined"
-              ? "no notes — they declined recording"
-              : "no notes — consent was never asked for"
-          }</span>
-        </span>
+  /* A meeting that produced no notes is still a fact about the relationship —
+     "he declined recording" and "nobody asked" are different problems, and
+     only the second one is fixable. */
+  const quiet = notes.silent.slice(0, 2).map(
+    (s) => `
+      <div class="owe">
+        <span class="ot">${e(s.meeting.where)} · ${s.meeting.minutes} min</span>
+        <span class="om">${s.reason === "declined" ? "no notes — they declined recording" : "no notes — consent was never asked for"}</span>
       </div>`,
-    )
-    .join("");
+  );
 
-  const empty = !rows && !quiet;
+  if (rows.length === 0 && quiet.length === 0) return "";
+  const hidden = notes.moments.length - rows.length;
 
   return `
-    <div class="tile keyinfo" style="gap:9px">
-      <div class="kihead">
-        <span class="t" style="font-size:14px;font-weight:500">Key information</span>
-        <span class="lbl">${notes.moments.length} noted</span>
-      </div>
-      ${
-        empty
-          ? `<p class="kempty">No meetings recorded with this client yet. Notes appear here once a
-             conversation is captured with their consent.</p>`
-          : `<div class="klist sc" id="keynotes">${rows}${quiet}</div>`
-      }
+    <div class="rsec">
+      <span class="rlbl">Noted</span>
+      ${rows.join("")}${quiet.join("")}
+      ${hidden > 0 ? `<span class="rmore">+ ${hidden} more</span>` : ""}
     </div>`;
 }
 
@@ -3273,40 +3274,30 @@ function composer(c: ClientView): string {
     </div>`;
 }
 
+/**
+ * One client, opened.
+ *
+ * The page carries exactly one raised surface — the insight panel on the
+ * right. The rail is flat on the canvas and the thread sits directly on it,
+ * so elevation means "this is the thing to act on" rather than "this is a
+ * region". Every other former card is now type hierarchy plus a hairline.
+ */
 function clientDetail(c: ClientView): string {
   const shown = c.messages.filter(searchKeeps);
   const filters: Array<[Filter, string]> = [["all", "all"], ["client", "theirs"], ["flagged", "flagged"]];
+  const note = threadNote(c);
 
   return `
-    <div class="page fixed">
+    <div class="page fixed cpage">
       <div class="dhead">
-        <button class="back" data-act="clients-back" title="Back to all clients">← All</button>
-        <span class="ava s34" style="background:${tint(markOf(c.tone), 16)};box-shadow:inset 0 0 0 1px ${tint(markOf(c.tone), 35)};color:${inkOf(c.tone)}">${e(c.initials)}</span>
-        <span class="nm">${e(c.name)}</span>
+        <button class="back" data-act="clients-back" title="Back to all clients">← All clients</button>
         <span class="chip" data-tone="${c.chipTone}">${e(c.statusWord)}</span>
-        ${pulse(c)}
         ${callButton(c)}
       </div>
 
       <div class="dcols">
         <!-- who they are -->
-        <div class="dcol info sc">
-          <div class="tile" style="gap:11px">
-            <span class="t" style="font-size:14px;font-weight:500">Basic information</span>
-            <div class="sect">
-              ${c.facts
-                .map((f) => `<div class="fact"><span class="g">${e(f.glyph)}</span><span class="k">${e(f.k)}</span><span class="d"></span><span class="v">${e(f.v)}</span></div>`)
-                .join("")}
-              ${emailRow(c)}
-            </div>
-          </div>
-
-          ${keyInfoTile(c)}
-
-          ${keyPointsTile(c)}
-
-          ${c.open.length ? openLedgerTile(c) : ""}
-        </div>
+        <div class="dcol info sc">${clientRail(c)}</div>
 
         <!-- what was actually said -->
         <div class="thread sm">
@@ -3324,27 +3315,141 @@ function clientDetail(c: ClientView): string {
           </div>
           <div class="msgs sc" id="msgs">
             ${shown.length
-              ? shown.map((m) => messageRow(m, state.q.trim())).join("")
+              ? shown.map((m) => messageRow(m, state.q.trim(), note)).join("")
               : `<p class="empty">No message matches “${e(state.q)}”.<br>Search runs over the text, the id and the timestamp.</p>`}
           </div>
           ${composer(c)}
         </div>
 
         <!-- what to do about it -->
-        <div class="dcol agent">
-          <div class="turn" style="background:${tint(markOf(c.turn.tone), 9)};box-shadow:inset 0 0 0 1px ${tint(markOf(c.turn.tone), 30)}">
-            <span class="hd" style="color:${inkOf(c.turn.tone)}">${e(c.turn.head)}</span>
-            <div class="q">
-              <i style="background:${inkOf(c.turn.tone)}"></i>
-              <p>${e(c.turn.quote)}</p>
-            </div>
-            <span class="nt">${e(c.turn.note)}</span>
-            ${c.turn.cite !== "—" ? `<span>${citeChips([c.turn.cite], c.key)}</span>` : ""}
-          </div>
-          ${askBox(c)}
-        </div>
+        <div class="dcol agent">${insightPanel(c)}</div>
       </div>
     </div>`;
+}
+
+/**
+ * The rail: who they are, read top to bottom.
+ *
+ * Name, then how they are, then the shape of the decay, then the facts, then
+ * what they asked for, then one honest footnote. No module renders when it has
+ * nothing to say — an empty section is worse than a missing one, because the
+ * reader spends attention discovering it is empty.
+ */
+function clientRail(c: ClientView): string {
+  const quietDays = Math.max(0, Math.round((NOW - c.lastContact) / 86_400_000));
+  const historyDays = Math.max(0, Math.round((NOW - c.firstContact) / 86_400_000));
+  const p = pulseOf(c);
+  const quiet = quietDays === 0 ? "in touch today" : quietDays === 1 ? "1 day quiet" : `${quietDays} days quiet`;
+
+  const facts = c.facts.slice(0, 5);
+  const digest = digestFor(c.key);
+
+  const owed = c.open.length
+    ? `<div class="rsec">
+         <span class="rlbl">Owed</span>
+         ${c.open
+           .slice(0, 3)
+           .map(
+             (x) => `<div class="owe"><span class="ot">${e(x.text)}</span><span class="om">${e(x.owedBy)} · ${openDays(x)}d</span></div>`,
+           )
+           .join("")}
+         ${c.open.length > 3 ? `<span class="rmore">+ ${c.open.length - 3} more in the thread</span>` : ""}
+       </div>`
+    : "";
+
+  const wants = digest
+    ? `<div class="rsec">
+         <span class="rlbl">Wants</span>
+         <p class="rwant">${e(digest.want)}</p>
+         <p class="rfeel">${e(digest.feel)}</p>
+       </div>`
+    : "";
+
+  return `
+    <div class="rail">
+      <div class="rid">
+        <h2 class="rnm">${e(c.name)}</h2>
+        <span class="rhandle">${e(c.handle)}</span>
+      </div>
+
+      <div class="rstat" style="color:${inkOf(p.tone)}">
+        <i style="background:${markOf(p.tone)}"></i>${e(statusPhrase(c))} · ${e(quiet)}
+      </div>
+
+      ${decayMeter(c)}
+
+      ${
+        facts.length
+          ? `<div class="rsec">
+               <span class="rlbl">Facts</span>
+               ${facts.map((f) => `<div class="rfact"><span class="k">${e(f.k)}</span><span class="v">${e(f.v)}</span></div>`).join("")}
+               ${emailRow(c)}
+             </div>`
+          : ""
+      }
+
+      ${wants}
+      ${notedSection(c)}
+      ${owed}
+
+      <span class="rfoot">${
+        historyDays < 14
+          ? "too new to score decay"
+          : `${c.messageCount} messages · ${c.clientMessageCount} theirs · ${historyDays}d of history`
+      }</span>
+    </div>`;
+}
+
+/** The plain phrase beside the dot. Never a colour alone, never a number. */
+function statusPhrase(c: ClientView): string {
+  if (c.score.silent) return "Present, not asking";
+  if (c.score.status === "decaying") return "Going cold";
+  if (c.score.status === "watch") return "Cooling";
+  return "Steady";
+}
+
+/**
+ * The decay meter: five weeks of contact as bare ticks.
+ *
+ * Height is how many days that week carried a message, so a relationship
+ * winding down draws its own staircase. No axis, no number, no label — it is
+ * a shape to glance at, and the sentence above it already said the reading.
+ */
+function decayMeter(c: ClientView): string {
+  const weeks = c.weeks.slice(-5);
+  if (weeks.length === 0) return "";
+
+  const live = (w: Week) => w.cells.filter((x) => x.kind === "them" || x.kind === "you" || x.kind === "cited").length;
+  const counts = weeks.map(live);
+  const peak = Math.max(1, ...counts);
+
+  const ticks = counts
+    .map((n, i) => {
+      const h = 4 + Math.round((n / peak) * 16);
+      const recent = i === counts.length - 1;
+      return `<i style="height:${h}px;background:${recent ? markOf(c.tone) : tint(markOf(c.tone), 34)}"></i>`;
+    })
+    .join("");
+
+  return `<div class="rdecay" aria-hidden="true">${ticks}</div>`;
+}
+
+/**
+ * The one annotation the thread is allowed.
+ *
+ * Everything a chip used to say is still in the data; only the single most
+ * expensive fact earns ink — the obligation that has been open longest, sitting
+ * on the message that created it.
+ */
+function threadNote(c: ClientView): { id: string; text: string } | null {
+  if (c.open.length === 0) return null;
+  const oldest = [...c.open].sort((a, b) => a.openedAt - b.openedAt)[0]!;
+  const repeats = c.open.filter((x) => x.kind === oldest.kind).length;
+  const days = openDays(oldest);
+  return {
+    id: oldest.sourceMessageId,
+    text: repeats > 1 ? `asked ${repeats}×, unanswered` : `unanswered · ${days}d open`,
+  };
 }
 
 
@@ -3354,12 +3459,25 @@ function keeps(m: RecMessage): boolean {
   return true;
 }
 
-function messageRow(m: RecMessage, hit = ""): string {
-  const chips = m.chips
-    .map(
-      (ch) => `<span class="ec" style="color:${inkOf(ch.tone)};border:1px ${ch.dashed ? "dashed" : "solid"} ${tint(markOf(ch.tone), 40)}">${e(ch.label)}</span>`,
-    )
-    .join("");
+/**
+ * One message.
+ *
+ * The classification chips are gone from the default reading — the labels
+ * still ride on `m.chips` for anyone who turns DEBUG_TAGS on, but a thread
+ * where every line wears four badges is a thread nobody reads. What survives
+ * is one muted mono line per bubble: the time, the id, and — on exactly one
+ * message in the thread — the annotation that costs money to ignore.
+ */
+function messageRow(m: RecMessage, hit = "", note: { id: string; text: string } | null = null): string {
+  const tags = DEBUG_TAGS
+    ? m.chips
+        .map(
+          (ch) => `<span class="ec" style="color:${inkOf(ch.tone)};border:1px ${ch.dashed ? "dashed" : "solid"} ${tint(markOf(ch.tone), 40)}">${e(ch.label)}</span>`,
+        )
+        .join("")
+    : "";
+
+  const flag = note && note.id === m.id ? `<span class="mnote"> · ${e(note.text)}</span>` : "";
 
   return `
     <div class="msg${state.lit === m.id ? " lit" : ""}" data-who="${m.who}" data-mid="${e(m.id)}"${m.via ? ` data-via="${m.via}"` : ""}>
@@ -3375,83 +3493,8 @@ function messageRow(m: RecMessage, hit = ""): string {
                 : ""
         }
         <span class="tx">${mark(m.text, hit)}</span>
-        <span class="meta">${chips}<span class="id">${e(m.time)} · ${e(m.id)}</span></span>
+        <span class="meta">${tags}<span class="id">${e(m.time)} · ${e(m.id)}${flag}</span></span>
       </div>
-      ${m.flag ? `<span class="flag" style="color:${inkOf(m.flagTone)}">◆ ${e(m.flag)}</span>` : ""}
-    </div>`;
-}
-
-/**
- * What the client actually told you — one reading, then the recent facts.
- *
- * The digest leads: two model-written sentences (how they feel, what they
- * want), rendered as prose with the cites they rest on, which the server
- * verified against gate-surviving spans before storing. Under it, only the
- * five most recent raw points — Faizal produced thirty-seven, and a tile
- * that long buries the column it lives in. The full history is one cite
- * click away; each row's quote lives in the message it lights up.
- */
-function keyPointsTile(c: ClientView): string {
-  const points = keyPointsFor(c.key);
-  const digest = digestFor(c.key);
-  if (points.length === 0 && !digest) return "";
-
-  const lead = digest
-    ? `
-      <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--hair)">
-        <div style="display:flex;gap:8px;font-size:12px;line-height:1.5">
-          <span class="lbl" style="flex:none;width:38px;padding-top:2px">feels</span>
-          <span>${e(digest.feel)}</span>
-        </div>
-        <div style="display:flex;gap:8px;font-size:12px;line-height:1.5">
-          <span class="lbl" style="flex:none;width:38px;padding-top:2px">wants</span>
-          <span>${e(digest.want)}</span>
-        </div>
-        <span>${citeChips(digest.cites, c.key)}</span>
-      </div>`
-    : "";
-
-  const recent = points.slice(-5).reverse();
-  const earlier = points.length - recent.length;
-
-  const row = (p: KeyPoint) => `
-    <div style="display:flex;align-items:baseline;gap:8px;padding:7px 0;border-bottom:1px solid var(--hair)">
-      <span class="ec" style="flex:none;color:var(--iris);border:1px dashed color-mix(in oklab, var(--iris) 55%, transparent)">${e(p.kind.replace(/_/g, " "))}</span>
-      <span style="font-size:12px;flex:1;min-width:0">${e(p.point)}</span>
-      <span style="flex:none">${citeChips([p.sourceId], c.key)}</span>
-    </div>`;
-
-  return `
-    <div class="tile" style="gap:6px;flex:none">
-      <div style="display:flex;align-items:baseline;gap:9px;padding-bottom:6px">
-        <span class="t" style="font-size:14.5px;font-weight:500">Key points</span>
-        <span class="lbl" style="margin-left:auto">${points.length} noted · gate-checked</span>
-      </div>
-      ${lead}
-      <div class="sect" style="gap:0">${recent.map(row).join("")}</div>
-      ${earlier > 0 ? `<span class="lbl" style="padding-top:4px">+ ${earlier} earlier — cites in the thread</span>` : ""}
-    </div>`;
-}
-
-function openLedgerTile(c: ClientView): string {
-  const row = (x: LedgerEntry) => `
-    <div style="display:flex;flex-direction:column;gap:6px;padding:9px 0;border-bottom:1px solid var(--hair)">
-      <div style="display:flex;align-items:baseline;gap:8px">
-        <span class="ec" style="color:var(--butter);border:1px dashed color-mix(in oklab, var(--primary) 50%, transparent)">${e(x.kind)}</span>
-        <span style="font-size:12px">${e(x.text)}</span>
-      </div>
-      <span class="m" style="font-size:9.5px;color:var(--t4)">owed by ${e(x.owedBy)} · open ${openDays(x)} days · since ${e(dateShort.format(x.openedAt))}</span>
-      <blockquote style="margin:0;padding:6px 9px;border-left:2px solid color-mix(in oklab, var(--foreground) 18%, transparent);background:color-mix(in oklab, var(--foreground) 3.5%, transparent);font-size:11.5px;font-style:italic;color:var(--t3)">“${e(x.quote)}”</blockquote>
-      <span>${citeChips([x.sourceMessageId], c.key)}</span>
-    </div>`;
-
-  return `
-    <div class="tile" style="gap:6px;flex:none">
-      <div style="display:flex;align-items:baseline;gap:9px;padding-bottom:6px">
-        <span class="t" style="font-size:14.5px;font-weight:500">Open ledger</span>
-        <span class="lbl" style="margin-left:auto">${c.open.length} open · ${c.settledCount} settled</span>
-      </div>
-      ${c.open.map(row).join("")}
     </div>`;
 }
 
@@ -5414,7 +5457,12 @@ function clearRinging(): void {
 
 const live = initLive(
   () => {
-    state.sel = clients[0]?.key ?? state.sel;
+    /* Seed a selection only when there is none to keep. This callback fires on
+       every live update — including the echo of a message the advisor just
+       sent — and it used to reassign `sel` to clients[0] unconditionally,
+       which threw you out of whoever you were reading and into the first
+       client in the list mid-sentence. */
+    if (!findClient(state.sel.toLowerCase())) state.sel = clients[0]?.key ?? state.sel;
     render();
   },
   /* A real message arriving is exactly what the alert state was built for:
@@ -5473,7 +5521,6 @@ if (location.port === "4321") {
 
 initTasks(render);
 initSuggest(render);
-initTrail();
 initDeskAi(render);
 
 if (live) {

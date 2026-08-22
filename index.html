@@ -610,17 +610,22 @@ html[data-shell="tauri"] #desk{ display: none; }
   /* The last letter's tracking is trailing whitespace inside the pill; pulling
      it back is what re-centres the word between mark and edge. */
   margin-right: -.22em; }
-.nav{ display: flex; gap: 2px; padding: 4px; border-radius: 999px; background: var(--tile-2); box-shadow: var(--edge); margin: 0 auto; }
+/* A row of words with a rule under the live one. The filled pill it used to
+   wear made the nav the loudest object on every screen, and shifted the
+   active tab's width when its weight changed. The underline does neither —
+   the weight is declared on both states so nothing reflows. */
+.nav{ display: flex; gap: 8px; padding: 0; background: none; box-shadow: none; margin: 0 auto; }
 .nav button{
-  font-family: var(--mono); font-size: 11px; letter-spacing: .03em;
-  padding: 7px 15px; border-radius: 999px; white-space: nowrap;
-  display: flex; align-items: center; gap: 6px; color: color-mix(in oklab, var(--foreground) 82%, var(--card));
-  transition: color .16s var(--ease), background .16s var(--ease);
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; font-weight: 500;
+  padding: 8px 8px 6px; border-radius: 0; white-space: nowrap;
+  display: flex; align-items: center; gap: 6px; color: color-mix(in oklab, var(--foreground) 60%, var(--card));
+  border-bottom: 1px solid transparent;
+  transition: color .16s var(--ease), border-color .16s var(--ease);
 }
 .nav button:hover{ color: var(--t1); }
-.nav button[aria-current="page"]{ background: var(--butter); color: var(--butter-d); font-weight: 600; }
-.nav .badge{ font-family: var(--mono); font-size: 9.5px; padding: 1px 5px; border-radius: var(--r-sm); background: color-mix(in oklab, var(--foreground) 10%, transparent); color: color-mix(in oklab, var(--foreground) 90%, var(--card)); }
-.nav button[aria-current="page"] .badge{ background: color-mix(in oklab, var(--background) 16%, transparent); color: var(--butter-d); }
+.nav button[aria-current="page"]{ background: none; color: var(--t1); border-bottom-color: var(--t1); }
+.nav .badge{ font-family: var(--mono); font-size: 9.5px; padding: 0; background: none; color: var(--t5); }
+.nav button[aria-current="page"] .badge{ background: none; color: var(--t3); }
 
 .orbs{ display: flex; align-items: center; gap: 7px; flex: none; }
 .orb{
@@ -1062,12 +1067,6 @@ html[data-shell="tauri"] #desk{ display: none; }
   box-shadow: var(--edge); }
 .aplan > .lbl{ width: 100%; }
 .apitem{ display: inline-flex; align-items: center; gap: 1px; }
-
-/* the mouse trail: an overlay that draws and never intercepts */
-/* An absolutely-positioned canvas with only inset keeps its INTRINSIC size
-   (the device-pixel attribute size), so on a scaled display it overflows the
-   viewport and every stroke lands past the cursor. The CSS size pins it. */
-#mousetrail{ position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 9999; }
 
 /* the peek stats are doors now — say so on hover */
 .peek .st{ border-radius: var(--r-sm); padding: 2px 5px; margin: -2px -1px; }
@@ -1981,28 +1980,91 @@ html[data-shell="tauri"] #desk{ display: none; }
    Three columns that answer three different questions and never overlap:
    who they are (left), what was actually said (middle), what to do about it
    (right). The middle column is the only one that scrolls on its own axis. */
+/* ── the client page ──────────────────────────────────────────────
+   An opaque route, not an overlay. The grid it replaces must not read through
+   it at any opacity — a page you can see the previous page through is a page
+   the eye keeps trying to focus past.
+
+   Two radii for the whole view and nothing else: --rc-1 for anything you can
+   type in or click, --rc-2 for the single elevated panel. Spacing is 4/8/12/
+   16/24 throughout. */
+.cpage{
+  --rc-1: 10px;
+  --rc-2: 18px;
+  background: var(--background);
+  border-radius: var(--rc-2);
+  padding: 16px 24px 24px;
+  gap: 16px;
+}
+
 .dhead{ display: flex; align-items: center; gap: 12px; flex: none; }
 .dhead .nm{ font-family: var(--display); font-size: 26px; font-weight: 500; letter-spacing: -.03em; }
-/* A way back, not a call to action — it sits beside a 26px name, so it stays
-   small enough to read as chrome rather than compete with it. */
+/* A way back, not a call to action. It used to wear a pill; the only pill left
+   on this page is the status badge beside it. */
 .back{
-  display: flex; align-items: center; gap: 5px; flex: none;
-  font-family: var(--mono); font-size: 9.5px; color: var(--t4);
-  padding: 5px 10px; border-radius: 999px; box-shadow: var(--edge-2);
-  transition: background .16s var(--ease), color .16s var(--ease);
+  display: flex; align-items: center; gap: 4px; flex: none;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--t4);
+  padding: 4px 0; background: none; box-shadow: none;
+  transition: color .16s var(--ease);
 }
-.back:hover{ background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--t1); }
+.back:hover{ color: var(--t1); }
+.cpage .dhead .chip{ margin-left: 0; }
 
-.dcols{ display: grid; grid-template-columns: 274px 1fr 340px; gap: 12px; flex: 1; min-height: 0; }
-.dcol{ display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
+.dcols{ display: grid; grid-template-columns: 260px 1fr 360px; gap: 24px; flex: 1; min-height: 0; }
+.dcol{ display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow-y: auto; }
 .dcol > *{ flex: none; }
 /* The agent column is the one place where scrolling the *column* is wrong: the
-   composer lives at the bottom of the ask box, so a column that scrolls puts
-   the text field below the fold and you have to travel to it before you can
-   type. The column is fixed instead, the ask box takes whatever height is
-   left, and the transcript inside it is the only thing that moves. */
+   follow-up input lives at the floor of the panel, so a column that scrolls
+   puts the text field below the fold and you have to travel to it before you
+   can type. The column is fixed; the panel body is the only thing that moves. */
 .dcol.agent{ overflow: hidden; }
-.dcol.agent > .ask{ flex: 1 1 auto; min-height: 0; }
+.dcol.agent > .panel{ flex: 1 1 auto; min-height: 0; }
+
+/* ── the rail: flat on the canvas ─────────────────────────────────
+   No card, no border, no fill. Structure is type hierarchy and a hairline
+   between sections — which is enough, and which stops the page from reading
+   as three competing boxes. */
+.rail{ display: flex; flex-direction: column; gap: 16px; }
+.rid{ display: flex; flex-direction: column; gap: 4px; }
+.rnm{ margin: 0; font-family: var(--display); font-size: 24px; font-weight: 500; letter-spacing: -.03em; line-height: 1.15; }
+.rhandle{ font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--t5); }
+.rstat{ display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.rstat i{ width: 6px; height: 6px; border-radius: var(--rc-1); flex: none; }
+
+/* five weeks of contact as bare ticks — a shape, not a statistic */
+.rdecay{ display: flex; align-items: flex-end; gap: 4px; height: 20px; }
+.rdecay i{ width: 8px; border-radius: var(--rc-1); flex: none; }
+
+.rsec{ display: flex; flex-direction: column; gap: 8px; padding-top: 16px; border-top: 1px solid var(--hair); }
+.rlbl{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--t5); }
+/* key/value, label left and value right, no glyph column */
+.rfact{ display: flex; align-items: baseline; gap: 12px; font-size: 12px; }
+.rfact .k{ flex: none; width: 84px; color: var(--t5); }
+.rfact .v{ flex: 1; min-width: 0; color: var(--t2); text-align: right; }
+.rwant{ margin: 0; font-size: 13px; line-height: 1.5; color: var(--t2); }
+.rfeel{ margin: 0; font-size: 12px; line-height: 1.5; color: var(--t4); }
+.owe{ display: flex; flex-direction: column; gap: 4px; }
+.owe .ot{ font-size: 12px; line-height: 1.45; color: var(--t2); }
+.owe .om{ font-family: var(--mono); font-size: 9.5px; color: var(--t5); }
+.rmore, .rfoot{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .04em; color: var(--t5); }
+.rfoot{ padding-top: 16px; border-top: 1px solid var(--hair); }
+/* the email field keeps its editor but loses the glyph column */
+.rsec .emailrow{ display: flex; align-items: baseline; gap: 12px; font-family: inherit; font-size: 12px; padding: 0; }
+.rsec .emailrow .g, .rsec .emailrow .d{ display: none; }
+.rsec .emailrow .k{ flex: none; width: 84px; color: var(--t5); }
+.rsec .emailrow .v{ flex: 1; min-width: 0; }
+
+.mnote{ color: var(--i-warn); }
+
+/* Everything on this page rounds to one of the two values or it does not
+   round. These are the strays the shared components bring with them — the
+   6px button, the 11px suggestion card, the 6px cite — pulled onto --rc-1
+   rather than left to add a third and fourth radius to the view. */
+.cpage .btn, .cpage .emailbox, .cpage .chip, .cpage .cite,
+.cpage .at .b, .cpage .sug, .cpage .sug .rank, .cpage .sug .draft{ border-radius: var(--rc-1); }
+/* the ask transcript, once there is one: quiet inside an already-raised panel */
+.cpage .sug{ background: color-mix(in oklab, var(--foreground) 5%, transparent); box-shadow: none; }
+.cpage .sug .draft{ background: color-mix(in oklab, var(--foreground) 4%, transparent); box-shadow: none; }
 
 /* The month grid, squeezed into the 274px info column: the day labels go, the
    cells shrink to squares, and what survives is the shape of the month — which
@@ -2025,6 +2087,37 @@ html[data-shell="tauri"] #desk{ display: none; }
 .thread.sm .bub .id{ font-size: 9px; }
 .thread.sm .msg .gap span{ font-size: 9px; }
 
+/* ── the thread on the client page: bubbles on the canvas ─────────
+   No container around the thread at all — the box it used to sit in was one
+   of three competing rectangles, and removing it costs the reader nothing.
+   Mine take a subtle fill and no border; theirs take a border and no fill.
+   That single inversion is the whole distinction, and it survives a glance.
+
+   These sit after the .thread.sm block and carry .sm in the selector because
+   the compact overrides would otherwise win on both specificity and order,
+   and quietly restore the 11px radius this page is trying to shed. */
+.cpage .thread{ background: none; box-shadow: none; border-radius: 0; overflow: visible; }
+.cpage .thread.sm .bar{ padding: 0 0 12px; gap: 12px; border-bottom: 1px solid var(--hair); }
+.cpage .thread.sm .filters{ gap: 12px; }
+.cpage .thread.sm .filters button{
+  border-radius: 0; box-shadow: none; background: none; padding: 4px 0;
+  color: var(--t5); font-weight: 500; border-bottom: 1px solid transparent;
+}
+.cpage .thread.sm .filters button[aria-pressed="true"]{
+  background: none; color: var(--t1); border-bottom-color: var(--t1);
+}
+.cpage .qbox{ border-radius: var(--rc-1); background: color-mix(in oklab, var(--foreground) 5%, transparent); box-shadow: none; }
+.cpage .thread.sm .msgs{ padding: 16px 0; gap: 12px; }
+.cpage .thread.sm .bub{ border-radius: var(--rc-1); padding: 8px 12px; gap: 4px; max-width: 84%; }
+.cpage .msg[data-who="advisor"] .bub{ background: color-mix(in oklab, var(--foreground) 6%, transparent); box-shadow: none; }
+.cpage .msg[data-who="client"] .bub{ background: none; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 14%, transparent); }
+/* one muted mono line per bubble: time, id, and — on exactly one message in
+   the thread — the annotation that costs money to ignore */
+.cpage .thread.sm .bub .meta{ gap: 8px; }
+.cpage .thread.sm .bub .id{ margin-left: 0; font-size: 9.5px; letter-spacing: .03em; }
+.cpage .replybox{ border-radius: var(--rc-1); }
+.cpage .composer{ border-radius: var(--rc-1); }
+
 /* A real input, not the painted one the old bar used — this one filters. */
 .qbox{
   flex: 1; min-width: 120px; height: 30px; border-radius: 999px;
@@ -2043,21 +2136,35 @@ html[data-shell="tauri"] #desk{ display: none; }
 .thread .count{ font-family: var(--mono); font-size: 9.5px; color: var(--t4); white-space: nowrap; }
 .empty{ font-family: var(--mono); font-size: 10.5px; line-height: 1.7; color: var(--t4); padding: 18px 4px; text-align: center; }
 
-/* ══ ask the agent ════════════════════════════════════════════════
-   A chat box, but the thing on the other end is the same derivation that
-   drew the rest of the screen — it reads this client's thread and answers out
-   of it. Nothing here reaches a network, and every answer carries the message
-   ids it was built from, which is the whole promise of the product. */
-.ask{
-  border-radius: var(--r-xl); background: var(--tile); box-shadow: var(--edge);
+/* ══ the insight panel ════════════════════════════════════════════
+   The only raised surface on the client page. It opens holding an opinion —
+   the moment the relationship turned, quoted at reading size — because the
+   panel that opened empty was spending the best rectangle on screen asking
+   the advisor to think of a question. Everything here is quiet except the
+   quote and the one button that acts on it. */
+.panel{
+  border-radius: var(--rc-2); background: var(--deep); box-shadow: var(--edge);
   display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; overflow: hidden;
 }
-.ask .hd{ padding: 9px 12px 8px; display: flex; align-items: center; gap: 8px; flex: none; border-bottom: 1px solid var(--hair); }
-.ask .hd .t{ font-family: var(--display); font-size: 12.5px; font-weight: 500; letter-spacing: -.014em; }
-.ask .hd .tag{ margin-left: auto; font-family: var(--mono); font-size: 9px; letter-spacing: .09em;
-  text-transform: uppercase; color: var(--i-good); background: color-mix(in oklab, var(--m-good) 18%, transparent);
-  padding: 3px 6px; border-radius: var(--r-sm); }
-.ask .log{ flex: 1; min-height: 90px; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 9px; }
+.pbody{ flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.pin{ padding: 24px 20px 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+/* the kicker: small, spaced, and the only thing above the quote */
+.pin .kick{ font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
+/* the one editorial moment on the page */
+.pin .pq{
+  margin: 4px 0; font-size: 21px; font-style: italic;
+  line-height: 1.5; letter-spacing: -.012em; color: var(--t1);
+}
+.pin .pdx{ margin: 0; font-size: 13px; line-height: 1.55; color: var(--t3); }
+.pin .pgo{ margin-top: 4px; border-radius: var(--rc-1); padding: 8px 16px; font-size: 12px; }
+.pin .pev{
+  font-family: var(--mono); font-size: 10px; letter-spacing: .06em; color: var(--t5);
+  padding: 0; background: none; box-shadow: none; border: 0;
+  transition: color .16s var(--ease);
+}
+.pin .pev:hover{ color: var(--t2); text-decoration: underline; }
+.plog{ padding: 0 20px 16px; display: flex; flex-direction: column; gap: 12px;
+  border-top: 1px solid var(--hair); padding-top: 16px; }
 
 .at{ display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
 .at[data-from="you"]{ align-items: flex-end; }
@@ -2085,42 +2192,27 @@ html[data-shell="tauri"] #desk{ display: none; }
 .sug .draft .tx{ font-size: 11.5px; line-height: 1.5; color: var(--t2); }
 .sug .acts{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-family: var(--mono); font-size: 9.5px; }
 
-/* the canned openers — the questions worth asking, so nobody has to guess
-   what this box understands */
-/* The openers sit directly above the composer and scroll sideways rather than
-   wrapping onto a second and third line — every line they wrap onto is a line
-   the transcript loses and a row the text field drops by. */
-.ask .chips{
-  display: flex; gap: 5px; padding: 8px 10px 0; flex: none;
-  overflow-x: auto; scrollbar-width: none;
+/* The follow-up, one line tall, at the floor of the panel. The four opener
+   chips are gone: the panel already answered the question they existed to
+   prompt, and a row of buttons above a text field reads as a menu when what
+   is wanted is a sentence. */
+.pask{
+  display: flex; align-items: center; gap: 8px; padding: 12px 16px; flex: none;
+  border-top: 1px solid var(--hair);
 }
-.ask .chips::-webkit-scrollbar{ display: none; }
-.ask .chips button{
-  font-family: var(--mono); font-size: 9.5px; padding: 5px 9px; border-radius: 999px;
-  color: var(--t3); box-shadow: var(--edge-2); white-space: nowrap; flex: none;
-  transition: background .16s var(--ease), color .16s var(--ease);
+.pask input{
+  flex: 1; min-width: 0; height: 32px; border-radius: var(--rc-1); border: 0; outline: 0;
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  padding: 0 12px; color: var(--t1); font-family: var(--sans); font-size: 12px;
 }
-.ask .chips button:hover{ background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--t1); }
-
-.ask .composer{ display: flex; align-items: center; gap: 7px; padding: 8px 10px; flex: none; }
-.ask .composer input{
-  flex: 1; min-width: 0; height: 30px; border-radius: 999px; border: 0; outline: 0;
-  background: var(--tile-2); box-shadow: var(--edge); padding: 0 12px;
-  color: var(--t1); font-family: var(--sans); font-size: 11.5px;
-}
-.ask .composer input::placeholder{ color: var(--t4); }
-.ask .composer input:focus{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 45%, transparent); }
-.ask .composer .send{
-  width: 30px; height: 30px; border-radius: 50%; flex: none;
+.pask input::placeholder{ color: var(--t5); }
+.pask input:focus{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 45%, transparent); }
+.pask .send{
+  width: 32px; height: 32px; border-radius: var(--rc-1); flex: none;
   display: flex; align-items: center; justify-content: center;
   background: var(--butter); color: var(--butter-d); font-size: 12px;
 }
-.ask .composer .send:disabled{ opacity: .4; cursor: default; }
-/* One line, clipped — the disclosure has to be present, not prominent. */
-.ask .note{
-  font-family: var(--mono); font-size: 9px; color: var(--t5); flex: none;
-  padding: 0 12px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
+.pask .send:disabled{ opacity: .4; cursor: default; }
 
 /* ══ queue pages ══════════════════════════════════════════════════ */
 .qhead{ display: flex; align-items: flex-end; gap: 16px; }
@@ -2149,10 +2241,11 @@ html[data-shell="tauri"] #desk{ display: none; }
   .timeline{ grid-column: span 3; }
   .cols3, .cols3.rec{ grid-template-columns: 220px 1fr; }
   .cols3 > .rpanel, .cols3.rec > .rrail{ display: none; }
-  /* The left column is a summary of what the other two already show, so it is
-     the one that goes when the island narrows. The chat and the agent stay. */
-  .dcols{ grid-template-columns: 1fr 320px; }
-  .dcols > .dcol.info{ display: none; }
+  /* The rail owns the client's name and status now, so it is the last thing
+     that may go. The agent panel is the one that folds first: its content is
+     an opinion about the thread, and the thread is still on screen. */
+  .dcols{ grid-template-columns: 240px 1fr; gap: 16px; }
+  .dcols > .dcol.agent{ display: none; }
 }
 @media (max-width: 860px){
   .bento{ grid-template-columns: 1fr; grid-template-rows: none; }
@@ -2160,8 +2253,10 @@ html[data-shell="tauri"] #desk{ display: none; }
   .cols3, .cols3.rec{ grid-template-columns: 1fr; }
   .cols3 > .clist, .cols3.rec > .contacts{ display: none; }
   .greet{ flex-direction: column; align-items: flex-start; gap: 14px; }
+  /* Last stop: the thread on its own. The rail's headline facts are the ones
+     the header still carries, so this is the cheapest thing left to drop. */
   .dcols{ grid-template-columns: 1fr; }
-  .dcols > .dcol.agent{ display: none; }
+  .dcols > .dcol.info{ display: none; }
 }
 @media (prefers-reduced-motion: reduce){
   *, *::before, *::after{ transition-duration: 1ms !important; animation: none !important; }
