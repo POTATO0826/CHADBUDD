@@ -417,14 +417,27 @@ function pushStages(): void {
    * ticking countdown there would make the demo unreproducible.
    */
   const startDayTicker = (): void => {
-    window.setInterval(() => {
+    const tick = (): void => {
       setNow(Date.now());
       rebuildAgenda();
       // Also rebuilds the book: a client crosses into decaying by the clock
       // moving, not by anything arriving, so nothing else would notice.
       rebuild();
       onRender();
-    }, TICK_MS);
+    };
+    /* Aligned to the wall clock: a plain interval started mid-minute flips
+       the display up to 59s after the real minute does. Each timeout aims at
+       the next boundary instead, so "in 15h 46m" becomes 45m the moment a
+       true minute passes. */
+    const arm = (): void => {
+      window.setTimeout(() => {
+        tick();
+        arm();
+      }, Math.max(250, TICK_MS - (Date.now() % TICK_MS)));
+    };
+    arm();
+    // Throttled timers (window occluded) resume stale; focus catches up.
+    window.addEventListener("focus", tick);
   };
 
   /**
