@@ -22,7 +22,7 @@ import type { LedgerEntry } from "./ledger.ts";
 import type { Score, SignalScore } from "./score.ts";
 import { fmtMinutes, score } from "./score.ts";
 import { callStats, fmtGap } from "./contact.ts";
-import { emotionAt, emotionTone, keyPointAt } from "./emotions.ts";
+import { emotionAt, emotionTone, keyPointAt, keyPointsFor } from "./emotions.ts";
 import { conversationStarts, isQuestion, windows } from "./signals.ts";
 import type { Windows } from "./signals.ts";
 
@@ -207,13 +207,30 @@ export interface Turn {
 }
 
 /**
- * The last question the client asked, and when. For three of these four clients
- * that date *is* the turn — everything after it is acknowledgement. It's derived
- * rather than asserted: find the final client message containing a question.
+ * The last time the client asked for something, and when. For three of the
+ * four seed clients that date *is* the turn — everything after it is
+ * acknowledgement. Derived rather than asserted.
+ *
+ * Two sources, deliberately unequal. The floor is signals.isQuestion — a bare
+ * "?" check with a test oracle, untouched. On top, live mode knows more: the
+ * extraction pass labels question-less asks ("Explain the tnc to me") as
+ * question/instruction key points, each gated against the message it cites,
+ * so the newest ask from either source wins. A regex tried to close this gap
+ * first and promptly called Adrian's "Send it I suppose, but…" — a reluctant
+ * concession — an ask; classifying intent is the extractor's job, not a
+ * word-list's. Seed mode has no extraction and keeps the measured floor.
  */
 function turn(thread: SeedThread, w: Windows, s: Score): Turn {
   const questions = thread.messages.filter(isQuestion);
-  const lastQ = questions[questions.length - 1];
+  let lastQ = questions[questions.length - 1];
+
+  const extracted = keyPointsFor(thread.key)
+    .filter((p) => p.kind === "question" || p.kind === "instruction")
+    .at(-1);
+  if (extracted && (!lastQ || extracted.ts > tsOf(lastQ))) {
+    const m = thread.messages.find((x) => x.externalId === extracted.sourceId);
+    if (m) lastQ = m;
+  }
 
   if (!lastQ) {
     return {
@@ -237,7 +254,7 @@ function turn(thread: SeedThread, w: Windows, s: Score): Turn {
     quote: `“${lastQ.text.length > 190 ? `${lastQ.text.slice(0, 189)}…` : lastQ.text}”`,
     note: healthy
       ? `Still asking questions — this one ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago, and ${w.recent.questions} in the last 30 days. Nothing here needs fixing.`
-      : `The last question from them was ${daysAgo} days ago. Everything since has been acknowledgement: ${w.recent.questions} questions in the last 30 days against a baseline of ${w.baseline.questionsPer30d.toFixed(1)} a month.`,
+      : `The last ask from them was ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago. Everything since has been acknowledgement: ${w.recent.questions} questions in the last 30 days against a baseline of ${w.baseline.questionsPer30d.toFixed(1)} a month.`,
     cite: lastQ.externalId,
     tone: healthy ? "good" : inWindow ? "warn" : "butter",
   };
