@@ -46,7 +46,7 @@ import type { CalendarEvent, Importance } from "./calendar.ts";
 import { IMPORTANCE } from "./calendar.ts";
 import { BIG } from "../data/schedule.ts";
 import { type Holding, holdings } from "../data/holdings.ts";
-import type { MarketRow, MaturingRow, Report, StaleRow } from "./desk.ts";
+import type { MarketHit, MarketRow, MaturingRow, Report, StaleRow, Tier } from "./desk.ts";
 import { deskView, dismissBrief, snoozeBrief } from "./desk.ts";
 import { initDrag } from "./drag.ts";
 import { focusWindow, isTauri, openExternal, openTelegram, quit, reportHotRect, setContentProtected, watchHotRect } from "./shell.ts";
@@ -2659,7 +2659,11 @@ function sparkline(r: Report): string {
  * says so. While it writes, the template shows with a label admitting it is
  * one. In seed mode the template is all there is, also said plainly.
  */
-function deskDraft(id: string, draft: string, req?: { kind: string; facts: string; ask: string; key?: string }): string {
+function deskDraft(
+  id: string,
+  draft: string,
+  req?: { kind: string; facts: string; ask: string; key?: string; blocked?: string },
+): string {
   let text = draft;
   let label = "template — check before sending";
   if (req) {
@@ -2673,13 +2677,26 @@ function deskDraft(id: string, draft: string, req?: { kind: string; facts: strin
       label = "template — the model's draft was refused";
     }
   }
+
+  /* Editable, and what is on screen is what goes. The advisor signs their name
+     to the text in front of them, not to whatever the model produced before
+     they read it. */
+  const boxId = `dsend:${id}`;
+  const key = req?.key ?? "";
+  const blocked = req?.blocked;
+  const canSend = key !== "" && blocked === undefined;
+  const why = blocked ?? (key === "" ? "No client behind this row" : "");
+
   return `
     <div class="ddraft">
       <span class="lbl" style="color:var(--iris)">${e(label)}</span>
-      <p class="dtext">${e(text)}</p>
+      <textarea class="dtext" id="${e(boxId)}" data-keep="1" rows="4"
+        aria-label="Draft — edit it before sending">${e(text)}</textarea>
       <div class="ctxacts">
-        <button class="btn" disabled title="Sending connects in phase 3">Send Telegram</button>
-        <button class="btn" disabled title="Sending connects in phase 3">Send Email</button>
+        <button class="btn acc" data-act="desk-send" data-via="tg" data-brief="${e(id)}" data-client="${e(key)}"
+          ${canSend ? `title="Send this to them on Telegram, as you"` : `disabled title="${e(why)}"`}>Send Telegram</button>
+        <button class="btn" data-act="desk-send" data-via="em" data-brief="${e(id)}" data-client="${e(key)}"
+          ${canSend ? `title="Email this to them"` : `disabled title="${e(why)}"`}>Send Email</button>
         <button class="btn" data-act="desk-snooze" data-brief="${e(id)}">Snooze 7d</button>
         <button class="btn" data-act="desk-dismiss" data-brief="${e(id)}">Dismiss</button>
       </div>
@@ -2732,18 +2749,46 @@ function maturingRow(row: MaturingRow, urgent: boolean): string {
     </div>`;
 }
 
+/** The outlet, without letting a malformed url take the row down with it. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+const LEAN_WORD = { pressure: "pressure", relief: "relief", watch: "watch" } as const;
+const TIER_INK: Record<Tier, string> = {
+  action: "var(--alarm)",
+  watch: "var(--gold)",
+  steady: "var(--foam)",
+};
+
 function marketRow(row: MarketRow): string {
   const evId = `ev:${row.event.id}`;
   const on = state.desk === evId;
-  const leanGlyph = row.event.lean === "pressure" ? "▼" : row.event.lean === "relief" ? "▲" : "●";
+  const lean = row.event.lean;
+  const leanGlyph = lean === "pressure" ? "▼" : lean === "relief" ? "▲" : "●";
   const leanInk =
-    row.event.lean === "pressure" ? "var(--alarm)" : row.event.lean === "relief" ? "var(--foam)" : "var(--t3)";
+    lean === "pressure" ? "var(--alarm)" : lean === "relief" ? "var(--foam)" : "var(--t3)";
+  const host = hostOf(row.event.source.url);
+  /* A story nobody holds is still a story. It is dimmed and says so, because a
+     wire that only ever shows hits reads as curated rather than swept. */
+  const bare = row.clientCount === 0;
+
   return `
-    <div class="drow${on ? " on" : ""}">
+    <div class="drow${on ? " on" : ""}${bare ? " bare" : ""}">
       <button class="dhead" data-act="desk-open" data-brief="${e(evId)}" aria-expanded="${on}">
         <span class="dd" style="color:${leanInk}">${leanGlyph}</span>
+        <span class="dlean" style="color:${leanInk}">${LEAN_WORD[lean]}</span>
         <span class="dwhat wide">${e(row.event.headline)}</span>
-        <span class="dval">${row.clientCount} client${row.clientCount === 1 ? "" : "s"} · ${e(row.exposureText)}</span>
+        <span class="dsrc">${e(row.event.source.name)}${host ? ` · ${e(host)}` : ""} · ${e(row.agoText)}</span>
+        <span class="dval">${
+          bare
+            ? `<span class="dnone">no exposure on the book</span>`
+            : `${row.clientCount} client${row.clientCount === 1 ? "" : "s"} · ${e(row.exposureText)}`
+        }</span>
         <span class="dcaret">${on ? "⌃" : "⌄"}</span>
       </button>
       ${
@@ -2751,34 +2796,89 @@ function marketRow(row: MarketRow): string {
           ? `<div class="dbody">
               <p class="dsum">${e(row.event.summary)}</p>
               <div class="dchiprow">
-                <span class="dchip">${e(row.event.source.name)} · ${e(new URL(row.event.source.url).hostname)}</span>
+                ${host ? `<a class="dchip" href="${e(row.event.source.url)}" target="_blank" rel="noreferrer noopener">${e(row.event.source.name)} · ${e(host)} ↗</a>` : `<span class="dchip">${e(row.event.source.name)}</span>`}
                 <span class="dchip dim">${e(row.agoText)}</span>
               </div>
-              ${row.hits
-                .map((hit) => {
-                  const hitOn = state.deskHit === hit.id;
-                  return `
-                    <div class="dhit${hitOn ? " on" : ""}">
-                      <button class="dhithead" data-act="desk-hit" data-brief="${e(hit.id)}">
-                        <span class="dwho">${e(hit.clientName)}</span>
-                        <span class="dwhat">${e(hit.holding.name)}</span>
-                        <span class="dval">${e(hit.holding.value.toLocaleString("en-MY"))}</span>
-                        <span class="dcaret">${hitOn ? "⌃" : "⌄"}</span>
-                      </button>
-                      ${hitOn ? deskDraft(hit.id, hit.draft, {
-                        kind: "market-draft",
-                        facts: `Client: ${hit.clientName}. Holding: ${hit.holding.name}, value ${hit.holding.value.toLocaleString("en-MY")} RM. News headline: ${row.event.headline}. What it means: ${row.event.impactNote}`,
-                        ask: "A short reassurance note about this news for this holding. No action needed from them, no figures beyond the facts.",
-                        key: hit.client,
-                      }) : ""}
-                    </div>`;
-                })
-                .join("")}
+              ${row.hits.map((hit) => marketHitRow(hit, row)).join("")}
               ${row.hitsMore > 0 ? `<span class="dmore">+${row.hitsMore} more above the RM 25k floor</span>` : ""}
+              ${
+                row.untouched.length
+                  ? `<p class="duntouched">Not touched by this: ${e(row.untouched.join(", "))} — no exposure to these classes.</p>`
+                  : ""
+              }
             </div>`
           : ""
       }
     </div>`;
+}
+
+/**
+ * One client under one story.
+ *
+ * The tier and the reason sit on the row rather than inside the draft, so the
+ * ordering is legible without opening anything: whoever is reachable, owed an
+ * answer, and hit hardest is at the top, and you can see why.
+ */
+function marketHitRow(hit: MarketHit, row: MarketRow): string {
+  const hitOn = state.deskHit === hit.id;
+  const owed = hit.owed;
+
+  return `
+    <div class="dhit${hitOn ? " on" : ""}${hit.reachable ? "" : " unreachable"}">
+      <button class="dhithead" data-act="desk-hit" data-brief="${e(hit.id)}">
+        <span class="dwho">${e(hit.clientName)}</span>
+        <span class="dtier" style="color:${TIER_INK[hit.tier]}">${hit.tier}</span>
+        <span class="dwhat">${e(hit.holding.name)}${hit.otherCount > 0 ? ` +${hit.otherCount}` : ""}</span>
+        <span class="dval">${e(hit.valueText)}</span>
+        <span class="dcaret">${hitOn ? "⌃" : "⌄"}</span>
+      </button>
+      <div class="dwhyrow">
+        ${owed ? `<span class="dowed" title="${e(owed.text)}">↩ owed an answer · ${e(owed.cite)}</span>` : ""}
+        ${hit.reachable ? "" : `<span class="dnochat" title="This client is demo data — there is no chat behind them, so nothing can be sent">demo data · no chat</span>`}
+        <span class="dbecause">${e(hit.because)}</span>
+      </div>
+      ${
+        hitOn
+          ? deskDraft(hit.id, hit.draft, {
+              kind: "market-draft",
+              /* Everything the model may use, and the only place a figure may
+                 come from. The tier and its reason are handed over as facts —
+                 the model is never asked how risky something is. */
+              facts:
+                `Client: ${hit.clientName}. ` +
+                `Holding: ${hit.holding.name}, value ${hit.holding.value.toLocaleString("en-MY")} RM` +
+                (hit.otherCount > 0 ? ` (and ${hit.otherCount} other touched holding${hit.otherCount === 1 ? "" : "s"}, ${hit.valueText} in total)` : "") +
+                `. News source: ${row.event.source.name}. Headline: ${row.event.headline}. ` +
+                `What it means for holders: ${row.event.impactNote}. Lean: ${row.event.lean}. ` +
+                `Risk level to their plan: ${hit.risk}. Why: ${hit.because}.` +
+                (owed ? ` STILL UNANSWERED — they asked "${owed.text}" (${owed.cite}) and nobody has replied.` : ""),
+              ask: askFor(hit),
+              key: hit.client,
+              ...(hit.reachable ? {} : { blocked: "demo data · no chat" }),
+            })
+          : ""
+      }
+    </div>`;
+}
+
+/**
+ * The arc, chosen by tier — and when a question is outstanding, the
+ * instruction to answer it first. A message that opens with market commentary
+ * while ignoring what they actually asked reads as a broadcast.
+ */
+function askFor(hit: MarketHit): string {
+  const lead = hit.owed
+    ? "Open by answering their outstanding question directly in one plain sentence — no apology paragraph, no preamble — and only then go on. "
+    : "";
+
+  const arc =
+    hit.tier === "action"
+      ? "Then: what happened, one plain line; how it lands on their holding by name, tied to the personal situation they told you about, named; the risk level to their plan using the word given in FACTS and one line of why; close by proposing a short meeting this week, offering two weekday choices and asking which suits."
+      : hit.tier === "watch"
+        ? "Then: what happened; how it touches their holding and their stated situation; the risk word from FACTS with one line on why nothing needs changing today; close with an open offer of availability."
+        : "Then: what happened; say plainly that this one does not require anything from them and why, named from their own words; the risk word; close warmly — the point is they hear it from you first.";
+
+  return `${lead}${arc} No figures beyond those in FACTS.`;
 }
 
 function staleRow(row: StaleRow): string {
@@ -2823,6 +2923,46 @@ function deskPage(): string {
   return `<div class="page">${deskSection()}</div>`;
 }
 
+/**
+ * The churn radar: every client on one line, worst first.
+ *
+ * Scored against each client's own baseline rather than a global threshold —
+ * a client who was always slow is not decaying for being slow again. The
+ * headline on each chip is the computed sentence from score.ts, so the strip
+ * says *why* it is worried rather than showing a colour and leaving the
+ * advisor to guess. Clicking one opens that client.
+ *
+ * It sits above the wire deliberately. The market tells you what happened;
+ * this tells you who is quietly leaving whether or not anything happened.
+ */
+function churnRadar(): string {
+  const rank: Record<string, number> = { silent: 0, decaying: 1, watch: 2, healthy: 3 };
+  const rows = clients
+    .slice()
+    .sort(
+      (a, b) =>
+        rank[a.statusWord]! - rank[b.statusWord]! || b.score.composite - a.score.composite,
+    );
+  if (rows.length === 0) return "";
+
+  return `
+    <div class="dsec dsec--radar">
+      <span class="lbl">churn radar · scored against each client's own baseline</span>
+      ${rows
+        .map(
+          (c) => `
+          <button class="rdr" data-act="open-client" data-client="${e(c.key)}"
+            title="Open ${e(c.name)}">
+            <span class="rdot" style="background:${markOf(c.tone)}"></span>
+            <span class="rnm2">${e(c.name)}</span>
+            <span class="rst" style="color:${inkOf(c.tone)}">${e(c.statusWord)}</span>
+            <span class="rhl">${e(c.score.headline)}</span>
+          </button>`,
+        )
+        .join("")}
+    </div>`;
+}
+
 function deskSection(): string {
   const d = deskView();
   return `
@@ -2845,6 +2985,8 @@ function deskSection(): string {
             </div>`
           : ""
       }
+
+      ${churnRadar()}
 
       ${
         d.market.length
@@ -4839,6 +4981,73 @@ island.addEventListener("click", (ev) => {
       if (meta2 && meta2.sourceId !== "" && !meta2.sourceId.startsWith("seed:")) {
         const id = meta2.sourceId;
         void openTelegram(id).catch(() => openExternal(`tg://user?id=${id}`));
+      }
+      return;
+    }
+
+    /* The desk sends for real now. It spent a long time with two buttons that
+       said "phase 3" while every other surface in the app could already reach
+       a client; the outbox and the bridge are the same ones the thread uses. */
+    case "desk-send": {
+      const btn = hit as HTMLButtonElement;
+      const brief = hit.dataset.brief;
+      const who = hit.dataset.client;
+      const via = hit.dataset.via === "em" ? "em" : "tg";
+      if (!brief || !who) return;
+
+      const box = document.getElementById(`dsend:${brief}`) as HTMLTextAreaElement | null;
+      const outgoing = (box?.value ?? "").trim();
+      if (outgoing === "") return;
+
+      const person = findClient(who.toLowerCase());
+      const ok = window.confirm(
+        `Send this to ${person?.name ?? who} as you?\n\n${outgoing}\n\nThis cannot be undone.`,
+      );
+      if (!ok) return;
+
+      btn.disabled = true;
+      btn.textContent = "Sending…";
+      const finish = (title: string, body: string, tone: "butter" | "critical"): void => {
+        showNotif({ kind: "reminder", client: who, title, body: body.slice(0, 60), meta: "desk", tag: tone === "critical" ? "FAILED" : "SENT", tone, dwell: 6000 });
+      };
+
+      /* The bubble goes into their thread immediately, the same as a reply
+         typed in the client page — the desk is just another place to send
+         from, and it should not behave like a different product. */
+      const ticket = addPending(who as ClientKey, outgoing);
+
+      const done = (): void => {
+        dropKeep(`dsend:${brief}`);
+        dismissBrief(brief);
+        state.deskHit = null;
+        render();
+      };
+
+      if (via === "tg") {
+        void queueSend(who as ClientKey, outgoing)
+          .then(() => {
+            done();
+            finish("Queued", "the bridge delivers it in about a second", "butter");
+          })
+          .catch((err) => {
+            dropPending(ticket);
+            btn.disabled = false;
+            btn.textContent = "Send Telegram";
+            finish("Not sent", err instanceof Error ? err.message : String(err), "critical");
+          });
+      } else {
+        void sendEmail(who as ClientKey, `Message from ${ADVISOR}`, outgoing)
+          .then(() => {
+            dropPending(ticket);
+            done();
+            finish("Email sent", clientMeta(who)?.email ?? "", "butter");
+          })
+          .catch((err) => {
+            dropPending(ticket);
+            btn.disabled = false;
+            btn.textContent = "Send Email";
+            finish("Not sent", err instanceof Error ? err.message : String(err), "critical");
+          });
       }
       return;
     }

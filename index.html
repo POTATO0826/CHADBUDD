@@ -1441,12 +1441,64 @@ html[data-shell="tauri"] #desk{ display: none; }
 .desk .ddraft{ display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
   border-radius: var(--r-md); border: 1px dashed var(--iris-b);
   background: color-mix(in oklab, var(--glacial) 6%, var(--background)); }
-.desk .dtext{ font-size: 12.5px; line-height: 1.6; color: var(--t1); margin: 0; max-width: 70ch; }
+/* Editable: what is on screen is what gets sent, so it has to be reachable
+   without leaving the row. */
+.desk .dtext{ font-size: 12.5px; line-height: 1.6; color: var(--t1); margin: 0; width: 100%;
+  max-width: 70ch; resize: vertical; font-family: inherit;
+  background: color-mix(in oklab, var(--background) 55%, transparent);
+  border: 1px solid color-mix(in oklab, var(--iris) 32%, transparent);
+  border-radius: var(--r-sm); padding: 9px 11px; outline: none; }
+.desk .dtext:focus{ border-color: color-mix(in oklab, var(--iris) 60%, transparent); }
 .desk .ddraft .btn[disabled]{ opacity: .45; cursor: not-allowed; }
 
 .desk .dhit{ border-radius: var(--r-sm);
   background: color-mix(in oklab, var(--foreground) 3%, transparent); }
 .desk .dhit.on{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 9%, transparent); }
+
+/* ── the wire, read at a glance ───────────────────────────────────
+   The lean as a word beside its glyph — colour never carries meaning alone.
+   Provenance on the row itself, so a story can be judged without opening it. */
+.desk .dhead .dlean{ font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
+  text-transform: uppercase; flex: none; width: 58px; }
+.desk .dhead .dsrc{ font-family: var(--mono); font-size: 9px; color: var(--t5); flex: none;
+  white-space: nowrap; margin-left: auto; }
+.desk .dhead .dval{ margin-left: 12px; }
+.desk .dnone{ color: var(--t5); font-style: italic; }
+/* A story nobody holds stays on the wire — quieter, never hidden. */
+.desk .drow.bare .dwhat.wide{ color: var(--t3); }
+.desk .drow.bare .dd, .desk .drow.bare .dlean{ opacity: .55; }
+
+/* who a story lands on, and how hard */
+.desk .dhit .dtier{ font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
+  text-transform: uppercase; flex: none; width: 52px; }
+.desk .dwhyrow{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 0 12px 8px 12px; }
+.desk .dbecause{ font-size: 11px; line-height: 1.45; color: var(--t4); min-width: 0; }
+.desk .dowed{ font-family: var(--mono); font-size: 9px; letter-spacing: .04em; color: var(--i-warn);
+  flex: none; }
+.desk .dnochat{ font-family: var(--mono); font-size: 9px; letter-spacing: .04em; color: var(--t5);
+  flex: none; }
+/* Nowhere to send to — say so on the row, not with an error after the click. */
+.desk .dhit.unreachable .dwho{ color: var(--t4); }
+.desk .dhit.unreachable .dwhat, .desk .dhit.unreachable .dval{ color: var(--t5); }
+
+/* ── churn radar ──────────────────────────────────────────────────
+   One line per client, worst first. The headline carries the reason, so the
+   strip never asks the reader to interpret a colour on its own. */
+.desk .dsec--radar .rdr{ display: flex; align-items: baseline; gap: 10px; width: 100%;
+  text-align: left; padding: 7px 12px; border-radius: var(--r-sm);
+  transition: background .16s var(--ease); }
+.desk .dsec--radar .rdr:hover{ background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.desk .rdot{ width: 6px; height: 6px; border-radius: 50%; flex: none; align-self: center; }
+.desk .rnm2{ font-size: 12.5px; color: var(--t1); flex: none; width: 132px; }
+.desk .rst{ font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
+  text-transform: uppercase; flex: none; width: 66px; }
+.desk .rhl{ font-size: 11.5px; line-height: 1.45; color: var(--t4); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Saying who is fine is as much of the product as saying who is not. */
+.desk .duntouched{ margin: 0; font-size: 11px; line-height: 1.5; color: var(--t5);
+  max-width: 68ch; }
 .desk .dhithead{ display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
   padding: 7px 10px; border-radius: var(--r-sm); }
 .desk .dhithead:hover{ background: color-mix(in oklab, var(--foreground) 5%, transparent); }

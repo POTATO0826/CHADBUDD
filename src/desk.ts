@@ -27,7 +27,8 @@ import { holdings } from "../data/holdings.ts";
 import type { MarketEvent } from "../data/market.ts";
 import { marketEvents } from "../data/market.ts";
 import { clients } from "./derive.ts";
-import { liveHoldings, liveMarketEvents } from "./live.ts";
+import { keyPointsFor } from "./emotions.ts";
+import { clientMeta, liveHoldings, liveMarketEvents } from "./live.ts";
 import { nowMs } from "./daysource.ts";
 
 const DAY = 86_400_000;
@@ -65,22 +66,58 @@ export interface MaturingRow {
   draft: string;
 }
 
+/**
+ * How hard a story lands on one client's money.
+ *
+ * Computed from their own mined facts crossed with the event's lean, never by
+ * a model — so it is the same on every render and every run, and it is handed
+ * to the draft as a fact rather than left for the model to decide. A model
+ * that grades its own urgency will grade everything urgent.
+ */
+export type Tier = "action" | "watch" | "steady";
+
+const TIER_RANK: Record<Tier, number> = { action: 0, watch: 1, steady: 2 };
+
 export interface MarketHit {
   id: string;
   client: ClientKey;
   clientName: string;
+  /** The largest touched holding — what the draft names. */
   holding: Holding;
+  /** Touched holdings beyond the one named, for "and 2 more". */
+  otherCount: number;
+  /** Summed value of every touched holding for this client. */
+  value: number;
+  valueText: string;
   why: string;
   draft: string;
+  tier: Tier;
+  risk: "high" | "moderate" | "low";
+  /** Why this tier, in the client's own terms — goes into the draft's FACTS. */
+  because: string;
+  /**
+   * There is a real chat behind this person. A seeded client has nowhere for a
+   * message to go, and the button says so before the click rather than after.
+   */
+  reachable: boolean;
+  /** Their last message is theirs and asks something nobody has answered. */
+  owed: { text: string; cite: string } | null;
 }
 
 export interface MarketRow {
   event: MarketEvent;
   agoText: string;
   clientCount: number;
+  exposure: number;
   exposureText: string;
   hits: MarketHit[];
   hitsMore: number;
+  /**
+   * Who this story does *not* touch, by first name. Saying who is fine is as
+   * much of the product as saying who is not — without it the desk reads as an
+   * alarm generator, and an alarm generator gets ignored.
+   */
+  untouched: string[];
 }
 
 export interface StaleRow {
@@ -200,6 +237,77 @@ function maturityDraft(name: string, h: Holding, r: Report, matureText: string):
   );
 }
 
+/**
+ * The tier, and the sentence that justifies it.
+ *
+ * The whole ladder turns on one question: does this person have a dated
+ * commitment their own words put on the record? A market under pressure is an
+ * emergency for someone who told you they need the cash in March and noise for
+ * someone who did not. `because` is written in their terms and travels into
+ * the draft as a fact, so the message can name the reason rather than assert
+ * urgency at them.
+ */
+function tierFor(
+  key: ClientKey,
+  lean: MarketEvent["lean"],
+): { tier: Tier; risk: "high" | "moderate" | "low"; because: string } {
+  const dated = keyPointsFor(key).find((p) => p.kind === "deadline" || p.kind === "constraint");
+
+  if (lean === "pressure" && dated) return { tier: "action", risk: "high", because: dated.point };
+  if (lean === "pressure") {
+    return {
+      tier: "watch",
+      risk: "moderate",
+      because: "no dated cash need on file — time absorbs the swing",
+    };
+  }
+  if (lean === "watch" && dated) return { tier: "watch", risk: "moderate", because: dated.point };
+  return {
+    tier: "steady",
+    risk: "low",
+    because: lean === "relief" ? "the news leans in their favour" : "no dated stakes near this",
+  };
+}
+
+/**
+ * A stable id for a story, derived from the words rather than the row.
+ *
+ * The hourly sweep deletes and re-inserts every market row, so the database id
+ * is new each hour for a story that has not changed. Keying anything off it
+ * orphans the draft cache once an hour and re-bills every draft; keying off
+ * the headline means the same story is the same story, and an edited headline
+ * is correctly a different one.
+ */
+function headlineId(headline: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < headline.length; i++) {
+    h ^= headline.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/** A real chat behind the name. Seeded people have nowhere for a message to go. */
+function reachableClient(key: ClientKey): boolean {
+  const src = clientMeta(key)?.sourceId ?? "";
+  return src !== "" && !src.startsWith("seed:");
+}
+
+/**
+ * They asked something and the thread stops there.
+ *
+ * Only the last message counts. A question three exchanges back that the
+ * conversation moved past is not owed an answer; the one nobody replied to is,
+ * and it belongs in the first sentence of whatever gets sent next.
+ */
+function owedAnswer(key: ClientKey): { text: string; cite: string } | null {
+  const c = clients.find((x) => x.key === key);
+  const msgs = c?.thread.messages ?? [];
+  const last = msgs[msgs.length - 1];
+  if (!last || last.from !== "client" || !last.text.includes("?")) return null;
+  return { text: last.text, cite: last.externalId };
+}
+
 function marketDraft(name: string, h: Holding, ev: MarketEvent): string {
   return (
     `Hi ${first(name)} — quick note on your ${h.name} (${rm(h.value)}). ` +
@@ -262,34 +370,75 @@ export function deskView(): Desk {
   const feed = (liveMarketEvents() ?? marketEvents) as MarketEvent[];
   const market: MarketRow[] = feed
     .slice()
-    .sort((a, b) => a.agoHours - b.agoHours)
     .map((ev) => {
-      const all: MarketHit[] = held
-        .filter(({ h }) => h.value >= MATERIAL_RM && h.classes.some((c) => ev.classes.includes(c)))
-        .map(({ h, name }) => ({
-          id: `e:${ev.id}:${h.id}`,
-          client: h.client,
-          clientName: name,
-          holding: h,
-          why: ev.impactNote,
-          draft: marketDraft(name, h, ev),
-        }))
+      /* One row per client, not per holding. A client with three touched
+         holdings is one conversation, and three rows for it crowds out the
+         other two people who also need telling. */
+      const touched = held.filter(
+        ({ h }) => h.value >= MATERIAL_RM && h.classes.some((c) => ev.classes.includes(c)),
+      );
+      const byClient = new Map<ClientKey, Array<{ h: Holding; name: string }>>();
+      for (const row of touched) {
+        const list = byClient.get(row.h.client);
+        if (list) list.push(row);
+        else byClient.set(row.h.client, [row]);
+      }
+
+      const all: MarketHit[] = [...byClient.entries()]
+        .map(([key, rows]) => {
+          const sorted = rows.slice().sort((a, b) => b.h.value - a.h.value);
+          const lead = sorted[0]!;
+          const value = sorted.reduce((n, x) => n + x.h.value, 0);
+          const grade = tierFor(key, ev.lean);
+          return {
+            id: `e:${headlineId(ev.headline)}:${key}`,
+            client: key,
+            clientName: lead.name,
+            holding: lead.h,
+            otherCount: sorted.length - 1,
+            value,
+            valueText: rm(value),
+            why: ev.impactNote,
+            draft: marketDraft(lead.name, lead.h, ev),
+            ...grade,
+            reachable: reachableClient(key),
+            owed: owedAnswer(key),
+          };
+        })
         .filter((hit) => !isHidden(hit.id))
-        .sort((a, b) => b.holding.value - a.holding.value);
+        /* Reachable first, then anyone owed a reply, then how hard it lands,
+           then the money. An urgent client with no chat behind them is a dead
+           end however large the holding, so they sort below someone reachable. */
+        .sort(
+          (a, b) =>
+            Number(b.reachable) - Number(a.reachable) ||
+            Number(b.owed !== null) - Number(a.owed !== null) ||
+            TIER_RANK[a.tier] - TIER_RANK[b.tier] ||
+            b.value - a.value,
+        );
 
       const agoText =
         ev.agoHours < 24 ? `${ev.agoHours}h ago` : `${Math.round(ev.agoHours / 24)}d ago`;
 
+      const hit = new Set(all.map((x) => x.client));
+      const untouched = clients.filter((c) => !hit.has(c.key)).map((c) => first(c.name));
+
       return {
         event: ev,
         agoText,
-        clientCount: new Set(all.map((x) => x.client)).size,
-        exposureText: rm(all.reduce((n, x) => n + x.holding.value, 0)),
+        clientCount: hit.size,
+        exposure: all.reduce((n, x) => n + x.value, 0),
+        exposureText: rm(all.reduce((n, x) => n + x.value, 0)),
         hits: all.slice(0, HITS_CAP),
         hitsMore: Math.max(0, all.length - HITS_CAP),
+        untouched,
       };
     })
-    .filter((row) => row.hits.length > 0);
+    /* Zero-exposure stories stay on the wire, dimmed. Breadth is the proof
+       that the sweep is real rather than curated — a feed that only ever shows
+       hits looks handpicked, and the one thing this screen has to be is
+       checkable. They sort last, by exposure, then newest within a tie. */
+    .sort((a, b) => b.exposure - a.exposure || a.event.agoHours - b.event.agoHours);
 
   /* stale */
   const staleAll: StaleRow[] = held
